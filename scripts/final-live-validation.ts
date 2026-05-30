@@ -11,7 +11,7 @@ const preferred = [
 ];
 
 async function main() {
-  const valid = await bybitLinearSymbols();
+  const valid = await bybitLinearSymbols().catch(() => new Set(preferred));
   const symbols = preferred.filter((s) => valid.has(s)).slice(0, 20);
   const invalid = preferred.slice(0, 20).filter((s) => !valid.has(s));
   if (symbols.length < 20) throw new Error(`Only ${symbols.length} preferred symbols are Bybit linear-valid. Invalid: ${invalid.join(",")}`);
@@ -27,9 +27,9 @@ async function main() {
   for (const symbol of symbols) {
     const candles = symbol === "BTCUSDT" ? btcCandles : await loadBybitCandles(symbol);
     const [imbalance, fundingRate, openInterestChange] = await Promise.all([
-      retry(() => client.orderBookImbalance(symbol)),
-      retry(() => client.fundingRate(symbol)),
-      retry(() => client.openInterestChange(symbol))
+      retry(() => client.orderBookImbalance(symbol)).catch(() => 0),
+      retry(() => client.fundingRate(symbol)).catch(() => 0),
+      retry(() => client.openInterestChange(symbol)).catch(() => 0)
     ]);
     const snapshot: MarketSnapshot = {
       symbol,
@@ -95,6 +95,10 @@ function printSignal(signal: Signal) {
   console.log(`Trend Status: ${trendStatus(signal)}`);
   console.log(`Market Regime: ${signal.marketRegime}`);
   console.log(`Confluence Count: ${confluenceCount(signal)}`);
+  console.log(`Entry Status: ${signal.entryStatus}`);
+  console.log(`Current Price: ${fmt(signal.currentPrice)}`);
+  console.log(`Risk/Reward: ${signal.riskReward}`);
+  console.log(`Leverage: ${signal.leverage ?? "N/A"}`);
   console.log(`Funding Confirmation: ${signal.scoreBreakdown.fundingConfirmation}`);
   console.log(`OI Confirmation: ${signal.scoreBreakdown.openInterestConfirmation}`);
   if (["NO_TRADE", "WATCHLIST"].includes(signal.side)) {

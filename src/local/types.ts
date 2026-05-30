@@ -38,10 +38,13 @@ export interface Signal {
   score: number;
   winProbability: number;
   confidence: number;
+  currentPrice: number;
+  entryStatus: "ENTER_NOW" | "WAIT_FOR_ENTRY" | "NO_TRADE";
   entry: [number, number];
   stopLoss: number;
   takeProfit: [number, number, number];
   leverage?: string;
+  riskReward: string;
   invalidationLevel: number;
   holdTime: string;
   marketRegime: MarketRegime;
@@ -49,6 +52,7 @@ export interface Signal {
   reasons: string[];
   rejectionReason: string;
   scoreBreakdown: Record<string, number>;
+  tradeManagementActions: string[];
   management: string;
 }
 

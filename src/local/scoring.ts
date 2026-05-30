@@ -60,30 +60,42 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const btcPenalty = snapshot.symbol === "BTCUSDT" || snapshot.btcStable ? 0 : 24;
   const weighted = trendStrength * 0.17 + snapshot.liquidityScore * 0.08 + volume * 0.12 + smc.score * 0.14 + mtf * 0.14 + snapshot.whaleScore * 0.07 + funding * 0.08 + oi * 0.08 + momentum * 0.12 + orderbook * 0.08 - regimePenalty - btcPenalty;
   let score = clamp(weighted);
+  const weakMomentum = direction !== 0 && momentum < 55;
   if (snapshot.regime === "MANIPULATION_RISK" || side === "NO_TRADE") score = Math.min(score, 55);
-  const finalSide: Side = score >= 85 ? side : score >= 70 ? "WATCHLIST" : "NO_TRADE";
+  if (weakMomentum) score = Math.min(score, 69);
   const entry: [number, number] = direction >= 0 ? [last.close - a * 0.15, last.close + a * 0.1] : [last.close - a * 0.1, last.close + a * 0.15];
-  const stopLoss = direction >= 0 ? Math.min(sr.support, last.close - a * 1.7) : Math.max(sr.resistance, last.close + a * 1.7);
+  const stopLoss = direction >= 0 ? Math.max(sr.support, last.close - a * 1.7) : Math.min(sr.resistance, last.close + a * 1.7);
   const takeProfit: [number, number, number] = direction >= 0 ? [last.close + a * 1.4, last.close + a * 2.4, last.close + a * 3.8] : [last.close - a * 1.4, last.close - a * 2.4, last.close - a * 3.8];
+  const rrValue = riskRewardValue(entry, stopLoss, takeProfit[2], direction);
+  if (rrValue < 2) score = Math.min(score, 69);
+  const roundedScore = Math.round(score);
+  const qualifiedSide: Side = roundedScore >= 85 ? side : "NO_TRADE";
+  const entryStatus = qualifiedSide === "NO_TRADE" ? "NO_TRADE" : last.close >= Math.min(...entry) && last.close <= Math.max(...entry) ? "ENTER_NOW" : "WAIT_FOR_ENTRY";
+  const riskReward = riskRewardRatio(rrValue);
+  const leverage = snapshot.mode === "futures" && qualifiedSide !== "NO_TRADE" ? leverageRecommendation(score, a / last.close, momentum, snapshot.regime) : undefined;
+  const management = managementText(qualifiedSide, entryStatus);
   return {
     id: `${snapshot.symbol}-${snapshot.mode}-${Date.now()}`,
     createdAt: new Date().toISOString(),
     symbol: snapshot.symbol,
     mode: snapshot.mode,
-    side: finalSide,
-    score: Math.round(score),
+    side: qualifiedSide,
+    score: roundedScore,
     winProbability: Math.round(clamp(48 + score * 0.48, 0, 94)),
     confidence: Math.round(score),
+    currentPrice: last.close,
+    entryStatus,
     entry,
     stopLoss,
     takeProfit,
-    leverage: snapshot.mode === "futures" ? (score >= 90 ? "2x-3x conservative" : "1x-2x conservative") : undefined,
+    leverage,
+    riskReward,
     invalidationLevel: stopLoss,
     holdTime: snapshot.mode === "futures" ? "30 minutes to 6 hours" : "1 to 7 days",
     marketRegime: snapshot.regime,
     btcStable: snapshot.btcStable,
     reasons: reasons(snapshot, { trendStrength, volume, mtf, smc: smc.score, momentum, funding, oi, orderbook, rs }),
-    rejectionReason: rejectionReason(finalSide, score, snapshot),
+    rejectionReason: rejectionReason(qualifiedSide, roundedScore, snapshot, weakMomentum, rrValue),
     scoreBreakdown: {
       trendStrength: Math.round(trendStrength),
       liquidity: Math.round(snapshot.liquidityScore),
@@ -98,17 +110,54 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
       regimePenalty: Math.round(regimePenalty),
       btcPenalty: Math.round(btcPenalty)
     },
-    management: finalSide === "NO_TRADE" ? "WAIT" : finalSide === "WATCHLIST" ? "WAIT for stronger confirmation" : "ENTER NOW; move SL to breakeven after TP1, take partial profit at TP2, trail remainder with ATR"
+    tradeManagementActions: tradeManagementActions(qualifiedSide, entryStatus),
+    management
   };
 }
 
-function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot) {
-  if (side !== "NO_TRADE") return side === "WATCHLIST" ? "Score 70-84: watchlist only until stronger confirmation" : "Accepted high-probability setup";
+function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, weakMomentum: boolean, rrValue: number) {
+  if (side !== "NO_TRADE") return "Accepted high-probability setup";
   if (snapshot.regime === "MANIPULATION_RISK") return "Manipulation risk detected";
   if (!snapshot.btcStable && snapshot.symbol !== "BTCUSDT") return "BTC unstable, altcoin aggression blocked";
+  if (weakMomentum) return "Weak momentum, no trade";
+  if (rrValue < 2) return `Risk/reward ${riskRewardRatio(rrValue)} below minimum 1:2.0`;
   if (snapshot.regime === "RANGING") return "Ranging/choppy market, no high-probability trend setup";
   if (snapshot.regime === "VOLATILE" || snapshot.regime === "NEWS_DRIVEN") return "Volatile/news-driven conditions, false-positive risk too high";
-  return `Score ${Math.round(score)} below 70 threshold`;
+  return `Score ${Math.round(score)} below 85 high-quality threshold`;
+}
+
+function leverageRecommendation(score: number, volatility: number, momentum: number, regime: MarketRegime) {
+  let leverage = score >= 90 ? 5 : score >= 85 ? 3 : 2;
+  if (volatility > 0.018 || regime === "VOLATILE" || regime === "NEWS_DRIVEN") leverage = Math.min(leverage, 2);
+  else if (volatility > 0.012 || momentum < 70) leverage = Math.min(leverage, 3);
+  if (score < 90) leverage = Math.min(leverage, 3);
+  if (score < 85) leverage = 2;
+  return `${leverage}x`;
+}
+
+function riskRewardValue(entry: [number, number], stopLoss: number, tp3: number, direction: number) {
+  const averageEntry = (entry[0] + entry[1]) / 2;
+  const risk = Math.abs(averageEntry - stopLoss);
+  const reward = Math.abs(tp3 - averageEntry);
+  if (!Number.isFinite(risk) || risk <= 0 || direction === 0) return 0;
+  return reward / risk;
+}
+
+function riskRewardRatio(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "N/A";
+  return `1:${value.toFixed(1)}`;
+}
+
+function managementText(side: Side, entryStatus: Signal["entryStatus"]) {
+  if (side === "NO_TRADE") return "❌ NO TRADE";
+  if (entryStatus === "WAIT_FOR_ENTRY") return "⏳ WAIT FOR ENTRY";
+  return "✅ ENTER NOW; after TP1 move SL to breakeven, take partial at TP2, trail remainder with ATR";
+}
+
+function tradeManagementActions(side: Side, entryStatus: Signal["entryStatus"]) {
+  if (side === "NO_TRADE") return ["❌ NO TRADE"];
+  if (entryStatus === "WAIT_FOR_ENTRY") return ["⏳ WAIT FOR ENTRY"];
+  return ["🟢 ENTER NOW", "🟡 HOLD POSITION", "🟠 TAKE PARTIAL PROFIT", "🟠 MOVE STOP LOSS TO BREAKEVEN", "🟠 TRAIL STOP ACTIVATED", "🔴 EXIT TRADE NOW", "⚠️ TREND REVERSAL DETECTED"];
 }
 
 function multiTimeframeScore(snapshot: MarketSnapshot, direction: number) {

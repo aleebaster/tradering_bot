@@ -12,10 +12,13 @@ type Signal = {
   score: number;
   winProbability: number;
   confidence: number;
+  currentPrice: number;
+  entryStatus: "ENTER_NOW" | "WAIT_FOR_ENTRY" | "NO_TRADE";
   entry: [number, number];
   stopLoss: number;
   takeProfit: [number, number, number];
   leverage?: string;
+  riskReward: string;
   invalidationLevel: number;
   holdTime: string;
   marketRegime: string;
@@ -134,7 +137,7 @@ function SignalCard({ signal }: { signal: Signal }) {
   return (
     <article className="rounded-xl border border-edge bg-black/20 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xl font-black">{signal.symbol} <span className={sideClass(signal.side)}>{signal.side}</span></h3><div className="rounded-full bg-profit/10 px-3 py-1 text-profit">Win Probability: {signal.winProbability}%</div></div>
-      <div className="mt-3 grid gap-2 text-sm md:grid-cols-4"><Row label="Entry" value={`${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`} /><Row label="SL" value={fmt(signal.stopLoss)} /><Row label="TP" value={signal.takeProfit.map(fmt).join(" / ")} /><Row label="Confidence" value={`${signal.confidence}%`} /></div>
+      <div className="mt-3 grid gap-2 text-sm md:grid-cols-4"><Row label="Status" value={signal.entryStatus.replaceAll("_", " ")} /><Row label="Entry" value={`${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`} /><Row label="Current Price" value={fmt(signal.currentPrice)} /><Row label="Leverage" value={signal.leverage ?? "N/A"} /><Row label="SL" value={fmt(signal.stopLoss)} /><Row label="TP" value={signal.takeProfit.map(fmt).join(" / ")} /><Row label="Risk/Reward" value={signal.riskReward} /><Row label="Confidence" value={`${signal.confidence}%`} /></div>
       <p className="mt-3 text-sm text-slate-300">{signal.reasons.join(". ")}</p>
     </article>
   );
