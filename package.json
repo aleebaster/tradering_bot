@@ -13,6 +13,8 @@
     "signal:test": "chcp 65001 >nul && tsx scripts/real-signal-test.ts",
     "okx:diagnostics": "chcp 65001 >nul && tsx scripts/okx-diagnostics.ts",
     "kraken:diagnostics": "chcp 65001 >nul && tsx scripts/kraken-diagnostics.ts",
+    "aigensyn:bybit": "chcp 65001 >nul && tsx scripts/manual-aigensyn-bybit.ts",
+    "aigensyn:watch": "chcp 65001 >nul && set WATCH_AIGENSYN=1&& tsx scripts/manual-aigensyn-bybit.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },

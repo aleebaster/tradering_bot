@@ -83,7 +83,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
     mode: snapshot.mode,
     side: qualifiedSide,
     score: roundedScore,
-    winProbability: Math.round(clamp(48 + score * 0.48, 0, 94)),
+    winProbability: Math.round(clamp(score, 0, 94)),
     confidence: Math.round(score),
     currentPrice: last.close,
     entryStatus,
