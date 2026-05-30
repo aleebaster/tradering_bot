@@ -8,14 +8,14 @@ const diagnostics: Diagnostics = {
   partialMode: config.partialMode,
   warnings: config.warning ? [config.warning] : [],
   scannedSymbols: 0,
-  apiStatus: { bybit: "unknown", okx: config.partialMode ? "partial" : "unknown", binance: "unknown", telegram: "unknown" },
+  apiStatus: { bybit: "невідомо", okx: config.partialMode ? "частковий режим" : "невідомо", binance: "невідомо", telegram: "невідомо" },
   validSymbols: [],
   invalidSymbols: []
 };
 
 export const state: BotState = {
   diagnostics,
-  marketCondition: "Initializing live scanner",
+  marketCondition: "Ініціалізація live-сканера",
   activeSignals: [],
   watchlist: [],
   history: [],

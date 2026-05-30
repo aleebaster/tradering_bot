@@ -91,7 +91,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
     leverage,
     riskReward,
     invalidationLevel: stopLoss,
-    holdTime: snapshot.mode === "futures" ? "30 minutes to 6 hours" : "1 to 7 days",
+    holdTime: snapshot.mode === "futures" ? "30 хвилин до 6 годин" : "1-7 днів",
     marketRegime: snapshot.regime,
     btcStable: snapshot.btcStable,
     reasons: reasons(snapshot, { trendStrength, volume, mtf, smc: smc.score, momentum, funding, oi, orderbook, rs }),
@@ -116,14 +116,14 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
 }
 
 function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, weakMomentum: boolean, rrValue: number) {
-  if (side !== "NO_TRADE") return "Accepted high-probability setup";
-  if (snapshot.regime === "MANIPULATION_RISK") return "Manipulation risk detected";
-  if (!snapshot.btcStable && snapshot.symbol !== "BTCUSDT") return "BTC unstable, altcoin aggression blocked";
-  if (weakMomentum) return "Weak momentum, no trade";
-  if (rrValue < 2) return `Risk/reward ${riskRewardRatio(rrValue)} below minimum 1:2.0`;
-  if (snapshot.regime === "RANGING") return "Ranging/choppy market, no high-probability trend setup";
-  if (snapshot.regime === "VOLATILE" || snapshot.regime === "NEWS_DRIVEN") return "Volatile/news-driven conditions, false-positive risk too high";
-  return `Score ${Math.round(score)} below 85 high-quality threshold`;
+  if (side !== "NO_TRADE") return "Прийнятий сетап з високою ймовірністю";
+  if (snapshot.regime === "MANIPULATION_RISK") return "Виявлено ризик маніпуляції";
+  if (!snapshot.btcStable && snapshot.symbol !== "BTCUSDT") return "BTC нестабільний, агресивні угоди по альткоїнах заблоковані";
+  if (weakMomentum) return "Слабкий імпульс, угоду пропущено";
+  if (rrValue < 2) return `Співвідношення ризик/прибуток ${riskRewardRatio(rrValue)} нижче мінімуму 1:2.0`;
+  if (snapshot.regime === "RANGING") return "Боковий/шумний ринок, немає сильного трендового сетапу";
+  if (snapshot.regime === "VOLATILE" || snapshot.regime === "NEWS_DRIVEN") return "Волатильний або новинний ринок, ризик хибного сигналу занадто високий";
+  return `Оцінка ${Math.round(score)} нижче порогу високої якості 85`;
 }
 
 function leverageRecommendation(score: number, volatility: number, momentum: number, regime: MarketRegime) {
@@ -144,20 +144,20 @@ function riskRewardValue(entry: [number, number], stopLoss: number, tp3: number,
 }
 
 function riskRewardRatio(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return "N/A";
+  if (!Number.isFinite(value) || value <= 0) return "Немає даних";
   return `1:${value.toFixed(1)}`;
 }
 
 function managementText(side: Side, entryStatus: Signal["entryStatus"]) {
-  if (side === "NO_TRADE") return "❌ NO TRADE";
-  if (entryStatus === "WAIT_FOR_ENTRY") return "⏳ WAIT FOR ENTRY";
-  return "✅ ENTER NOW; after TP1 move SL to breakeven, take partial at TP2, trail remainder with ATR";
+  if (side === "NO_TRADE") return "❌ НЕ ВХОДИТИ";
+  if (entryStatus === "WAIT_FOR_ENTRY") return "⏳ ЧЕКАТИ ЗОНУ ВХОДУ";
+  return "✅ ЗАХОДИТИ ЗАРАЗ; після TP1 перенести SL у беззбиток, на TP2 зафіксувати частину, залишок вести трейлінгом ATR";
 }
 
 function tradeManagementActions(side: Side, entryStatus: Signal["entryStatus"]) {
-  if (side === "NO_TRADE") return ["❌ NO TRADE"];
-  if (entryStatus === "WAIT_FOR_ENTRY") return ["⏳ WAIT FOR ENTRY"];
-  return ["🟢 ENTER NOW", "🟡 HOLD POSITION", "🟠 TAKE PARTIAL PROFIT", "🟠 MOVE STOP LOSS TO BREAKEVEN", "🟠 TRAIL STOP ACTIVATED", "🔴 EXIT TRADE NOW", "⚠️ TREND REVERSAL DETECTED"];
+  if (side === "NO_TRADE") return ["❌ НЕ ВХОДИТИ"];
+  if (entryStatus === "WAIT_FOR_ENTRY") return ["⏳ ЧЕКАТИ ЗОНУ ВХОДУ"];
+  return ["🟢 ЗАХОДИТИ ЗАРАЗ", "🟡 ТРИМАТИ ПОЗИЦІЮ", "🟠 ЗАФІКСУВАТИ ЧАСТИНУ ПРИБУТКУ", "🟠 ПЕРЕНЕСТИ STOP LOSS У БЕЗЗБИТОК", "🟠 АКТИВОВАНО ТРЕЙЛІНГ-СТОП", "🔴 ВИЙТИ З УГОДИ ЗАРАЗ", "⚠️ ВИЯВЛЕНО РОЗВОРОТ ТРЕНДУ"];
 }
 
 function multiTimeframeScore(snapshot: MarketSnapshot, direction: number) {
@@ -174,13 +174,18 @@ function multiTimeframeScore(snapshot: MarketSnapshot, direction: number) {
 }
 
 function reasons(snapshot: MarketSnapshot, parts: Record<string, number>) {
-  const out = [`Market regime: ${snapshot.regime}`, `BTC filter: ${snapshot.btcStable ? "stable" : "unstable"}`];
-  if (snapshot.regime === "MANIPULATION_RISK") out.push("⚠️ HIGH RISK MARKET — NO TRADE");
-  if (parts.trendStrength > 55) out.push("EMA trend structure is aligned and strong");
-  if (parts.volume > 65) out.push("Volume confirmation above recent profile");
-  if (parts.smc > 50) out.push("SMC confirmation from BOS/CHOCH/liquidity sweep/FVG context");
-  if (parts.mtf > 65) out.push("Multi-timeframe alignment confirmed");
-  if (parts.orderbook > 60) out.push("Order book imbalance supports direction");
-  if (Math.abs(snapshot.fundingRate) < 0.0008) out.push("Funding is not overcrowded");
+  const out = [`Режим ринку: ${marketRegimeUa(snapshot.regime)}`, `Фільтр BTC: ${snapshot.btcStable ? "стабільний" : "нестабільний"}`];
+  if (snapshot.regime === "MANIPULATION_RISK") out.push("⚠️ РИНОК ВИСОКОГО РИЗИКУ — НЕ ВХОДИТИ");
+  if (parts.trendStrength > 55) out.push("структура EMA підтверджує сильний тренд");
+  if (parts.volume > 65) out.push("обсяг підтверджує рух вище недавнього профілю");
+  if (parts.smc > 50) out.push("SMC підтверджено через BOS/CHOCH/liquidity sweep/FVG");
+  if (parts.mtf > 65) out.push("мультитаймфрейм підтверджує напрямок");
+  if (parts.orderbook > 60) out.push("дисбаланс стакана підтримує напрямок");
+  if (Math.abs(snapshot.fundingRate) < 0.0008) out.push("funding не перегрітий");
   return out;
+}
+
+function marketRegimeUa(regime: MarketRegime) {
+  const map: Record<MarketRegime, string> = { TRENDING: "трендовий", RANGING: "боковий", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" };
+  return map[regime];
 }

@@ -12,5 +12,5 @@ export async function localState() {
 }
 
 export function unavailable() {
-  return Response.json({ ok: false, error: "Local scanner API unavailable", localApiUrl }, { status: 503 });
+  return Response.json({ ok: false, error: "Локальний API сканера недоступний. Сканер і сигнальний рушій мають працювати на Windows-комп'ютері.", localApiUrl }, { status: 503 });
 }

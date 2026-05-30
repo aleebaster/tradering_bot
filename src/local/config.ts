@@ -25,7 +25,7 @@ export const config = {
   ...env,
   mode,
   partialMode,
-  warning: partialMode ? "OKX Passphrase missing — running in partial mode." : null,
+  warning: partialMode ? "Парольна фраза OKX відсутня — режим часткового підтвердження." : null,
   symbols: ["BTCUSDT", "ETHUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT"],
   futuresTimeframes: ["5", "15", "60"],
   spotTimeframes: ["60", "240", "D"],

@@ -30,7 +30,7 @@ wss.on("connection", (socket) => socket.send(JSON.stringify({ type: "state", sta
 
 const scanner = new Scanner(broadcast);
 server.listen(config.LOCAL_API_PORT, () => {
-  logger.info(`Local API listening on http://localhost:${config.LOCAL_API_PORT}`);
+  logger.info(`Локальний API слухає http://localhost:${config.LOCAL_API_PORT}`);
   if (config.warning) logger.warn(config.warning);
   void scanner.start();
 });

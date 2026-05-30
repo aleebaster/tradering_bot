@@ -14,14 +14,14 @@ async function main() {
   const valid = await bybitLinearSymbols().catch(() => new Set(preferred));
   const symbols = preferred.filter((s) => valid.has(s)).slice(0, 20);
   const invalid = preferred.slice(0, 20).filter((s) => !valid.has(s));
-  if (symbols.length < 20) throw new Error(`Only ${symbols.length} preferred symbols are Bybit linear-valid. Invalid: ${invalid.join(",")}`);
-  console.log(`LIVE VALIDATION START ${new Date().toISOString()}`);
-  console.log(`Bybit valid symbols tested: ${symbols.join(", ")}`);
-  console.log(`Invalid symbol errors: 0`);
+  if (symbols.length < 20) throw new Error(`Лише ${symbols.length} обраних символів валідні для Bybit linear. Невалідні: ${invalid.join(",")}`);
+  console.log(`ПОЧАТОК LIVE-ВАЛІДАЦІЇ ${new Date().toISOString()}`);
+  console.log(`Перевірені валідні символи Bybit: ${symbols.join(", ")}`);
+  console.log("Помилки невалідних символів: 0");
 
   const btcCandles = await loadBybitCandles("BTCUSDT");
   const btcOk = btcStable(btcCandles);
-  console.log(`BTC filter status: ${btcOk ? "STABLE" : "UNSTABLE"}`);
+  console.log(`Статус фільтра BTC: ${btcOk ? "СТАБІЛЬНИЙ" : "НЕСТАБІЛЬНИЙ"}`);
   const outputs: Signal[] = [];
 
   for (const symbol of symbols) {
@@ -52,8 +52,8 @@ async function main() {
   }
 
   const accepted = outputs.filter((s) => !["NO_TRADE", "WATCHLIST"].includes(s.side));
-  console.log(`SUMMARY symbols=${outputs.length} acceptedSignals=${accepted.length} watchlist=${outputs.filter((s) => s.side === "WATCHLIST").length} noTrade=${outputs.filter((s) => s.side === "NO_TRADE").length}`);
-  console.log(`LIVE VALIDATION END ${new Date().toISOString()}`);
+  console.log(`ПІДСУМОК символів=${outputs.length} прийнятихСигналів=${accepted.length} спостереження=${outputs.filter((s) => s.side === "WATCHLIST").length} неВходити=${outputs.filter((s) => s.side === "NO_TRADE").length}`);
+  console.log(`КІНЕЦЬ LIVE-ВАЛІДАЦІЇ ${new Date().toISOString()}`);
 }
 
 async function bybitLinearSymbols() {
@@ -81,38 +81,38 @@ function confluenceCount(signal: Signal) {
 function trendStatus(signal: Signal) {
   const trend = signal.scoreBreakdown.trendStrength;
   const mtf = signal.scoreBreakdown.multiTimeframeAlignment;
-  if (trend >= 60 && mtf >= 67) return "STRONG";
-  if (trend >= 30 || mtf >= 67) return "DEVELOPING";
-  return "WEAK";
+  if (trend >= 60 && mtf >= 67) return "СИЛЬНИЙ";
+  if (trend >= 30 || mtf >= 67) return "ФОРМУЄТЬСЯ";
+  return "СЛАБКИЙ";
 }
 
 function printSignal(signal: Signal) {
   console.log(`\n${signal.symbol}`);
-  console.log(`Score: ${signal.score}`);
-  console.log(`Confidence: ${signal.confidence}%`);
-  console.log(`Win Probability: ${signal.winProbability}%`);
-  console.log(`BTC Filter: ${signal.btcStable ? "STABLE" : "UNSTABLE"}`);
-  console.log(`Trend Status: ${trendStatus(signal)}`);
-  console.log(`Market Regime: ${signal.marketRegime}`);
-  console.log(`Confluence Count: ${confluenceCount(signal)}`);
-  console.log(`Entry Status: ${signal.entryStatus}`);
-  console.log(`Current Price: ${fmt(signal.currentPrice)}`);
-  console.log(`Risk/Reward: ${signal.riskReward}`);
-  console.log(`Leverage: ${signal.leverage ?? "N/A"}`);
-  console.log(`Funding Confirmation: ${signal.scoreBreakdown.fundingConfirmation}`);
-  console.log(`OI Confirmation: ${signal.scoreBreakdown.openInterestConfirmation}`);
+  console.log(`Оцінка: ${signal.score}`);
+  console.log(`Впевненість: ${signal.confidence}%`);
+  console.log(`Ймовірність успіху: ${signal.winProbability}%`);
+  console.log(`Фільтр BTC: ${signal.btcStable ? "СТАБІЛЬНИЙ" : "НЕСТАБІЛЬНИЙ"}`);
+  console.log(`Стан тренду: ${trendStatus(signal)}`);
+  console.log(`Режим ринку: ${signal.marketRegime}`);
+  console.log(`Кількість підтверджень: ${confluenceCount(signal)}`);
+  console.log(`Статус входу: ${signal.entryStatus}`);
+  console.log(`Поточна ціна: ${fmt(signal.currentPrice)}`);
+  console.log(`Ризик/прибуток: ${signal.riskReward}`);
+  console.log(`Плече: ${signal.leverage ?? "Немає"}`);
+  console.log(`Підтвердження funding: ${signal.scoreBreakdown.fundingConfirmation}`);
+  console.log(`Підтвердження OI: ${signal.scoreBreakdown.openInterestConfirmation}`);
   if (["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
-    console.log(`${signal.side === "WATCHLIST" ? "Watchlist" : "Rejected"}: ${signal.rejectionReason}`);
+    console.log(`${signal.side === "WATCHLIST" ? "Спостереження" : "Відхилено"}: ${signal.rejectionReason}`);
   } else {
-    console.log(`Signal: ${signal.side}`);
-    console.log(`Entry: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`);
-    console.log(`SL: ${fmt(signal.stopLoss)}`);
+    console.log(`Сигнал: ${signal.side}`);
+    console.log(`Вхід: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`);
+    console.log(`Стоп-лосс: ${fmt(signal.stopLoss)}`);
     console.log(`TP1: ${fmt(signal.takeProfit[0])}`);
     console.log(`TP2: ${fmt(signal.takeProfit[1])}`);
     console.log(`TP3: ${fmt(signal.takeProfit[2])}`);
-    console.log(`Reason: ${signal.reasons.join("; ")}`);
+    console.log(`Причина: ${signal.reasons.join("; ")}`);
   }
-  console.log(`Score Breakdown: ${JSON.stringify(signal.scoreBreakdown)}`);
+  console.log(`Деталізація оцінки: ${JSON.stringify(signal.scoreBreakdown)}`);
 }
 
 function fmt(n: number) {
@@ -135,6 +135,6 @@ async function retry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
 }
 
 main().catch((err) => {
-  console.error("LIVE VALIDATION FAILED", err instanceof Error ? err.message : err);
+  console.error("LIVE-ВАЛІДАЦІЯ НЕ ВДАЛАСЯ", err instanceof Error ? err.message : err);
   process.exit(1);
 });

@@ -1,40 +1,42 @@
-# AI Crypto Signal Bot
+# ШІ-бот криптосигналів
 
-Local Windows crypto signal scanner with a Vercel-compatible Next.js dashboard.
+Локальний Windows-сканер криптосигналів з панеллю Next.js, сумісною з Vercel.
 
 ## Architecture
 
-Local Windows runs the exchange connections, scanner, signal engine, Telegram alerts, WebSocket server, and REST API at `http://localhost:4000`.
+Windows-комп'ютер локально запускає підключення до бірж, сканер, сигнальний рушій, Telegram-сповіщення, WebSocket-сервер і REST API на `http://localhost:4000`.
 
-Vercel runs only the dashboard UI. The deployed dashboard reads the local API from the user's browser via `NEXT_PUBLIC_LOCAL_API_URL`.
+Vercel запускає тільки інтерфейс панелі. Сканер, сигнальний рушій і біржові підключення не працюють на Vercel.
 
 ## Run Locally
 
-Double-click `START_BOT.bat`, or run:
+Запустіть `START_BOT.bat` подвійним кліком або виконайте:
 
 ```bash
 npm install
 npm run local:all
 ```
 
-Dashboard: `http://localhost:3000`
+Панель: `http://localhost:3000`
 
-Local API: `http://localhost:4000`
+Локальний API: `http://localhost:4000`
 
 ## Vercel
 
-Deploy the repository as a Next.js app. Do not configure scanner secrets on Vercel. Only set `NEXT_PUBLIC_LOCAL_API_URL` if needed.
+Деплойте репозиторій як Next.js застосунок. Не запускайте сканер і не додавайте біржові секрети на Vercel.
+
+Якщо Vercel-панель не може дістатися до локального `http://localhost:4000`, вона показує `ЛОКАЛЬНИЙ РУШІЙ ПОТРІБЕН`, а не фальшивий статус недоступності. Для віддаленого доступу потрібен безпечний HTTPS API/тунель і відповідне значення `NEXT_PUBLIC_LOCAL_API_URL`.
 
 ## Trading Safety
 
-The bot does not place orders. It produces high-selectivity signals, watchlist entries, and no-trade decisions from live public market data and configured exchange context.
+Бот не відкриває ордери автоматично. Він створює високоселективні сигнали, записи для спостереження і рішення `НЕ ВХОДИТИ` на основі живих ринкових даних і налаштованого біржового контексту.
 
 ## Signal Engine
 
-The signal engine acts as a trade assistant, not an auto-trader. It requires a score of `85+` for any trade signal and rejects weaker setups as `NO TRADE`.
+Сигнальний рушій працює як торговий асистент, а не автотрейдер. Для будь-якого торгового сигналу потрібна оцінка `85+`; слабші сетапи відхиляються як `НЕ ВХОДИТИ`.
 
-Futures leverage is capped at `5x`; recommendations are limited to `2x`, `3x`, or `5x` and are reduced automatically when volatility is high or momentum is weak.
+Плече для ф'ючерсів обмежене `5x`; рекомендації можливі тільки `2x`, `3x` або `5x` і автоматично знижуються при високій волатильності або слабкому імпульсі.
 
-Every accepted setup includes entry timing, entry zone, current price, stop loss, TP1/TP2/TP3, risk/reward, invalidation level, win probability, confidence, and trade-management actions.
+Кожен прийнятий сетап містить час входу, зону входу, поточну ціну, стоп-лосс, TP1/TP2/TP3, співвідношення ризик/прибуток, рівень інвалідації, ймовірність успіху, впевненість і дії з управління угодою.
 
-Continuous monitoring sends management alerts for entry triggers, hold, partial profit, breakeven stop movement, trailing stop, exit now, and trend reversal detection.
+Безперервний моніторинг надсилає сповіщення про тригер входу, утримання позиції, часткову фіксацію прибутку, перенесення stop loss у беззбиток, трейлінг-стоп, вихід зараз і виявлення розвороту тренду.

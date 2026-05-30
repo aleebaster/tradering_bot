@@ -2,8 +2,8 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "AI Crypto Signal Bot",
-  description: "Live local crypto signal dashboard"
+  title: "ШІ-бот криптосигналів",
+  description: "Локальна панель живих криптосигналів"
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

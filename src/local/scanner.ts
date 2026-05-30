@@ -26,10 +26,10 @@ export class Scanner {
 
   async start() {
     await this.notifier.started().catch((err) => {
-      state.diagnostics.apiStatus.telegram = "error";
-      logger.warn({ err }, "Telegram startup alert failed");
+      state.diagnostics.apiStatus.telegram = "помилка";
+      logger.warn({ err }, "Не вдалося надіслати стартове повідомлення Telegram");
     });
-    state.diagnostics.apiStatus.telegram = "configured";
+    state.diagnostics.apiStatus.telegram = "налаштовано";
     await this.validateSymbols();
     await this.validateOkxAuth();
     this.connectBinanceTicker();
@@ -45,16 +45,16 @@ export class Scanner {
   private connectBinanceTicker() {
     const streams = config.symbols.map((s) => `${s.toLowerCase()}@ticker`).join("/");
     this.binanceWs = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
-    this.binanceWs.on("open", () => { state.diagnostics.apiStatus.binance = "websocket connected"; });
+    this.binanceWs.on("open", () => { state.diagnostics.apiStatus.binance = "WebSocket підключено"; });
     this.binanceWs.on("close", () => setTimeout(() => this.connectBinanceTicker(), 15000));
-    this.binanceWs.on("error", () => { state.diagnostics.apiStatus.binance = "websocket error"; });
+    this.binanceWs.on("error", () => { state.diagnostics.apiStatus.binance = "помилка WebSocket"; });
   }
 
   private async scan() {
     if (this.scanning) return;
     if (Date.now() < this.bybitCooldownUntil) {
-      state.diagnostics.apiStatus.bybit = `rate limited; cooling down until ${new Date(this.bybitCooldownUntil).toLocaleTimeString()}`;
-      state.marketCondition = "Bybit rate limit cooldown active; scanner will resume automatically";
+      state.diagnostics.apiStatus.bybit = `ліміт запитів; пауза до ${new Date(this.bybitCooldownUntil).toLocaleTimeString()}`;
+      state.marketCondition = "Активна пауза через ліміт Bybit; сканер автоматично продовжить роботу";
       this.broadcast({ type: "state", state });
       return;
     }
@@ -69,12 +69,12 @@ export class Scanner {
       const candles = symbol === "BTCUSDT" && mode === "futures" ? btcCandles : await this.loadCandles(symbol, mode);
       const snapshot = await this.snapshot(symbol, mode, candles, btcOk);
       const signal = buildSignal(snapshot);
-      logger.info({ symbol, mode, side: signal.side, score: signal.score, winProbability: signal.winProbability, rejectionReason: signal.rejectionReason, scoreBreakdown: signal.scoreBreakdown }, "scan decision");
+      logger.info({ symbol, mode, side: signal.side, score: signal.score, winProbability: signal.winProbability, rejectionReason: signal.rejectionReason, scoreBreakdown: signal.scoreBreakdown }, "рішення сканера");
       recordSignal(signal);
       candidates.push(signal);
       if (!this.sent.has(signalKey(signal)) && !["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
         this.sent.add(signalKey(signal));
-        await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Telegram signal failed"));
+        await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Не вдалося надіслати сигнал Telegram"));
       }
       await this.monitorActiveTrades(btcOk);
       state.diagnostics.lastScanAt = new Date().toISOString();
@@ -84,11 +84,11 @@ export class Scanner {
     } catch (err) {
       if (isRateLimit(err)) {
         this.bybitCooldownUntil = Date.now() + 5 * 60 * 1000;
-        state.diagnostics.apiStatus.bybit = "rate limited; automatic cooldown active";
-        state.marketCondition = "Bybit rate limit cooldown active; scanner will resume automatically";
+        state.diagnostics.apiStatus.bybit = "ліміт запитів; автоматична пауза активна";
+        state.marketCondition = "Активна пауза через ліміт Bybit; сканер автоматично продовжить роботу";
         this.broadcast({ type: "state", state });
       }
-      logger.error({ err }, "Scan failed");
+      logger.error({ err }, "Помилка сканування");
     } finally {
       this.scanning = false;
     }
@@ -109,29 +109,29 @@ export class Scanner {
       this.symbols = valid.length ? valid : ["BTCUSDT"];
       state.diagnostics.validSymbols = this.symbols;
       state.diagnostics.invalidSymbols = invalid;
-      state.diagnostics.apiStatus.bybit = "symbols validated";
+      state.diagnostics.apiStatus.bybit = "символи перевірено";
       logger.info({ validSymbols: this.symbols, invalidSymbols: invalid }, "Bybit symbol validation completed");
     } catch (err) {
       this.symbols = config.symbols;
       state.diagnostics.validSymbols = this.symbols;
       state.diagnostics.invalidSymbols = [];
-      state.diagnostics.apiStatus.bybit = "using prevalidated symbols";
-      logger.warn({ err, validSymbols: this.symbols }, "Bybit symbol validation temporarily unavailable; using prevalidated symbol universe");
+      state.diagnostics.apiStatus.bybit = "використовується попередньо перевірений список символів";
+      logger.warn({ err, validSymbols: this.symbols }, "Перевірка символів Bybit тимчасово недоступна; використовується попередньо перевірений список");
     }
   }
 
   private async validateOkxAuth() {
     if (config.partialMode) {
-      state.diagnostics.apiStatus.okx = "partial public confirmation";
+      state.diagnostics.apiStatus.okx = "часткове публічне підтвердження";
       return;
     }
     try {
       const auth = await this.client.okxAuthCheck();
-      state.diagnostics.apiStatus.okx = "authenticated and connected";
-      logger.info({ accountLevel: auth.accountLevel, permissions: auth.permissions }, "OKX authentication successful");
+      state.diagnostics.apiStatus.okx = "автентифіковано і підключено";
+      logger.info({ accountLevel: auth.accountLevel, permissions: auth.permissions }, "Автентифікація OKX успішна");
     } catch (err) {
-      state.diagnostics.apiStatus.okx = "authentication failed";
-      logger.error({ err }, "OKX authentication failed");
+      state.diagnostics.apiStatus.okx = "помилка автентифікації";
+      logger.error({ err }, "Помилка автентифікації OKX");
     }
   }
 
@@ -143,7 +143,7 @@ export class Scanner {
       entries.push([tf, await this.client.bybitKlines(symbol, tf, category)] as const);
       await sleep(150);
     }
-    state.diagnostics.apiStatus.bybit = "connected";
+    state.diagnostics.apiStatus.bybit = "підключено";
     return Object.fromEntries(entries);
   }
 
@@ -156,9 +156,9 @@ export class Scanner {
       mode === "futures" ? this.client.fundingRate(symbol).catch(() => 0) : Promise.resolve(0),
       mode === "futures" ? this.client.openInterestChange(symbol).catch(() => 0) : Promise.resolve(0)
     ]);
-    if (config.partialMode) state.diagnostics.apiStatus.okx = "partial public confirmation";
-    else if (state.diagnostics.apiStatus.okx !== "authentication failed") state.diagnostics.apiStatus.okx = "authenticated and connected; market confirmation active";
-    state.diagnostics.apiStatus.binance = "connected";
+    if (config.partialMode) state.diagnostics.apiStatus.okx = "часткове публічне підтвердження";
+    else if (state.diagnostics.apiStatus.okx !== "помилка автентифікації") state.diagnostics.apiStatus.okx = "автентифіковано і підключено; ринкове підтвердження активне";
+    state.diagnostics.apiStatus.binance = "підключено";
     const primary = candles[mode === "futures" ? "15" : "240"] ?? [];
     const dollarVolume = primary.slice(-24).reduce((s, c) => s + c.volume * c.close, 0) / 24;
     const whaleScore = Math.min(100, Math.max(0, Math.abs(oi) * 2500 + Math.abs(imbalance) * 120));
@@ -190,7 +190,7 @@ export class Scanner {
       if (this.managementSent.has(key)) continue;
       this.managementSent.add(key);
       logger.info({ symbol: signal.symbol, action: action.label, currentPrice: current, reasons: action.reasons }, "trade management alert");
-      await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Telegram trade management alert failed"));
+      await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Не вдалося надіслати Telegram-сповіщення управління угодою"));
     }
   }
 }
@@ -202,13 +202,13 @@ function tradeManagementAction(signal: Signal, current: number, btcOk: boolean) 
   const entryLow = Math.min(...signal.entry);
   const entryHigh = Math.max(...signal.entry);
   const entered = signal.entryStatus === "ENTER_NOW" || (current >= entryLow && current <= entryHigh);
-  if (!entered) return { label: "⏳ WAIT FOR ENTRY", reasons: [`Current price ${formatPrice(current)} is outside entry zone ${formatPrice(entryLow)}-${formatPrice(entryHigh)}`] };
-  if ((long && current <= signal.stopLoss) || (short && current >= signal.stopLoss)) return { label: "🔴 EXIT TRADE NOW", reasons: ["Stop loss or invalidation level reached", "Capital preservation rule triggered"] };
-  if (!btcOk && signal.symbol !== "BTCUSDT") return { label: "⚠️ TREND REVERSAL DETECTED", reasons: ["BTC instability detected", "Altcoin exposure risk increased"] };
-  if ((long && current >= signal.takeProfit[2]) || (short && current <= signal.takeProfit[2])) return { label: "🔴 EXIT TRADE NOW", reasons: ["TP3 reached", "Full planned reward captured"] };
-  if ((long && current >= signal.takeProfit[1]) || (short && current <= signal.takeProfit[1])) return { label: "🟠 TRAIL STOP ACTIVATED", reasons: ["TP2 reached", "Trail remaining position with ATR structure"] };
-  if ((long && current >= signal.takeProfit[0]) || (short && current <= signal.takeProfit[0])) return { label: "🟠 TAKE PARTIAL PROFIT", reasons: ["TP1 reached", "Move stop loss to breakeven"] };
-  return { label: "🟡 HOLD POSITION", reasons: ["Entry active", "No exit condition triggered"] };
+  if (!entered) return { label: "⏳ ЧЕКАТИ ЗОНУ ВХОДУ", reasons: [`Поточна ціна ${formatPrice(current)} поза зоною входу ${formatPrice(entryLow)}-${formatPrice(entryHigh)}`] };
+  if ((long && current <= signal.stopLoss) || (short && current >= signal.stopLoss)) return { label: "🔴 ВИЙТИ З УГОДИ ЗАРАЗ", reasons: ["Досягнуто стоп-лосс або рівень інвалідації", "Спрацювало правило збереження капіталу"] };
+  if (!btcOk && signal.symbol !== "BTCUSDT") return { label: "⚠️ ВИЯВЛЕНО РОЗВОРОТ ТРЕНДУ", reasons: ["Виявлено нестабільність BTC", "Ризик позиції по альткоїну зріс"] };
+  if ((long && current >= signal.takeProfit[2]) || (short && current <= signal.takeProfit[2])) return { label: "🔴 ВИЙТИ З УГОДИ ЗАРАЗ", reasons: ["Досягнуто TP3", "Запланований прибуток повністю зафіксовано"] };
+  if ((long && current >= signal.takeProfit[1]) || (short && current <= signal.takeProfit[1])) return { label: "🟠 АКТИВОВАНО ТРЕЙЛІНГ-СТОП", reasons: ["Досягнуто TP2", "Залишок позиції вести по ATR-структурі"] };
+  if ((long && current >= signal.takeProfit[0]) || (short && current <= signal.takeProfit[0])) return { label: "🟠 ЗАФІКСУВАТИ ЧАСТИНУ ПРИБУТКУ", reasons: ["Досягнуто TP1", "Перенести stop loss у беззбиток"] };
+  return { label: "🟡 ТРИМАТИ ПОЗИЦІЮ", reasons: ["Вхід активний", "Умов для виходу немає"] };
 }
 
 function formatPrice(value: number) {
@@ -230,7 +230,16 @@ function signalKey(s: Signal) {
 
 function summarize(signals: Signal[]) {
   const risk = signals.some((s) => s.marketRegime === "MANIPULATION_RISK");
-  if (risk) return "⚠️ HIGH RISK MARKET — NO TRADE";
+  if (risk) return "⚠️ РИНОК ВИСОКОГО РИЗИКУ — НЕ ВХОДИТИ";
   const best = signals.sort((a, b) => b.score - a.score)[0];
-  return best ? `${best.marketRegime} market. Strongest setup: ${best.symbol} ${best.side} ${best.score}/100` : "No qualified market data yet";
+  return best ? `Режим ринку: ${regimeUa(best.marketRegime)}. Найсильніший сетап: ${best.symbol} ${sideUa(best.side)} ${best.score}/100` : "Якісних ринкових даних ще немає";
+}
+
+function sideUa(side: Signal["side"]) {
+  return side === "NO_TRADE" ? "НЕ ВХОДИТИ" : side === "WATCHLIST" ? "СПОСТЕРЕЖЕННЯ" : side;
+}
+
+function regimeUa(regime: Signal["marketRegime"]) {
+  const map: Record<Signal["marketRegime"], string> = { TRENDING: "трендовий", RANGING: "боковий", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" };
+  return map[regime];
 }
