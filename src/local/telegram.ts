@@ -84,9 +84,21 @@ function formatSignal(signal: Signal) {
     `Впевненість: ${signal.confidence}%`,
     `Ймовірність успіху: ${signal.winProbability}%`,
     "",
+    "📡 Підтверджено:",
+    ...confirmationLines(signal),
+    "",
     "Причини:",
     ...signal.reasons.map((reason) => `✅ ${reason}`)
   ].filter(Boolean).join("\n");
+}
+
+function confirmationLines(signal: Signal) {
+  return [
+    signal.confirmations.bybit ? "✅ Bybit" : "❌ Bybit",
+    signal.confirmations.okx ? "✅ OKX" : "❌ OKX",
+    signal.confirmations.kucoin ? "✅ KuCoin" : "❌ KuCoin",
+    signal.confirmations.binance ? "✅ Binance market confirmation" : "❌ Binance market confirmation"
+  ];
 }
 
 function formatWatchlist(signal: Signal) {

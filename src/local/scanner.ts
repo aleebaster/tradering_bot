@@ -32,7 +32,9 @@ export class Scanner {
     state.diagnostics.apiStatus.telegram = "налаштовано";
     await this.validateSymbols();
     await this.validateOkxAuth();
+    await this.validateKucoinAuth();
     this.connectBinanceTicker();
+    this.connectKucoinTicker();
     await this.scan();
     this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
   }
@@ -48,6 +50,24 @@ export class Scanner {
     this.binanceWs.on("open", () => { state.diagnostics.apiStatus.binance = "WebSocket підключено"; });
     this.binanceWs.on("close", () => setTimeout(() => this.connectBinanceTicker(), 15000));
     this.binanceWs.on("error", () => { state.diagnostics.apiStatus.binance = "помилка WebSocket"; });
+  }
+
+  private async connectKucoinTicker() {
+    try {
+      state.diagnostics.apiStatus.kucoin = "підключення WebSocket";
+      const bullet = await this.client.kucoinPublicBullet();
+      const server = bullet.data.instanceServers[0];
+      const ws = new WebSocket(`${server.endpoint}?token=${bullet.data.token}&connectId=opencode-${Date.now()}`);
+      ws.on("open", () => {
+        state.diagnostics.apiStatus.kucoin = "WebSocket підключено";
+        ws.send(JSON.stringify({ id: Date.now(), type: "subscribe", topic: "/market/ticker:BTC-USDT", privateChannel: false, response: true }));
+      });
+      ws.on("close", () => { state.diagnostics.apiStatus.kucoin = "перепідключення KuCoin"; setTimeout(() => void this.connectKucoinTicker(), 15000); });
+      ws.on("error", () => { state.diagnostics.apiStatus.kucoin = "помилка WebSocket KuCoin"; });
+    } catch (err) {
+      state.diagnostics.apiStatus.kucoin = "помилка WebSocket KuCoin";
+      logger.warn({ err }, "Помилка підключення KuCoin WebSocket");
+    }
   }
 
   private async scan() {
@@ -135,6 +155,17 @@ export class Scanner {
     }
   }
 
+  private async validateKucoinAuth() {
+    try {
+      const auth = await this.client.kucoinAuthCheck();
+      state.diagnostics.apiStatus.kucoin = auth.ok ? "автентифіковано і підключено" : "помилка автентифікації KuCoin";
+      logger.info({ uid: auth.uid }, "Автентифікація KuCoin успішна");
+    } catch (err) {
+      state.diagnostics.apiStatus.kucoin = "помилка автентифікації KuCoin";
+      logger.error({ err }, "Помилка автентифікації KuCoin");
+    }
+  }
+
   private async loadCandles(symbol: string, mode: "spot" | "futures"): Promise<Record<string, Candle[]>> {
     const tfs = mode === "futures" ? config.futuresTimeframes : config.spotTimeframes;
     const category = mode === "spot" ? "spot" : "linear";
@@ -149,8 +180,9 @@ export class Scanner {
 
   private async snapshot(symbol: string, mode: "spot" | "futures", candles: Record<string, Candle[]>, btcOk: boolean): Promise<MarketSnapshot> {
     const tfs = mode === "futures" ? config.futuresTimeframes : config.spotTimeframes;
-    const [okxEntries, binanceEntries, imbalance, funding, oi] = await Promise.all([
+    const [okxEntries, kucoinEntries, binanceEntries, imbalance, funding, oi] = await Promise.all([
       Promise.all(tfs.map(async (tf) => [tf, await this.client.okxKlines(symbol, tf).catch(() => [])] as const)),
+      Promise.all(tfs.map(async (tf) => [tf, await this.client.kucoinKlines(symbol, tf).catch(() => [])] as const)),
       Promise.all(tfs.map(async (tf) => [tf, await this.client.binanceKlines(symbol, tf).catch(() => [])] as const)),
       mode === "futures" ? this.client.orderBookImbalance(symbol).catch(() => 0) : Promise.resolve(0),
       mode === "futures" ? this.client.fundingRate(symbol).catch(() => 0) : Promise.resolve(0),
@@ -167,6 +199,7 @@ export class Scanner {
       mode,
       candles,
       okxCandles: Object.fromEntries(okxEntries),
+      kucoinCandles: Object.fromEntries(kucoinEntries),
       binanceCandles: Object.fromEntries(binanceEntries),
       orderBookImbalance: imbalance,
       fundingRate: funding,
@@ -174,7 +207,8 @@ export class Scanner {
       liquidityScore: Math.min(100, Math.log10(Math.max(dollarVolume, 1)) * 11),
       whaleScore,
       btcStable: btcOk,
-      regime: regimeFrom(candles)
+      regime: regimeFrom(candles),
+      confirmations: exchangeConfirmations(candles, Object.fromEntries(okxEntries), Object.fromEntries(kucoinEntries), Object.fromEntries(binanceEntries), mode)
     };
   }
 
@@ -193,6 +227,40 @@ export class Scanner {
       await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Не вдалося надіслати Telegram-сповіщення управління угодою"));
     }
   }
+}
+
+function exchangeConfirmations(bybit: Record<string, Candle[]>, okx: Record<string, Candle[]>, kucoin: Record<string, Candle[]>, binance: Record<string, Candle[]>, mode: "spot" | "futures") {
+  const tf = mode === "futures" ? "15" : "240";
+  const bybitDir = directionOf(bybit[tf]);
+  const okxDir = directionOf(okx[tf]);
+  const kucoinDir = directionOf(kucoin[tf]);
+  const binanceDir = directionOf(binance[tf]);
+  const okxAligned = okxDir !== 0 && okxDir === bybitDir;
+  const kucoinAligned = kucoinDir !== 0 && kucoinDir === bybitDir;
+  const binanceAligned = binanceDir !== 0 && binanceDir === bybitDir;
+  const conflict = [okxDir, kucoinDir].some((dir) => dir !== 0 && bybitDir !== 0 && dir !== bybitDir);
+  return {
+    bybit: bybitDir !== 0,
+    okx: okxAligned,
+    kucoin: kucoinAligned,
+    binance: binanceAligned,
+    alignedCount: [bybitDir !== 0, okxAligned, kucoinAligned, binanceAligned].filter(Boolean).length,
+    conflict,
+    details: [`Bybit: ${dirUa(bybitDir)}`, `OKX: ${dirUa(okxDir)}`, `KuCoin: ${dirUa(kucoinDir)}`, `Binance: ${dirUa(binanceDir)}`]
+  };
+}
+
+function directionOf(candles: Candle[] | undefined) {
+  if (!candles || candles.length < 55) return 0;
+  const recent = candles.at(-1)!;
+  const prev = candles.at(-20)!;
+  if (recent.close > prev.close) return 1;
+  if (recent.close < prev.close) return -1;
+  return 0;
+}
+
+function dirUa(dir: number) {
+  return dir > 0 ? "вгору" : dir < 0 ? "вниз" : "немає даних";
 }
 
 function tradeManagementAction(signal: Signal, current: number, btcOk: boolean) {

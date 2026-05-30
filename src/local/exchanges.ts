@@ -5,6 +5,8 @@ import { config } from "./config";
 const BYBIT = "https://api.bybit.com";
 const OKX = "https://www.okx.com";
 const BINANCE = "https://api.binance.com";
+const KUCOIN = "https://api.kucoin.com";
+const KUCOIN_FUTURES = "https://api-futures.kucoin.com";
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   let lastError: unknown;
@@ -56,6 +58,40 @@ export class ExchangeClient {
     return body.map((r) => ({ exchange: "binance", symbol, timeframe: interval, openTime: Number(r[0]), open: Number(r[1]), high: Number(r[2]), low: Number(r[3]), close: Number(r[4]), volume: Number(r[5]) }));
   }
 
+  async kucoinKlines(symbol: string, interval: string, limit = 220): Promise<Candle[]> {
+    const typeMap: Record<string, string> = { "5": "5min", "15": "15min", "60": "1hour", "240": "4hour", D: "1day" };
+    const endAt = Math.floor(Date.now() / 1000);
+    const seconds = interval === "D" ? 86400 : Number(interval) * 60;
+    const startAt = endAt - seconds * limit;
+    const kucoinSymbol = symbol.replace("USDT", "-USDT");
+    const body = await json<{ code: string; data: string[][] }>(`${KUCOIN}/api/v1/market/candles?type=${typeMap[interval]}&symbol=${kucoinSymbol}&startAt=${startAt}&endAt=${endAt}`);
+    if (body.code !== "200000") throw new Error(`KuCoin market candles failed: ${body.code}`);
+    return body.data.reverse().slice(-limit).map((r) => ({ exchange: "kucoin" as Candle["exchange"], symbol, timeframe: interval, openTime: Number(r[0]) * 1000, open: Number(r[1]), close: Number(r[2]), high: Number(r[3]), low: Number(r[4]), volume: Number(r[5]) }));
+  }
+
+  async kucoinFuturesTicker(symbol: string): Promise<{ ok: boolean; price?: number }> {
+    const base = symbol.replace("USDT", "");
+    const futuresSymbol = `${base === "BTC" ? "XBT" : base}USDTM`;
+    const body = await json<{ code: string; data: { price?: string; markPrice?: string } }>(`${KUCOIN_FUTURES}/api/v1/ticker?symbol=${futuresSymbol}`);
+    if (body.code !== "200000") throw new Error(`KuCoin futures ticker failed: ${body.code}`);
+    return { ok: true, price: Number(body.data.price ?? body.data.markPrice ?? 0) };
+  }
+
+  async kucoinAuthCheck(): Promise<{ ok: boolean; uid?: string }> {
+    const path = "/api/v1/accounts";
+    const body = await this.kucoinPrivateGet<{ code: string; data: Array<{ id: string }> }>(path);
+    if (body.code !== "200000") throw new Error(`KuCoin auth failed: ${body.code}`);
+    return { ok: true, uid: body.data[0]?.id };
+  }
+
+  async kucoinPublicBullet() {
+    return json<{ code: string; data: { token: string; instanceServers: Array<{ endpoint: string; pingInterval: number }> } }>(`${KUCOIN}/api/v1/bullet-public`, { method: "POST" });
+  }
+
+  async kucoinPrivateBullet() {
+    return this.kucoinPrivatePost<{ code: string; data: { token: string; instanceServers: Array<{ endpoint: string; pingInterval: number }> } }>("/api/v1/bullet-private");
+  }
+
   async orderBookImbalance(symbol: string): Promise<number> {
     const body = await json<{ result: { b: string[][]; a: string[][] } }>(`${BYBIT}/v5/market/orderbook?category=linear&symbol=${symbol}&limit=50`);
     const bids = body.result.b.reduce((s, [p, q]) => s + Number(p) * Number(q), 0);
@@ -93,5 +129,28 @@ export class ExchangeClient {
         "x-simulated-trading": "0"
       }
     });
+  }
+
+  private kucoinHeaders(method: "GET" | "POST", path: string, body = "") {
+    if (!config.KUCOIN_API_KEY || !config.KUCOIN_API_SECRET || !config.KUCOIN_API_PASSPHRASE) throw new Error("KuCoin credentials incomplete");
+    const timestamp = Date.now().toString();
+    const sign = crypto.createHmac("sha256", config.KUCOIN_API_SECRET).update(`${timestamp}${method}${path}${body}`).digest("base64");
+    const passphrase = crypto.createHmac("sha256", config.KUCOIN_API_SECRET).update(config.KUCOIN_API_PASSPHRASE).digest("base64");
+    return {
+      "KC-API-KEY": config.KUCOIN_API_KEY,
+      "KC-API-SIGN": sign,
+      "KC-API-TIMESTAMP": timestamp,
+      "KC-API-PASSPHRASE": passphrase,
+      "KC-API-KEY-VERSION": "2",
+      "content-type": "application/json"
+    };
+  }
+
+  private async kucoinPrivateGet<T>(path: string): Promise<T> {
+    return json<T>(`${KUCOIN}${path}`, { headers: this.kucoinHeaders("GET", path) });
+  }
+
+  private async kucoinPrivatePost<T>(path: string): Promise<T> {
+    return json<T>(`${KUCOIN}${path}`, { method: "POST", headers: this.kucoinHeaders("POST", path) });
   }
 }

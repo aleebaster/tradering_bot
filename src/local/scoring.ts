@@ -58,11 +58,13 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const orderbook = clamp(50 + snapshot.orderBookImbalance * 120 * direction);
   const regimePenalty = snapshot.regime === "TRENDING" ? 0 : snapshot.regime === "RANGING" ? 22 : snapshot.regime === "VOLATILE" ? 18 : 35;
   const btcPenalty = snapshot.symbol === "BTCUSDT" || snapshot.btcStable ? 0 : 24;
+  const confirmationPenalty = snapshot.confirmations.alignedCount >= 2 && !snapshot.confirmations.conflict ? 0 : 35;
   const weighted = trendStrength * 0.17 + snapshot.liquidityScore * 0.08 + volume * 0.12 + smc.score * 0.14 + mtf * 0.14 + snapshot.whaleScore * 0.07 + funding * 0.08 + oi * 0.08 + momentum * 0.12 + orderbook * 0.08 - regimePenalty - btcPenalty;
-  let score = clamp(weighted);
+  let score = clamp(weighted - confirmationPenalty);
   const weakMomentum = direction !== 0 && momentum < 55;
   if (snapshot.regime === "MANIPULATION_RISK" || side === "NO_TRADE") score = Math.min(score, 55);
   if (weakMomentum) score = Math.min(score, 69);
+  if (snapshot.confirmations.conflict || snapshot.confirmations.alignedCount < 2) score = Math.min(score, 69);
   const entry: [number, number] = direction >= 0 ? [last.close - a * 0.15, last.close + a * 0.1] : [last.close - a * 0.1, last.close + a * 0.15];
   const stopLoss = direction >= 0 ? Math.max(sr.support, last.close - a * 1.7) : Math.min(sr.resistance, last.close + a * 1.7);
   const takeProfit: [number, number, number] = direction >= 0 ? [last.close + a * 1.4, last.close + a * 2.4, last.close + a * 3.8] : [last.close - a * 1.4, last.close - a * 2.4, last.close - a * 3.8];
@@ -94,6 +96,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
     holdTime: snapshot.mode === "futures" ? "30 хвилин до 6 годин" : "1-7 днів",
     marketRegime: snapshot.regime,
     btcStable: snapshot.btcStable,
+    confirmations: snapshot.confirmations,
     reasons: reasons(snapshot, { trendStrength, volume, mtf, smc: smc.score, momentum, funding, oi, orderbook, rs }),
     rejectionReason: rejectionReason(qualifiedSide, roundedScore, snapshot, weakMomentum, rrValue),
     scoreBreakdown: {
@@ -108,7 +111,8 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
       momentumQuality: Math.round(momentum),
       orderBookImbalance: Math.round(orderbook),
       regimePenalty: Math.round(regimePenalty),
-      btcPenalty: Math.round(btcPenalty)
+      btcPenalty: Math.round(btcPenalty),
+      exchangeConfirmationPenalty: Math.round(confirmationPenalty)
     },
     tradeManagementActions: tradeManagementActions(qualifiedSide, entryStatus),
     management
@@ -119,6 +123,8 @@ function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, we
   if (side !== "NO_TRADE") return "Прийнятий сетап з високою ймовірністю";
   if (snapshot.regime === "MANIPULATION_RISK") return "Виявлено ризик маніпуляції";
   if (!snapshot.btcStable && snapshot.symbol !== "BTCUSDT") return "BTC нестабільний, агресивні угоди по альткоїнах заблоковані";
+  if (snapshot.confirmations.conflict) return "Біржові підтвердження конфліктують, угоду пропущено";
+  if (snapshot.confirmations.alignedCount < 2) return "Недостатньо підтверджень з бірж, потрібно мінімум 2 джерела";
   if (weakMomentum) return "Слабкий імпульс, угоду пропущено";
   if (rrValue < 2) return `Співвідношення ризик/прибуток ${riskRewardRatio(rrValue)} нижче мінімуму 1:2.0`;
   if (snapshot.regime === "RANGING") return "Боковий/шумний ринок, немає сильного трендового сетапу";
@@ -182,7 +188,12 @@ function reasons(snapshot: MarketSnapshot, parts: Record<string, number>) {
   if (parts.mtf > 65) out.push("мультитаймфрейм підтверджує напрямок");
   if (parts.orderbook > 60) out.push("дисбаланс стакана підтримує напрямок");
   if (Math.abs(snapshot.fundingRate) < 0.0008) out.push("funding не перегрітий");
+  if (snapshot.confirmations.alignedCount >= 2) out.push(`підтверджено біржами: ${confirmedBy(snapshot).join(", ")}`);
   return out;
+}
+
+function confirmedBy(snapshot: MarketSnapshot) {
+  return [snapshot.confirmations.bybit ? "Bybit" : "", snapshot.confirmations.okx ? "OKX" : "", snapshot.confirmations.kucoin ? "KuCoin" : "", snapshot.confirmations.binance ? "Binance" : ""].filter(Boolean);
 }
 
 function marketRegimeUa(regime: MarketRegime) {

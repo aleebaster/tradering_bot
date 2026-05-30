@@ -36,6 +36,7 @@ async function main() {
       mode: "futures",
       candles,
       okxCandles: {},
+      kucoinCandles: {},
       binanceCandles: {},
       orderBookImbalance: imbalance,
       fundingRate,
@@ -43,7 +44,8 @@ async function main() {
       liquidityScore: liquidity(candles["15"]),
       whaleScore: Math.min(100, Math.max(0, Math.abs(openInterestChange) * 2500 + Math.abs(imbalance) * 120)),
       btcStable: symbol === "BTCUSDT" ? true : btcOk,
-      regime: regimeFrom(candles)
+      regime: regimeFrom(candles),
+      confirmations: { bybit: true, okx: false, kucoin: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit: live validation"] }
     };
     const signal = buildSignal(snapshot);
     outputs.push(signal);
@@ -101,6 +103,7 @@ function printSignal(signal: Signal) {
   console.log(`Плече: ${signal.leverage ?? "Немає"}`);
   console.log(`Підтвердження funding: ${signal.scoreBreakdown.fundingConfirmation}`);
   console.log(`Підтвердження OI: ${signal.scoreBreakdown.openInterestConfirmation}`);
+  console.log(`Підтвердження бірж: ${signal.confirmations.alignedCount}, конфлікт: ${signal.confirmations.conflict ? "так" : "ні"}`);
   if (["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
     console.log(`${signal.side === "WATCHLIST" ? "Спостереження" : "Відхилено"}: ${signal.rejectionReason}`);
   } else {

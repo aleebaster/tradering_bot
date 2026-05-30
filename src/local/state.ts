@@ -8,7 +8,7 @@ const diagnostics: Diagnostics = {
   partialMode: config.partialMode,
   warnings: config.warning ? [config.warning] : [],
   scannedSymbols: 0,
-  apiStatus: { bybit: "невідомо", okx: config.partialMode ? "частковий режим" : "невідомо", binance: "невідомо", telegram: "невідомо" },
+  apiStatus: { bybit: "невідомо", okx: config.partialMode ? "частковий режим" : "невідомо", kucoin: "невідомо", binance: "невідомо", telegram: "невідомо" },
   validSymbols: [],
   invalidSymbols: []
 };
