@@ -16,14 +16,16 @@ export class TelegramNotifier {
   }
 
   async setupActivated(signal: Signal, reasons: string[]) {
+    const direction = signal.side === "SHORT" ? "SHORT" : "LONG";
+    const icon = direction === "SHORT" ? "🔴" : "🟢";
     await this.send([
-      `🟢 SETUP ACTIVATED — ${signal.symbol}`,
+      `${icon} SETUP ACTIVATED — ${signal.symbol}`,
       "",
       "Статус:",
       "✅ ЗАХОДИТИ ЗАРАЗ",
       "",
       "Напрямок:",
-      signal.side,
+      direction,
       "",
       "Причина активації:",
       ...reasons.map((reason) => `✅ ${reason}`),
@@ -38,7 +40,7 @@ export class TelegramNotifier {
       `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
       "",
       "Плече:",
-      "x3 ONLY",
+      leverageText(signal),
       "",
       "Stop Loss:",
       fmt(signal.stopLoss),
@@ -122,33 +124,41 @@ function branded(text: string) {
 }
 
 function formatSignal(signal: Signal) {
-  const market = signal.mode === "futures" ? "Ф'ЮЧЕРС" : "SPOT";
-  const side = signal.side === "BUY" ? "BUY" : signal.side;
-  const icon = signal.mode === "futures" ? "🚀" : "📈";
+  const direction = signal.side === "SHORT" ? "SHORT" : signal.side === "BUY" ? "LONG" : "LONG";
+  const icon = direction === "SHORT" ? "🔴" : "🟢";
   return [
-    `${icon} ${market} ${side} — ${signal.symbol}`,
+    `${icon} ${direction} — ${signal.symbol}`,
     "",
     "Статус:",
     signal.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : "⏳ ЧЕКАТИ ЗОНУ ВХОДУ",
     "",
-    `Зона входу: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
-    `Поточна ціна: ${fmt(signal.currentPrice)}`,
-    signal.leverage ? `Рекомендоване плече: ${signal.leverage}` : "",
-    `Стоп-лосс: ${fmt(signal.stopLoss)}`,
-    `TP1: ${fmt(signal.takeProfit[0])}`,
-    `TP2: ${fmt(signal.takeProfit[1])}`,
-    `TP3: ${fmt(signal.takeProfit[2])}`,
-    `Співвідношення ризик/прибуток: ${signal.riskReward}`,
-    `Рівень інвалідації: ${fmt(signal.invalidationLevel)}`,
+    "Коротко:",
     "",
-    `Впевненість: ${signal.confidence}%`,
-    `Ймовірність успіху: ${signal.winProbability}%`,
+    `📍 Вхід: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+    `🛑 Stop Loss: ${fmt(signal.stopLoss)}`,
+    `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
+    `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
+    `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
+    `⚡ Плече: ${leverageText(signal)}`,
     "",
-    "📡 Підтверджено:",
-    ...confirmationLines(signal),
+    "Ймовірність:",
+    `${signal.winProbability}%`,
     "",
-    "Причини:",
-    ...signal.reasons.map((reason) => `✅ ${reason}`)
+    "Confidence:",
+    `${signal.confidence}%`,
+    "",
+    "Risk/Reward:",
+    signal.riskReward,
+    "",
+    "📌 Коротко:",
+    "",
+    `Вхід: ${fmt((signal.entry[0] + signal.entry[1]) / 2)}`,
+    `SL: ${fmt(signal.stopLoss)}`,
+    `TP: ${fmt(signal.takeProfit[0])} / ${fmt(signal.takeProfit[1])} / ${fmt(signal.takeProfit[2])}`,
+    `Плече: ${leverageText(signal)}`,
+    "",
+    "Причина:",
+    ...readableReasons(signal)
   ].filter(Boolean).join("\n");
 }
 
@@ -173,4 +183,31 @@ function reasonBullets(signal: Signal) {
 
 function fmt(n: number) {
   return n >= 100 ? n.toFixed(2) : n.toFixed(5);
+}
+
+function leverageText(signal: Signal) {
+  if (signal.mode !== "futures") return "не використовується";
+  const volatility = volatilityFromSignal(signal);
+  let leverage = signal.confidence >= 90 ? 5 : signal.confidence >= 87 ? 3 : 2;
+  if (volatility === "high") leverage = Math.min(leverage, 2);
+  else if (volatility === "medium") leverage = Math.min(leverage, 3);
+  if (signal.confidence < 85) leverage = 2;
+  return `x${leverage}`;
+}
+
+function volatilityFromSignal(signal: Signal) {
+  if (signal.marketRegime === "VOLATILE" || signal.marketRegime === "NEWS_DRIVEN") return "high";
+  if ((signal.scoreBreakdown.regimePenalty ?? 0) >= 18) return "medium";
+  return "normal";
+}
+
+function readableReasons(signal: Signal) {
+  const direction = signal.side === "SHORT" ? "bearish trend" : "trend confirmation";
+  const reasons = [direction];
+  if ((signal.scoreBreakdown.volumeConfirmation ?? 0) >= 65) reasons.push("volume confirmation");
+  if ((signal.scoreBreakdown.momentumQuality ?? 0) >= 55) reasons.push("momentum confirmation");
+  if ((signal.scoreBreakdown.orderBookImbalance ?? 0) >= 60) reasons.push(signal.side === "SHORT" ? "order book pressure" : "order book support");
+  if (signal.btcStable) reasons.push("BTC stable");
+  if (reasons.length < 4) reasons.push(...signal.reasons.slice(0, 4 - reasons.length));
+  return reasons.slice(0, 5).map((reason) => `✅ ${reason}`);
 }

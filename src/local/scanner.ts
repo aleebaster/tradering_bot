@@ -331,7 +331,7 @@ export class Scanner {
         const signal = buildSignal(snapshot);
         logger.info({ symbol: item.symbol, score: signal.score, side: signal.side, scoreBreakdown: signal.scoreBreakdown }, "watchlist recheck");
         if (signal.score >= 85 && activationConfirmed(signal)) {
-          const activated = { ...signal, leverage: "3x" };
+          const activated = { ...signal, leverage: "3x", entryStatus: "ENTER_NOW" as const };
           this.activatedWatchlist.add(key);
           recordSignal(activated);
           await this.notifier.setupActivated(activated, activationReasons(activated));
