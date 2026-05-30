@@ -7,9 +7,19 @@ const OKX = "https://www.okx.com";
 const BINANCE = "https://api.binance.com";
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { ...init, headers: { "user-agent": "tradering-bot/1.0", ...(init?.headers ?? {}) }, signal: AbortSignal.timeout(8000) });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText} ${url}`);
-  return (await res.json()) as T;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(url, { ...init, headers: { "user-agent": "tradering-bot/1.0", ...(init?.headers ?? {}) }, signal: AbortSignal.timeout(8000) });
+      if (res.ok) return (await res.json()) as T;
+      if (![403, 429, 500, 502, 503, 504].includes(res.status)) throw new Error(`${res.status} ${res.statusText} ${url}`);
+      lastError = new Error(`${res.status} ${res.statusText} ${url}`);
+    } catch (err) {
+      lastError = err;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1200 + attempt * 1800));
+  }
+  throw lastError;
 }
 
 export class ExchangeClient {

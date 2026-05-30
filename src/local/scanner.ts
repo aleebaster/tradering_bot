@@ -99,7 +99,11 @@ export class Scanner {
   private async loadCandles(symbol: string, mode: "spot" | "futures"): Promise<Record<string, Candle[]>> {
     const tfs = mode === "futures" ? config.futuresTimeframes : config.spotTimeframes;
     const category = mode === "spot" ? "spot" : "linear";
-    const entries = await Promise.all(tfs.map(async (tf) => [tf, await this.client.bybitKlines(symbol, tf, category)] as const));
+    const entries: Array<readonly [string, Candle[]]> = [];
+    for (const tf of tfs) {
+      entries.push([tf, await this.client.bybitKlines(symbol, tf, category)] as const);
+      await sleep(150);
+    }
     state.diagnostics.apiStatus.bybit = "connected";
     return Object.fromEntries(entries);
   }
@@ -133,6 +137,10 @@ export class Scanner {
       regime: regimeFrom(candles)
     };
   }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function signalKey(s: Signal) {

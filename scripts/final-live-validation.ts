@@ -1,0 +1,136 @@
+import { setTimeout as wait } from "node:timers/promises";
+import { ExchangeClient } from "../src/local/exchanges";
+import { btcStable, buildSignal, regimeFrom } from "../src/local/scoring";
+import type { Candle, MarketSnapshot, Signal } from "../src/local/types";
+
+const client = new ExchangeClient();
+const preferred = [
+  "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT", "LINKUSDT", "AVAXUSDT",
+  "LTCUSDT", "BCHUSDT", "DOTUSDT", "UNIUSDT", "ETCUSDT", "AAVEUSDT", "APTUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT",
+  "NEARUSDT", "FILUSDT", "ATOMUSDT", "INJUSDT", "TIAUSDT", "WLDUSDT", "SEIUSDT", "1000PEPEUSDT", "1000BONKUSDT", "ORDIUSDT"
+];
+
+async function main() {
+  const valid = await bybitLinearSymbols();
+  const symbols = preferred.filter((s) => valid.has(s)).slice(0, 20);
+  const invalid = preferred.slice(0, 20).filter((s) => !valid.has(s));
+  if (symbols.length < 20) throw new Error(`Only ${symbols.length} preferred symbols are Bybit linear-valid. Invalid: ${invalid.join(",")}`);
+  console.log(`LIVE VALIDATION START ${new Date().toISOString()}`);
+  console.log(`Bybit valid symbols tested: ${symbols.join(", ")}`);
+  console.log(`Invalid symbol errors: 0`);
+
+  const btcCandles = await loadBybitCandles("BTCUSDT");
+  const btcOk = btcStable(btcCandles);
+  console.log(`BTC filter status: ${btcOk ? "STABLE" : "UNSTABLE"}`);
+  const outputs: Signal[] = [];
+
+  for (const symbol of symbols) {
+    const candles = symbol === "BTCUSDT" ? btcCandles : await loadBybitCandles(symbol);
+    const [imbalance, fundingRate, openInterestChange] = await Promise.all([
+      retry(() => client.orderBookImbalance(symbol)),
+      retry(() => client.fundingRate(symbol)),
+      retry(() => client.openInterestChange(symbol))
+    ]);
+    const snapshot: MarketSnapshot = {
+      symbol,
+      mode: "futures",
+      candles,
+      okxCandles: {},
+      binanceCandles: {},
+      orderBookImbalance: imbalance,
+      fundingRate,
+      openInterestChange,
+      liquidityScore: liquidity(candles["15"]),
+      whaleScore: Math.min(100, Math.max(0, Math.abs(openInterestChange) * 2500 + Math.abs(imbalance) * 120)),
+      btcStable: symbol === "BTCUSDT" ? true : btcOk,
+      regime: regimeFrom(candles)
+    };
+    const signal = buildSignal(snapshot);
+    outputs.push(signal);
+    printSignal(signal);
+    await wait(1400);
+  }
+
+  const accepted = outputs.filter((s) => !["NO_TRADE", "WATCHLIST"].includes(s.side));
+  console.log(`SUMMARY symbols=${outputs.length} acceptedSignals=${accepted.length} watchlist=${outputs.filter((s) => s.side === "WATCHLIST").length} noTrade=${outputs.filter((s) => s.side === "NO_TRADE").length}`);
+  console.log(`LIVE VALIDATION END ${new Date().toISOString()}`);
+}
+
+async function bybitLinearSymbols() {
+  return retry(() => client.bybitInstrumentSymbols("linear"));
+}
+
+async function loadBybitCandles(symbol: string): Promise<Record<string, Candle[]>> {
+  const out: Record<string, Candle[]> = {};
+  for (const tf of ["5", "15", "60"]) {
+    out[tf] = await retry(() => client.bybitKlines(symbol, tf, "linear", 220));
+    await wait(450);
+  }
+  return out;
+}
+
+function liquidity(candles: Candle[]) {
+  const dollarVolume = candles.slice(-24).reduce((s, c) => s + c.volume * c.close, 0) / 24;
+  return Math.min(100, Math.log10(Math.max(dollarVolume, 1)) * 11);
+}
+
+function confluenceCount(signal: Signal) {
+  return Object.entries(signal.scoreBreakdown).filter(([k, v]) => !k.endsWith("Penalty") && v >= 60).length;
+}
+
+function trendStatus(signal: Signal) {
+  const trend = signal.scoreBreakdown.trendStrength;
+  const mtf = signal.scoreBreakdown.multiTimeframeAlignment;
+  if (trend >= 60 && mtf >= 67) return "STRONG";
+  if (trend >= 30 || mtf >= 67) return "DEVELOPING";
+  return "WEAK";
+}
+
+function printSignal(signal: Signal) {
+  console.log(`\n${signal.symbol}`);
+  console.log(`Score: ${signal.score}`);
+  console.log(`Confidence: ${signal.confidence}%`);
+  console.log(`Win Probability: ${signal.winProbability}%`);
+  console.log(`BTC Filter: ${signal.btcStable ? "STABLE" : "UNSTABLE"}`);
+  console.log(`Trend Status: ${trendStatus(signal)}`);
+  console.log(`Market Regime: ${signal.marketRegime}`);
+  console.log(`Confluence Count: ${confluenceCount(signal)}`);
+  console.log(`Funding Confirmation: ${signal.scoreBreakdown.fundingConfirmation}`);
+  console.log(`OI Confirmation: ${signal.scoreBreakdown.openInterestConfirmation}`);
+  if (["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
+    console.log(`${signal.side === "WATCHLIST" ? "Watchlist" : "Rejected"}: ${signal.rejectionReason}`);
+  } else {
+    console.log(`Signal: ${signal.side}`);
+    console.log(`Entry: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`);
+    console.log(`SL: ${fmt(signal.stopLoss)}`);
+    console.log(`TP1: ${fmt(signal.takeProfit[0])}`);
+    console.log(`TP2: ${fmt(signal.takeProfit[1])}`);
+    console.log(`TP3: ${fmt(signal.takeProfit[2])}`);
+    console.log(`Reason: ${signal.reasons.join("; ")}`);
+  }
+  console.log(`Score Breakdown: ${JSON.stringify(signal.scoreBreakdown)}`);
+}
+
+function fmt(n: number) {
+  return n >= 100 ? n.toFixed(2) : n.toFixed(5);
+}
+
+async function retry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      last = err;
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("403") || message.includes("429")) await wait(8000 + i * 8000);
+      else await wait(1200 + i * 1000);
+    }
+  }
+  throw last;
+}
+
+main().catch((err) => {
+  console.error("LIVE VALIDATION FAILED", err instanceof Error ? err.message : err);
+  process.exit(1);
+});

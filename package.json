@@ -9,6 +9,7 @@
     "start": "next start -p 3000",
     "local:api": "tsx src/local/index.ts",
     "local:all": "concurrently -n API,DASH -c cyan,magenta \"npm run local:api\" \"npm run dev\"",
+    "validate:live": "tsx scripts/final-live-validation.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },
