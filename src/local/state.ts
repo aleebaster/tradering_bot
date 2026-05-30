@@ -1,0 +1,32 @@
+import type { BotState, Diagnostics, Signal } from "./types";
+import { config } from "./config";
+
+const diagnostics: Diagnostics = {
+  startedAt: new Date().toISOString(),
+  lastScanAt: null,
+  mode: config.mode,
+  partialMode: config.partialMode,
+  warnings: config.warning ? [config.warning] : [],
+  scannedSymbols: 0,
+  apiStatus: { bybit: "unknown", okx: config.partialMode ? "partial" : "unknown", binance: "unknown", telegram: "unknown" }
+};
+
+export const state: BotState = {
+  diagnostics,
+  marketCondition: "Initializing live scanner",
+  activeSignals: [],
+  watchlist: [],
+  history: [],
+  stats: { signalsToday: 0, wins: 0, losses: 0, winRate: 0 }
+};
+
+export function recordSignal(signal: Signal) {
+  state.history = [signal, ...state.history].slice(0, 300);
+  if (signal.side === "WATCHLIST") state.watchlist = [signal, ...state.watchlist].slice(0, 30);
+  if (!["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
+    const today = new Date().toISOString().slice(0, 10);
+    const sentToday = state.activeSignals.filter((s) => s.createdAt.startsWith(today)).length;
+    if (sentToday < config.maxSignalsPerDay) state.activeSignals = [signal, ...state.activeSignals].slice(0, 12);
+  }
+  state.stats.signalsToday = state.activeSignals.filter((s) => s.createdAt.startsWith(new Date().toISOString().slice(0, 10))).length;
+}
