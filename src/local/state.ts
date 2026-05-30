@@ -24,8 +24,8 @@ export const state: BotState = {
 
 export function recordSignal(signal: Signal) {
   state.history = [signal, ...state.history].slice(0, 300);
-  if (signal.side === "WATCHLIST") state.watchlist = [signal, ...state.watchlist].slice(0, 30);
-  if (!["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
+  if (signal.score >= 70 && signal.score < 85) state.watchlist = [signal, ...state.watchlist].slice(0, 30);
+  if (signal.side !== "NO_TRADE") {
     const today = new Date().toISOString().slice(0, 10);
     const sentToday = state.activeSignals.filter((s) => s.createdAt.startsWith(today)).length;
     if (sentToday < config.maxSignalsPerDay) state.activeSignals = [signal, ...state.activeSignals].slice(0, 12);

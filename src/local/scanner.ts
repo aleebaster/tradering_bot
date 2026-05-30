@@ -18,6 +18,9 @@ export class Scanner {
   private scanning = false;
   private symbols = config.symbols;
   private cursor = 0;
+  private managementSent = new Set<string>();
+  private bybitCooldownUntil = 0;
+  private btcCache: { candles: Record<string, Candle[]>; expiresAt: number } | null = null;
 
   constructor(private broadcast: Broadcast) {}
 
@@ -49,9 +52,15 @@ export class Scanner {
 
   private async scan() {
     if (this.scanning) return;
+    if (Date.now() < this.bybitCooldownUntil) {
+      state.diagnostics.apiStatus.bybit = `rate limited; cooling down until ${new Date(this.bybitCooldownUntil).toLocaleTimeString()}`;
+      state.marketCondition = "Bybit rate limit cooldown active; scanner will resume automatically";
+      this.broadcast({ type: "state", state });
+      return;
+    }
     this.scanning = true;
     try {
-      const btcCandles = await this.loadCandles("BTCUSDT", "futures");
+      const btcCandles = await this.loadBtcCandles();
       const btcOk = btcStable(btcCandles);
       const candidates: Signal[] = [];
       const symbol = this.symbols[this.cursor % this.symbols.length];
@@ -67,15 +76,29 @@ export class Scanner {
         this.sent.add(signalKey(signal));
         await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Telegram signal failed"));
       }
+      await this.monitorActiveTrades(btcOk);
       state.diagnostics.lastScanAt = new Date().toISOString();
       state.diagnostics.scannedSymbols = this.symbols.length;
       state.marketCondition = summarize(candidates);
       this.broadcast({ type: "state", state });
     } catch (err) {
+      if (isRateLimit(err)) {
+        this.bybitCooldownUntil = Date.now() + 5 * 60 * 1000;
+        state.diagnostics.apiStatus.bybit = "rate limited; automatic cooldown active";
+        state.marketCondition = "Bybit rate limit cooldown active; scanner will resume automatically";
+        this.broadcast({ type: "state", state });
+      }
       logger.error({ err }, "Scan failed");
     } finally {
       this.scanning = false;
     }
+  }
+
+  private async loadBtcCandles() {
+    if (this.btcCache && Date.now() < this.btcCache.expiresAt) return this.btcCache.candles;
+    const candles = await this.loadCandles("BTCUSDT", "futures");
+    this.btcCache = { candles, expiresAt: Date.now() + 60 * 1000 };
+    return candles;
   }
 
   private async validateSymbols() {
@@ -154,10 +177,51 @@ export class Scanner {
       regime: regimeFrom(candles)
     };
   }
+
+  private async monitorActiveTrades(btcOk: boolean) {
+    for (const signal of state.activeSignals) {
+      const category = signal.mode === "spot" ? "spot" : "linear";
+      const tf = signal.mode === "spot" ? "60" : "5";
+      const candles = await this.client.bybitKlines(signal.symbol, tf, category, 3).catch(() => []);
+      const current = candles.at(-1)?.close ?? signal.currentPrice;
+      const action = tradeManagementAction(signal, current, btcOk);
+      if (!action) continue;
+      const key = `${signal.id}-${action.label}`;
+      if (this.managementSent.has(key)) continue;
+      this.managementSent.add(key);
+      logger.info({ symbol: signal.symbol, action: action.label, currentPrice: current, reasons: action.reasons }, "trade management alert");
+      await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Telegram trade management alert failed"));
+    }
+  }
+}
+
+function tradeManagementAction(signal: Signal, current: number, btcOk: boolean) {
+  const long = signal.side === "LONG" || signal.side === "BUY";
+  const short = signal.side === "SHORT";
+  if (!long && !short) return null;
+  const entryLow = Math.min(...signal.entry);
+  const entryHigh = Math.max(...signal.entry);
+  const entered = signal.entryStatus === "ENTER_NOW" || (current >= entryLow && current <= entryHigh);
+  if (!entered) return { label: "⏳ WAIT FOR ENTRY", reasons: [`Current price ${formatPrice(current)} is outside entry zone ${formatPrice(entryLow)}-${formatPrice(entryHigh)}`] };
+  if ((long && current <= signal.stopLoss) || (short && current >= signal.stopLoss)) return { label: "🔴 EXIT TRADE NOW", reasons: ["Stop loss or invalidation level reached", "Capital preservation rule triggered"] };
+  if (!btcOk && signal.symbol !== "BTCUSDT") return { label: "⚠️ TREND REVERSAL DETECTED", reasons: ["BTC instability detected", "Altcoin exposure risk increased"] };
+  if ((long && current >= signal.takeProfit[2]) || (short && current <= signal.takeProfit[2])) return { label: "🔴 EXIT TRADE NOW", reasons: ["TP3 reached", "Full planned reward captured"] };
+  if ((long && current >= signal.takeProfit[1]) || (short && current <= signal.takeProfit[1])) return { label: "🟠 TRAIL STOP ACTIVATED", reasons: ["TP2 reached", "Trail remaining position with ATR structure"] };
+  if ((long && current >= signal.takeProfit[0]) || (short && current <= signal.takeProfit[0])) return { label: "🟠 TAKE PARTIAL PROFIT", reasons: ["TP1 reached", "Move stop loss to breakeven"] };
+  return { label: "🟡 HOLD POSITION", reasons: ["Entry active", "No exit condition triggered"] };
+}
+
+function formatPrice(value: number) {
+  return value >= 100 ? value.toFixed(2) : value.toFixed(5);
 }
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRateLimit(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes("Access too frequent") || message.includes("403 Forbidden") || message.includes("429");
 }
 
 function signalKey(s: Signal) {

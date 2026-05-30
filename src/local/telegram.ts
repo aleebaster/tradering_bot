@@ -20,7 +20,25 @@ export class TelegramNotifier {
   }
 
   async exitAlert(signal: Signal, action: string, reasons: string[]) {
-    await this.send([`🚪 EXIT ALERT — ${signal.symbol}`, "", `Action: ${action}`, "", "Reasons:", ...reasons.map((reason) => `✅ ${reason}`)].join("\n"));
+    await this.tradeManagementAlert(signal, action, signal.currentPrice, reasons);
+  }
+
+  async tradeManagementAlert(signal: Signal, action: string, currentPrice: number, reasons: string[]) {
+    await this.send([
+      `${action} — ${signal.symbol}`,
+      "",
+      `Current Price: ${fmt(currentPrice)}`,
+      `Entry: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+      `SL: ${fmt(signal.stopLoss)}`,
+      `TP1: ${fmt(signal.takeProfit[0])}`,
+      `TP2: ${fmt(signal.takeProfit[1])}`,
+      `TP3: ${fmt(signal.takeProfit[2])}`,
+      `Risk/Reward: ${signal.riskReward}`,
+      signal.leverage ? `Leverage: ${signal.leverage}` : "",
+      "",
+      "Reasons:",
+      ...reasons.map((reason) => `✅ ${reason}`)
+    ].filter(Boolean).join("\n"));
   }
 
   async diagnostics(message: string) {

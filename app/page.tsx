@@ -24,6 +24,8 @@ type Signal = {
   marketRegime: string;
   btcStable: boolean;
   reasons: string[];
+  rejectionReason: string;
+  tradeManagementActions: string[];
   management: string;
 };
 type BotState = {
@@ -138,14 +140,15 @@ function SignalCard({ signal }: { signal: Signal }) {
     <article className="rounded-xl border border-edge bg-black/20 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xl font-black">{signal.symbol} <span className={sideClass(signal.side)}>{signal.side}</span></h3><div className="rounded-full bg-profit/10 px-3 py-1 text-profit">Win Probability: {signal.winProbability}%</div></div>
       <div className="mt-3 grid gap-2 text-sm md:grid-cols-4"><Row label="Status" value={signal.entryStatus.replaceAll("_", " ")} /><Row label="Entry" value={`${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`} /><Row label="Current Price" value={fmt(signal.currentPrice)} /><Row label="Leverage" value={signal.leverage ?? "N/A"} /><Row label="SL" value={fmt(signal.stopLoss)} /><Row label="TP" value={signal.takeProfit.map(fmt).join(" / ")} /><Row label="Risk/Reward" value={signal.riskReward} /><Row label="Confidence" value={`${signal.confidence}%`} /></div>
-      <p className="mt-3 text-sm text-slate-300">{signal.reasons.join(". ")}</p>
+      <p className="mt-3 text-sm text-slate-300">{signal.side === "NO_TRADE" ? signal.rejectionReason : signal.reasons.join(". ")}</p>
+      <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-300">{signal.tradeManagementActions?.slice(0, 4).map((action) => <span key={action} className="rounded-full border border-edge px-2 py-1">{action}</span>)}</div>
     </article>
   );
 }
 
 function SignalList({ items }: { items: Signal[] }) {
   if (!items.length) return <Empty text="No active qualified signal." />;
-  return <div className="space-y-3">{items.map((s) => <div key={s.id} className="rounded-xl border border-edge p-3"><div className="flex justify-between"><b>{s.symbol}</b><span className={sideClass(s.side)}>{s.side}</span></div><div className="mt-2 text-sm text-slate-400">Score {s.score}/100 · {s.marketRegime}</div></div>)}</div>;
+  return <div className="space-y-3">{items.map((s) => <div key={s.id} className="rounded-xl border border-edge p-3"><div className="flex justify-between"><b>{s.symbol}</b><span className={sideClass(s.side)}>{s.side}</span></div><div className="mt-2 text-sm text-slate-400">Score {s.score}/100 · {s.entryStatus.replaceAll("_", " ")} · {s.leverage ?? "N/A"}</div></div>)}</div>;
 }
 
 function Row({ label, value }: { label: string; value: string }) { return <div><p className="text-xs uppercase text-slate-500">{label}</p><p className="break-words text-sm text-slate-100">{value}</p></div>; }
