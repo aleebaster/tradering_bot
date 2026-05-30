@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
+import WebSocket from "ws";
 import type { Candle } from "./types";
 import { config } from "./config";
+import { logger } from "./logger";
 
 const BYBIT = "https://api.bybit.com";
 const OKX = "https://www.okx.com";
@@ -12,6 +14,7 @@ const KRAKEN_FUTURES = "https://futures.kraken.com";
 
 const responseCache = new Map<string, { expiresAt: number; value: unknown }>();
 const hostNextAllowedAt = new Map<string, number>();
+const bybitCandleFallbackCache = new Map<string, Candle[]>();
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const method = init?.method ?? "GET";
@@ -67,15 +70,53 @@ function backoffDelay(attempt: number, url: string) {
 
 export class ExchangeClient {
   async bybitInstrumentSymbols(category: "linear" | "spot"): Promise<Set<string>> {
-    const body = await json<{ result: { list: Array<{ symbol: string; status: string }> } }>(`${BYBIT}/v5/market/instruments-info?category=${category}`);
-    return new Set(body.result.list.filter((x) => x.status === "Trading").map((x) => x.symbol));
+    const endpoint = `${BYBIT}/v5/market/instruments-info?category=${category}`;
+    const body = await json<{ retCode?: number; retMsg?: string; result?: { list?: Array<{ symbol?: string; status?: string }> } }>(endpoint);
+    const list = safeArray<{ symbol?: string; status?: string }>(body.result?.list);
+    if (!list.length) throw bybitDataError("Bybit instruments malformed", { endpoint, parsedData: body, category });
+    return new Set(list.filter((x) => x?.status === "Trading" && typeof x.symbol === "string").map((x) => x.symbol!));
   }
 
   async bybitKlines(symbol: string, interval: string, category: "linear" | "spot" = "linear", limit = 220): Promise<Candle[]> {
-    const u = `${BYBIT}/v5/market/kline?category=${category}&symbol=${symbol}&interval=${interval}&limit=${limit}`;
-    const body = await json<{ retCode?: number; retMsg?: string; result?: { list?: string[][] } }>(u);
-    if (!body.result?.list) throw new Error(`Bybit kline failed ${body.retCode ?? "unknown"}: ${body.retMsg ?? "missing result list"}`);
-    return body.result.list.reverse().map((r) => ({ exchange: "bybit", symbol, timeframe: interval, openTime: Number(r[0]), open: Number(r[1]), high: Number(r[2]), low: Number(r[3]), close: Number(r[4]), volume: Number(r[5]) }));
+    const endpoint = `${BYBIT}/v5/market/kline?category=${category}&symbol=${symbol}&interval=${interval}&limit=${limit}`;
+    const candles = await this.bybitKlinesRest(endpoint, symbol, interval, category, limit).catch(async (restError) => {
+      logger.warn({ err: restError, symbol, timeframe: interval, category, endpoint }, "Bybit REST failed; trying WebSocket/cache fallback");
+      const fallback = await this.bybitKlinesFallback(symbol, interval, category, limit).catch((fallbackError) => {
+        logger.error({ err: fallbackError, symbol, timeframe: interval, category, endpoint }, "Bybit WebSocket/cache fallback failed");
+        return [];
+      });
+      if (fallback.length) return fallback;
+      throw restError;
+    });
+    bybitCandleFallbackCache.set(bybitCacheKey(symbol, interval, category), candles);
+    return candles;
+  }
+
+  private async bybitKlinesRest(endpoint: string, symbol: string, interval: string, category: "linear" | "spot", limit: number): Promise<Candle[]> {
+    const { value, raw } = await bybitJsonWithRaw<{ retCode?: number; retMsg?: string; result?: { list?: unknown } }>(endpoint, { symbol, timeframe: interval });
+    const list = safeArray(value.result?.list);
+    if (value.retCode !== 0 || !list.length) {
+      logBybitRaw("Bybit kline response invalid", { endpoint, rawResponse: raw, parsedData: value, symbol, timeframe: interval, category });
+      throw bybitDataError("Bybit kline malformed", { endpoint, parsedData: value, symbol, timeframe: interval, category, retCode: value.retCode, retMsg: value.retMsg });
+    }
+    const candles = list.map((row) => parseBybitCandle(row, symbol, interval)).filter((candle): candle is Candle => Boolean(candle)).reverse().slice(-limit);
+    if (!candles.length) {
+      logBybitRaw("Bybit kline rows malformed", { endpoint, rawResponse: raw, parsedData: value, symbol, timeframe: interval, category });
+      throw bybitDataError("Bybit kline rows malformed", { endpoint, parsedData: value, symbol, timeframe: interval, category });
+    }
+    return candles;
+  }
+
+  private async bybitKlinesFallback(symbol: string, interval: string, category: "linear" | "spot", limit: number): Promise<Candle[]> {
+    const cached = bybitCandleFallbackCache.get(bybitCacheKey(symbol, interval, category)) ?? [];
+    const wsCandle = await bybitKlineWebSocket(symbol, interval, category).catch(() => undefined);
+    const merged = [...cached, ...(wsCandle ? [wsCandle] : [])]
+      .filter((candle, index, all) => all.findIndex((x) => x.openTime === candle.openTime) === index)
+      .sort((a, b) => a.openTime - b.openTime)
+      .slice(-limit);
+    if (!merged.length) throw new Error(`Bybit fallback has no candles for ${symbol} ${interval}`);
+    logger.warn({ symbol, timeframe: interval, category, cachedCandles: cached.length, websocketCandles: wsCandle ? 1 : 0, returnedCandles: merged.length }, "Bybit fallback returned candles");
+    return merged;
   }
 
   async okxKlines(symbol: string, interval: string, limit = 220): Promise<Candle[]> {
@@ -163,20 +204,30 @@ export class ExchangeClient {
   }
 
   async orderBookImbalance(symbol: string): Promise<number> {
-    const body = await json<{ result: { b: string[][]; a: string[][] } }>(`${BYBIT}/v5/market/orderbook?category=linear&symbol=${symbol}&limit=50`);
-    const bids = body.result.b.reduce((s, [p, q]) => s + Number(p) * Number(q), 0);
-    const asks = body.result.a.reduce((s, [p, q]) => s + Number(p) * Number(q), 0);
+    const endpoint = `${BYBIT}/v5/market/orderbook?category=linear&symbol=${symbol}&limit=50`;
+    const body = await json<{ retCode?: number; retMsg?: string; result?: { b?: unknown; a?: unknown } }>(endpoint);
+    const bidRows = safeArray<unknown>(body.result?.b);
+    const askRows = safeArray<unknown>(body.result?.a);
+    if (body.retCode !== 0 || !bidRows.length || !askRows.length) throw bybitDataError("Bybit orderbook malformed", { endpoint, parsedData: body, symbol });
+    const bids = bidRows.reduce<number>((s, row) => s + orderBookValue(row), 0);
+    const asks = askRows.reduce<number>((s, row) => s + orderBookValue(row), 0);
     return bids + asks === 0 ? 0 : (bids - asks) / (bids + asks);
   }
 
   async fundingRate(symbol: string): Promise<number> {
-    const body = await json<{ result: { list: Array<{ fundingRate: string }> } }>(`${BYBIT}/v5/market/funding/history?category=linear&symbol=${symbol}&limit=1`);
-    return Number(body.result.list[0]?.fundingRate ?? 0);
+    const endpoint = `${BYBIT}/v5/market/funding/history?category=linear&symbol=${symbol}&limit=1`;
+    const body = await json<{ retCode?: number; retMsg?: string; result?: { list?: Array<{ fundingRate?: string }> } }>(endpoint);
+    const list = safeArray<{ fundingRate?: string }>(body.result?.list);
+    if (body.retCode !== 0 || !list.length) throw bybitDataError("Bybit funding malformed", { endpoint, parsedData: body, symbol });
+    return Number(list[0]?.fundingRate ?? 0);
   }
 
   async openInterestChange(symbol: string): Promise<number> {
-    const body = await json<{ result: { list: Array<{ openInterest: string }> } }>(`${BYBIT}/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=5min&limit=12`);
-    const list = body.result.list.map((x) => Number(x.openInterest)).reverse();
+    const endpoint = `${BYBIT}/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=5min&limit=12`;
+    const body = await json<{ retCode?: number; retMsg?: string; result?: { list?: Array<{ openInterest?: string }> } }>(endpoint);
+    const rows = safeArray<{ openInterest?: string }>(body.result?.list);
+    if (body.retCode !== 0 || rows.length < 2) throw bybitDataError("Bybit open interest malformed", { endpoint, parsedData: body, symbol });
+    const list = rows.map((x) => Number(x.openInterest)).filter((x) => Number.isFinite(x)).reverse();
     if (list.length < 2 || list[0] === 0) return 0;
     return (list.at(-1)! - list[0]) / list[0];
   }
@@ -250,4 +301,104 @@ function krakenSpotPair(symbol: string) {
 function krakenFuturesSymbol(symbol: string) {
   const base = symbol.replace("USDT", "");
   return `PF_${base === "BTC" ? "XBT" : base}USD`;
+}
+
+async function bybitJsonWithRaw<T>(url: string, context: Record<string, unknown>): Promise<{ value: T; raw: string }> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await throttle(url);
+      const res = await fetch(url, { headers: { "user-agent": "tradering-bot/1.0" }, signal: AbortSignal.timeout(8000) });
+      const raw = await res.text();
+      let value: T;
+      try {
+        value = JSON.parse(raw) as T;
+      } catch (error) {
+        logBybitRaw("Bybit JSON parse failed", { endpoint: url, rawResponse: raw, parsedData: null, attempt: attempt + 1, ...context });
+        throw error;
+      }
+      logBybitRaw("Bybit raw response", { endpoint: url, rawResponse: raw, parsedData: value, attempt: attempt + 1, ...context });
+      if (res.ok) return { value, raw };
+      throw new Error(`${res.status} ${res.statusText} ${url}: ${raw.slice(0, 300)}`);
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, backoffDelay(attempt, url)));
+    }
+  }
+  throw lastError;
+}
+
+function logBybitRaw(message: string, data: Record<string, unknown>) {
+  logger.info(data, message);
+}
+
+function bybitDataError(message: string, data: Record<string, unknown>) {
+  const error = new Error(`${message}: ${JSON.stringify(data).slice(0, 1200)}`);
+  error.name = "BybitDataError";
+  return error;
+}
+
+function safeArray<T = unknown>(value: unknown): T[] {
+  return Array.isArray(value) ? value as T[] : [];
+}
+
+function parseBybitCandle(row: unknown, symbol: string, interval: string): Candle | undefined {
+  const data = safeArray<string | number>(row);
+  if (data.length < 6) return undefined;
+  const candle = { exchange: "bybit" as const, symbol, timeframe: interval, openTime: Number(data[0]), open: Number(data[1]), high: Number(data[2]), low: Number(data[3]), close: Number(data[4]), volume: Number(data[5]) };
+  return Object.values(candle).every((value) => typeof value !== "number" || Number.isFinite(value)) ? candle : undefined;
+}
+
+function orderBookValue(row: unknown) {
+  const data = safeArray<string | number>(row);
+  const price = Number(data[0]);
+  const quantity = Number(data[1]);
+  return Number.isFinite(price) && Number.isFinite(quantity) ? price * quantity : 0;
+}
+
+function bybitCacheKey(symbol: string, interval: string, category: string) {
+  return `${category}:${symbol}:${interval}`;
+}
+
+function bybitKlineWebSocket(symbol: string, interval: string, category: "linear" | "spot") {
+  return new Promise<Candle | undefined>((resolve, reject) => {
+    const url = category === "spot" ? "wss://stream.bybit.com/v5/public/spot" : "wss://stream.bybit.com/v5/public/linear";
+    const ws = new WebSocket(url);
+    const timeout = setTimeout(() => {
+      ws.terminate();
+      reject(new Error(`Bybit WebSocket timeout ${symbol} ${interval}`));
+    }, 12000);
+    ws.on("open", () => ws.send(JSON.stringify({ op: "subscribe", args: [`kline.${interval}.${symbol}`] })));
+    ws.on("message", (message) => {
+      const raw = message.toString();
+      let parsed: { data?: unknown };
+      try {
+        parsed = JSON.parse(raw) as { data?: unknown };
+      } catch {
+        return;
+      }
+      const row = safeArray(parsed.data)[0];
+      const data = row && typeof row === "object" ? row as Record<string, unknown> : undefined;
+      if (!data) return;
+      const candle = {
+        exchange: "bybit" as const,
+        symbol,
+        timeframe: interval,
+        openTime: Number(data.start),
+        open: Number(data.open),
+        high: Number(data.high),
+        low: Number(data.low),
+        close: Number(data.close),
+        volume: Number(data.volume)
+      };
+      if (!Object.values(candle).every((value) => typeof value !== "number" || Number.isFinite(value))) return;
+      clearTimeout(timeout);
+      ws.close();
+      resolve(candle);
+    });
+    ws.on("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
 }

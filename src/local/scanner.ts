@@ -101,18 +101,31 @@ export class Scanner {
       const btcCandles = await this.loadBtcCandles();
       const btcOk = btcStable(btcCandles);
       const candidates: Signal[] = [];
-      const symbol = this.symbols[this.cursor % this.symbols.length];
-      const mode = Math.floor(this.cursor / this.symbols.length) % 2 === 0 ? "futures" : "spot";
-      this.cursor += 1;
-      const candles = symbol === "BTCUSDT" && mode === "futures" ? btcCandles : await this.loadCandles(symbol, mode);
-      const snapshot = await this.snapshot(symbol, mode, candles, btcOk);
-      const signal = buildSignal(snapshot);
-      logger.info({ symbol, mode, side: signal.side, score: signal.score, winProbability: signal.winProbability, rejectionReason: signal.rejectionReason, scoreBreakdown: signal.scoreBreakdown }, "рішення сканера");
-      recordSignal(signal);
-      candidates.push(signal);
-      if (!this.sent.has(signalKey(signal)) && !["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
-        this.sent.add(signalKey(signal));
-        await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Не вдалося надіслати сигнал Telegram"));
+      const attempts = Math.min(3, this.symbols.length);
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        const symbol = this.symbols[this.cursor % this.symbols.length];
+        const mode = Math.floor(this.cursor / this.symbols.length) % 2 === 0 ? "futures" : "spot";
+        this.cursor += 1;
+        try {
+          const candles = symbol === "BTCUSDT" && mode === "futures" ? btcCandles : await this.loadCandles(symbol, mode);
+          const snapshot = await this.snapshot(symbol, mode, candles, btcOk);
+          const signal = buildSignal(snapshot);
+          logger.info({ symbol, mode, side: signal.side, score: signal.score, winProbability: signal.winProbability, rejectionReason: signal.rejectionReason, scoreBreakdown: signal.scoreBreakdown }, "рішення сканера");
+          recordSignal(signal);
+          candidates.push(signal);
+          if (!this.sent.has(signalKey(signal)) && !["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
+            this.sent.add(signalKey(signal));
+            await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Не вдалося надіслати сигнал Telegram"));
+          }
+          break;
+        } catch (symbolError) {
+          logger.error({ err: symbolError, symbol, mode }, "Символ пропущено; сканер продовжує наступний символ");
+          if (isRateLimit(symbolError)) {
+            this.bybitCooldownUntil = Date.now() + 5 * 60 * 1000;
+            state.diagnostics.apiStatus.bybit = "ліміт запитів; автоматична пауза активна";
+            break;
+          }
+        }
       }
       await this.monitorActiveTrades(btcOk);
       state.diagnostics.lastScanAt = new Date().toISOString();
@@ -215,7 +228,9 @@ export class Scanner {
     const category = mode === "spot" ? "spot" : "linear";
     const entries: Array<readonly [string, Candle[]]> = [];
     for (const tf of tfs) {
-      entries.push([tf, await this.client.bybitKlines(symbol, tf, category)] as const);
+      const candles = await this.client.bybitKlines(symbol, tf, category);
+      if (!Array.isArray(candles) || !candles.length) throw new Error(`Bybit candles empty ${symbol} ${tf} ${category}`);
+      entries.push([tf, candles] as const);
       await sleep(150);
     }
     state.diagnostics.apiStatus.bybit = "підключено";

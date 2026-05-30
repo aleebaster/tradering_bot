@@ -7,6 +7,7 @@ const client = new ExchangeClient();
 const notifier = new TelegramNotifier();
 const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
 const tfs = ["5", "15", "60"];
+const bybitOnly = process.env.BYBIT_ONLY === "1";
 
 async function main() {
   let btcCandles: Record<string, Candle[]>;
@@ -30,12 +31,19 @@ async function main() {
   const btcOk = btcStable(btcCandles);
   const signals: Signal[] = [];
   for (const symbol of symbols) {
-    const candles = symbol === "BTCUSDT" ? btcCandles : await loadBybit(symbol);
+    let candles: Record<string, Candle[]>;
+    try {
+      candles = symbol === "BTCUSDT" ? btcCandles : await loadBybit(symbol);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Bybit ${symbol} failed; continuing safely: ${message}`);
+      continue;
+    }
     const [okx, kucoin, kraken, binance, imbalance, funding, oi] = await Promise.all([
-      loadOkx(symbol),
-      loadKucoin(symbol),
-      loadKraken(symbol),
-      loadBinance(symbol),
+      bybitOnly ? Promise.resolve(emptyCandles()) : loadOkx(symbol),
+      bybitOnly ? Promise.resolve(emptyCandles()) : loadKucoin(symbol),
+      bybitOnly ? Promise.resolve(emptyCandles()) : loadKraken(symbol),
+      bybitOnly ? Promise.resolve(emptyCandles()) : loadBinance(symbol),
       client.orderBookImbalance(symbol).catch(() => 0),
       client.fundingRate(symbol).catch(() => 0),
       client.openInterestChange(symbol).catch(() => 0)
@@ -59,6 +67,12 @@ async function main() {
     };
     signals.push(buildSignal(snapshot));
   }
+  if (!signals.length) {
+    const message = ["❌ NO TRADE BTCUSDT / ETHUSDT / SOLUSDT", "", "Причини:", "• Bybit futures не повернув валідних свічок для жодного символу", "• scanner safe mode: падіння немає, аналіз пропущено", "• якість важливіша за кількість"].join("\n");
+    await notifier.send(message);
+    console.log(message);
+    return;
+  }
   const accepted = signals.filter((s) => s.side !== "NO_TRADE").sort((a, b) => b.score - a.score);
   const message = accepted[0] ? formatSignal(accepted[0]) : formatNoTrade(signals);
   await notifier.send(message);
@@ -67,8 +81,16 @@ async function main() {
 
 async function loadBybit(symbol: string) {
   const out: Record<string, Candle[]> = {};
-  for (const tf of tfs) out[tf] = await client.bybitKlines(symbol, tf, "linear", 80);
+  for (const tf of tfs) {
+    const candles = await client.bybitKlines(symbol, tf, "linear", 80);
+    if (!Array.isArray(candles) || !candles.length) throw new Error(`Bybit futures candles empty ${symbol} ${tf}`);
+    out[tf] = candles;
+  }
   return out;
+}
+
+function emptyCandles() {
+  return Object.fromEntries(tfs.map((tf) => [tf, [] as Candle[]]));
 }
 
 async function loadOkx(symbol: string) {
@@ -88,6 +110,7 @@ async function loadBinance(symbol: string) {
 }
 
 function liquidity(candles: Candle[]) {
+  if (!Array.isArray(candles) || !candles.length) return 0;
   const dollarVolume = candles.slice(-24).reduce((sum, candle) => sum + candle.volume * candle.close, 0) / 24;
   return Math.min(100, Math.log10(Math.max(dollarVolume, 1)) * 11);
 }
@@ -146,15 +169,16 @@ function formatSignal(signal: Signal) {
 }
 
 function formatNoTrade(signals: Signal[]) {
-  const lines = ["❌ НЕМАЄ ВАЛІДНОЇ УГОДИ З ВИСОКОЮ ЙМОВІРНІСТЮ", ""];
+  const lines = [bybitOnly ? "❌ BYBIT FUTURES ONLY: НЕМАЄ ВАЛІДНОЇ УГОДИ З ВИСОКОЮ ЙМОВІРНІСТЮ" : "❌ НЕМАЄ ВАЛІДНОЇ УГОДИ З ВИСОКОЮ ЙМОВІРНІСТЮ", ""];
   for (const signal of signals) {
-    lines.push(`❌ NO TRADE ${signal.symbol}`, "", "Причини:", `• ${signal.rejectionReason}`, ...signal.reasons.map((reason) => `• ${reason}`), `• Підтверджень бірж: ${signal.confirmations.alignedCount}/5`, `• Оцінка: ${signal.score}/100`, "");
+    lines.push(`❌ NO TRADE ${signal.symbol}`, "", "Причини:", `• ${signal.rejectionReason}`, ...signal.reasons.map((reason) => `• ${reason}`), `• Підтверджень бірж: ${signal.confirmations.alignedCount}/${bybitOnly ? 1 : 5}`, `• Оцінка: ${signal.score}/100`, "");
   }
   lines.push("Чесний висновок: сканер зараз не бачить валідної high-probability угоди. Якість важливіша за кількість.");
   return lines.join("\n");
 }
 
 function confirmationLines(signal: Signal) {
+  if (bybitOnly) return [signal.confirmations.bybit ? "✅ Bybit Futures" : "❌ Bybit Futures"];
   return [signal.confirmations.bybit ? "✅ Bybit" : "❌ Bybit", signal.confirmations.okx ? "✅ OKX" : "❌ OKX", signal.confirmations.kucoin ? "✅ KuCoin" : "❌ KuCoin", signal.confirmations.kraken ? "✅ Kraken" : "❌ Kraken", signal.confirmations.binance ? "✅ Binance market confirmation" : "❌ Binance market confirmation"];
 }
 
