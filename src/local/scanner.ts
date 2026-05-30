@@ -16,6 +16,8 @@ export class Scanner {
   private sent = new Set<string>();
   private binanceWs: WebSocket | null = null;
   private scanning = false;
+  private symbols = config.symbols;
+  private cursor = 0;
 
   constructor(private broadcast: Broadcast) {}
 
@@ -25,6 +27,7 @@ export class Scanner {
       logger.warn({ err }, "Telegram startup alert failed");
     });
     state.diagnostics.apiStatus.telegram = "configured";
+    await this.validateSymbols();
     this.connectBinanceTicker();
     await this.scan();
     this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
@@ -50,27 +53,46 @@ export class Scanner {
       const btcCandles = await this.loadCandles("BTCUSDT", "futures");
       const btcOk = btcStable(btcCandles);
       const candidates: Signal[] = [];
-      for (const symbol of config.symbols) {
-        for (const mode of ["futures", "spot"] as const) {
-          const candles = symbol === "BTCUSDT" && mode === "futures" ? btcCandles : await this.loadCandles(symbol, mode);
-          const snapshot = await this.snapshot(symbol, mode, candles, btcOk);
-          const signal = buildSignal(snapshot);
-          recordSignal(signal);
-          candidates.push(signal);
-          if (!this.sent.has(signalKey(signal)) && !["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
-            this.sent.add(signalKey(signal));
-            await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Telegram signal failed"));
-          }
-        }
+      const symbol = this.symbols[this.cursor % this.symbols.length];
+      const mode = Math.floor(this.cursor / this.symbols.length) % 2 === 0 ? "futures" : "spot";
+      this.cursor += 1;
+      const candles = symbol === "BTCUSDT" && mode === "futures" ? btcCandles : await this.loadCandles(symbol, mode);
+      const snapshot = await this.snapshot(symbol, mode, candles, btcOk);
+      const signal = buildSignal(snapshot);
+      logger.info({ symbol, mode, side: signal.side, score: signal.score, winProbability: signal.winProbability, rejectionReason: signal.rejectionReason, scoreBreakdown: signal.scoreBreakdown }, "scan decision");
+      recordSignal(signal);
+      candidates.push(signal);
+      if (!this.sent.has(signalKey(signal)) && !["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
+        this.sent.add(signalKey(signal));
+        await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Telegram signal failed"));
       }
       state.diagnostics.lastScanAt = new Date().toISOString();
-      state.diagnostics.scannedSymbols = config.symbols.length;
+      state.diagnostics.scannedSymbols = this.symbols.length;
       state.marketCondition = summarize(candidates);
       this.broadcast({ type: "state", state });
     } catch (err) {
       logger.error({ err }, "Scan failed");
     } finally {
       this.scanning = false;
+    }
+  }
+
+  private async validateSymbols() {
+    try {
+      const [linear, spot] = await Promise.all([this.client.bybitInstrumentSymbols("linear"), this.client.bybitInstrumentSymbols("spot")]);
+      const valid = config.symbols.filter((s) => linear.has(s) && spot.has(s));
+      const invalid = config.symbols.filter((s) => !linear.has(s) || !spot.has(s));
+      this.symbols = valid.length ? valid : ["BTCUSDT"];
+      state.diagnostics.validSymbols = this.symbols;
+      state.diagnostics.invalidSymbols = invalid;
+      state.diagnostics.apiStatus.bybit = "symbols validated";
+      logger.info({ validSymbols: this.symbols, invalidSymbols: invalid }, "Bybit symbol validation completed");
+    } catch (err) {
+      this.symbols = config.symbols;
+      state.diagnostics.validSymbols = this.symbols;
+      state.diagnostics.invalidSymbols = [];
+      state.diagnostics.apiStatus.bybit = "using prevalidated symbols";
+      logger.warn({ err, validSymbols: this.symbols }, "Bybit symbol validation temporarily unavailable; using prevalidated symbol universe");
     }
   }
 

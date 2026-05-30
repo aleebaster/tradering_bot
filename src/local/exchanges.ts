@@ -7,12 +7,17 @@ const OKX = "https://www.okx.com";
 const BINANCE = "https://api.binance.com";
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
+  const res = await fetch(url, { ...init, headers: { "user-agent": "tradering-bot/1.0", ...(init?.headers ?? {}) }, signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} ${url}`);
   return (await res.json()) as T;
 }
 
 export class ExchangeClient {
+  async bybitInstrumentSymbols(category: "linear" | "spot"): Promise<Set<string>> {
+    const body = await json<{ result: { list: Array<{ symbol: string; status: string }> } }>(`${BYBIT}/v5/market/instruments-info?category=${category}`);
+    return new Set(body.result.list.filter((x) => x.status === "Trading").map((x) => x.symbol));
+  }
+
   async bybitKlines(symbol: string, interval: string, category: "linear" | "spot" = "linear", limit = 220): Promise<Candle[]> {
     const u = `${BYBIT}/v5/market/kline?category=${category}&symbol=${symbol}&interval=${interval}&limit=${limit}`;
     const body = await json<{ result: { list: string[][] } }>(u);

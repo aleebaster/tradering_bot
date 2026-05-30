@@ -8,7 +8,9 @@ const diagnostics: Diagnostics = {
   partialMode: config.partialMode,
   warnings: config.warning ? [config.warning] : [],
   scannedSymbols: 0,
-  apiStatus: { bybit: "unknown", okx: config.partialMode ? "partial" : "unknown", binance: "unknown", telegram: "unknown" }
+  apiStatus: { bybit: "unknown", okx: config.partialMode ? "partial" : "unknown", binance: "unknown", telegram: "unknown" },
+  validSymbols: [],
+  invalidSymbols: []
 };
 
 export const state: BotState = {

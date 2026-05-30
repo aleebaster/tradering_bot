@@ -83,8 +83,32 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
     marketRegime: snapshot.regime,
     btcStable: snapshot.btcStable,
     reasons: reasons(snapshot, { trendStrength, volume, mtf, smc: smc.score, momentum, funding, oi, orderbook, rs }),
+    rejectionReason: rejectionReason(finalSide, score, snapshot),
+    scoreBreakdown: {
+      trendStrength: Math.round(trendStrength),
+      liquidity: Math.round(snapshot.liquidityScore),
+      volumeConfirmation: Math.round(volume),
+      smcConfirmation: Math.round(smc.score),
+      multiTimeframeAlignment: Math.round(mtf),
+      whaleActivity: Math.round(snapshot.whaleScore),
+      fundingConfirmation: Math.round(funding),
+      openInterestConfirmation: Math.round(oi),
+      momentumQuality: Math.round(momentum),
+      orderBookImbalance: Math.round(orderbook),
+      regimePenalty: Math.round(regimePenalty),
+      btcPenalty: Math.round(btcPenalty)
+    },
     management: finalSide === "NO_TRADE" ? "WAIT" : finalSide === "WATCHLIST" ? "WAIT for stronger confirmation" : "ENTER NOW; move SL to breakeven after TP1, take partial profit at TP2, trail remainder with ATR"
   };
+}
+
+function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot) {
+  if (side !== "NO_TRADE") return side === "WATCHLIST" ? "Score 70-84: watchlist only until stronger confirmation" : "Accepted high-probability setup";
+  if (snapshot.regime === "MANIPULATION_RISK") return "Manipulation risk detected";
+  if (!snapshot.btcStable && snapshot.symbol !== "BTCUSDT") return "BTC unstable, altcoin aggression blocked";
+  if (snapshot.regime === "RANGING") return "Ranging/choppy market, no high-probability trend setup";
+  if (snapshot.regime === "VOLATILE" || snapshot.regime === "NEWS_DRIVEN") return "Volatile/news-driven conditions, false-positive risk too high";
+  return `Score ${Math.round(score)} below 70 threshold`;
 }
 
 function multiTimeframeScore(snapshot: MarketSnapshot, direction: number) {

@@ -26,7 +26,7 @@ export const config = {
   mode,
   partialMode,
   warning: partialMode ? "OKX Passphrase missing — running in partial mode." : null,
-  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT"],
+  symbols: ["BTCUSDT", "ETHUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT"],
   futuresTimeframes: ["5", "15", "60"],
   spotTimeframes: ["60", "240", "D"],
   maxSignalsPerDay: 5

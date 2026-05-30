@@ -47,6 +47,8 @@ export interface Signal {
   marketRegime: MarketRegime;
   btcStable: boolean;
   reasons: string[];
+  rejectionReason: string;
+  scoreBreakdown: Record<string, number>;
   management: string;
 }
 
@@ -58,6 +60,8 @@ export interface Diagnostics {
   warnings: string[];
   scannedSymbols: number;
   apiStatus: Record<string, string>;
+  validSymbols: string[];
+  invalidSymbols: string[];
 }
 
 export interface BotState {
