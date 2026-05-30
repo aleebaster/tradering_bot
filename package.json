@@ -15,6 +15,7 @@
     "kraken:diagnostics": "chcp 65001 >nul && tsx scripts/kraken-diagnostics.ts",
     "aigensyn:bybit": "chcp 65001 >nul && tsx scripts/manual-aigensyn-bybit.ts",
     "aigensyn:watch": "chcp 65001 >nul && set WATCH_AIGENSYN=1&& tsx scripts/manual-aigensyn-bybit.ts",
+    "priority:watch": "chcp 65001 >nul && set PRIORITY_WATCH=1&& tsx scripts/manual-aigensyn-bybit.ts",
     "telegram:format-test": "chcp 65001 >nul && tsx scripts/telegram-format-test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"

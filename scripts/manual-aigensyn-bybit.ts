@@ -7,28 +7,44 @@ import type { Candle, MarketRegime } from "../src/local/types";
 
 const client = new ExchangeClient();
 const notifier = new TelegramNotifier();
-const symbol = "AIGENSYNUSDT";
+const symbol = (process.env.PAIR ?? process.argv[2] ?? "AIGENSYNUSDT").toUpperCase();
 const tfs = ["5", "15", "60"];
-const watchMode = process.env.WATCH_AIGENSYN === "1";
-const watchIntervalMs = 60_000;
+const watchMode = process.env.WATCH_AIGENSYN === "1" || process.env.PRIORITY_WATCH === "1";
+const watchIntervalMs = 12_000;
 
 async function main() {
+  console.log(`PRIORITY WATCHLIST: ${symbol} Bybit Futures, interval ${watchIntervalMs / 1000}s`);
+  if (!watchMode) {
+    await analyzeAndSend(true, false);
+    return;
+  }
+  let watchlistSent = false;
+  let invalidated = false;
   let activationSent = false;
   while (true) {
-    const result = await analyzeAndSend(!watchMode || !activationSent);
-    if (result.qualified) activationSent = true;
-    if (!watchMode || activationSent) return;
+    const result = await analyzeAndSend(!watchlistSent, true, watchlistSent);
+    if (result.watchlist) watchlistSent = true;
+    if (result.invalidated && watchlistSent) {
+      invalidated = true;
+      return;
+    }
+    if (result.qualified && result.analysis) {
+      activationSent = true;
+      await monitorActivatedTrade(result.analysis);
+      return;
+    }
+    if (invalidated || activationSent) return;
     await sleep(watchIntervalMs);
   }
 }
 
-async function analyzeAndSend(sendWatchlist: boolean) {
+async function analyzeAndSend(sendWatchlist: boolean, priorityMode: boolean, canInvalidate = false) {
   const valid = await client.bybitInstrumentSymbols("linear");
   if (!valid.has(symbol)) {
     const message = `❌ НЕ ВХОДИТИ — ${symbol}\n\nПричина:\n• Bybit Futures не має активного linear perpetual для ${symbol}`;
     await notifier.send(message);
     console.log(message);
-    return { qualified: false, score: 0 };
+    return { qualified: false, watchlist: false, invalidated: true, score: 0 };
   }
 
   const [candles, btcCandles, orderBookImbalance, fundingRate, openInterestChange] = await Promise.all([
@@ -61,35 +77,58 @@ async function analyzeAndSend(sendWatchlist: boolean) {
 
   const longScore = scoreSide(1, { e20, e50, e200, last, vw, rs, m, smc, volume, orderBookImbalance, fundingRate, openInterestChange, btcOk, regime, volatilityPct, mtf: mtfLong, fakeBreakoutRisk });
   const shortScore = scoreSide(-1, { e20, e50, e200, last, vw, rs, m, smc, volume, orderBookImbalance, fundingRate, openInterestChange, btcOk, regime, volatilityPct, mtf: mtfShort, fakeBreakoutRisk });
-  const direction = longScore.score >= shortScore.score ? 1 : -1;
+  const direction: 1 | -1 = longScore.score >= shortScore.score ? 1 : -1;
   const selected = direction === 1 ? longScore : shortScore;
-  const side = direction === 1 ? "LONG" : "SHORT";
+  const side: "LONG" | "SHORT" = direction === 1 ? "LONG" : "SHORT";
   const levels = tradeLevels(last.close, a, sr, direction);
-  const qualified = selected.score >= 85 && btcOk && !fakeBreakoutRisk.high && regime !== "MANIPULATION_RISK";
+  const confirmations = confirmationFlags(selected, btcOk, fakeBreakoutRisk.high);
+  const qualified = selected.score >= 85 && confirmations.volume && confirmations.momentum && confirmations.smc && confirmations.orderbook && confirmations.btc && confirmations.breakout;
   const watchlist = !qualified && selected.score >= 80 && selected.score < 85;
-  const title = qualified ? `🟢 SETUP ACTIVATED — ${symbol}` : watchlist ? `⚠️ WATCHLIST ONLY — ${symbol}` : `❌ НЕ ВХОДИТИ — ${symbol}`;
+  const invalidated = priorityMode && canInvalidate && selected.score < 80 && (!confirmations.momentum || !confirmations.volume || !confirmations.btc || !confirmations.breakout);
+  const leverage = leverageFor(selected.score, volatilityPct);
+  const icon = side === "SHORT" ? "🔴" : "🟢";
+  const title = qualified ? `${icon} ${side} ACTIVATED — ${symbol}` : watchlist ? `⚠️ WATCHLIST ONLY — ${symbol}` : invalidated ? `❌ SETUP INVALIDATED — ${symbol}` : `❌ НЕ ВХОДИТИ — ${symbol}`;
   const probability = selected.score;
-  const message = [
+  const activationMessage = [
     title,
     "",
-    "Bybit Futures ONLY",
-    `Плече: x3 ONLY`,
-    `Поточна ціна: ${fmt(last.close)}`,
-    `Зона входу: ${fmt(levels.entry[0])}–${fmt(levels.entry[1])}`,
-    `Stop Loss: ${fmt(levels.stopLoss)}`,
-    `TP1: ${fmt(levels.takeProfit[0])}`,
-    `TP2: ${fmt(levels.takeProfit[1])}`,
-    `TP3: ${fmt(levels.takeProfit[2])}`,
-    `Confidence: ${selected.score}%`,
-    `Win probability: ${probability}%`,
-    `Risk/Reward: ${levels.riskReward}`,
-    `Invalidation level: ${fmt(levels.stopLoss)}`,
-    `Market regime: ${regimeUa(regime)}`,
+    "Статус:",
+    qualified ? "✅ ЗАХОДИТИ ЗАРАЗ" : watchlist ? "⚠️ WATCHLIST ONLY" : "❌ НЕ ВХОДИТИ",
     "",
-    "Точні причини:",
-    ...selected.reasons.map((reason) => `• ${reason}`),
-    ...(watchlist ? ["• ⚠️ WATCHLIST ONLY: близько до порогу, але входити ще рано", "• Тригер активації: score >= 85 з підтвердженням momentum/SMC/volume/orderbook"] : []),
-    ...(!qualified ? [`• Сетап не проходить production-поріг 85/100: ${selected.score}/100`] : []),
+    "📌 Коротко:",
+    "",
+    `📍 Вхід: ${fmt(levels.entry[0])}–${fmt(levels.entry[1])}`,
+    `🛑 SL: ${fmt(levels.stopLoss)}`,
+    `🎯 TP1: ${fmt(levels.takeProfit[0])}`,
+    `🎯 TP2: ${fmt(levels.takeProfit[1])}`,
+    `🎯 TP3: ${fmt(levels.takeProfit[2])}`,
+    `⚡ Плече: ${qualified ? leverage : "AUTO (MAX x5)"}`,
+    "",
+    "Ймовірність:",
+    `${probability}%`,
+    "",
+    "Confidence:",
+    `${selected.score}%`,
+    "",
+    "Risk/Reward:",
+    levels.riskReward,
+    "",
+    "Причина:",
+    "",
+    ...(qualified ? activationReasons(confirmations) : invalidated ? invalidationReasons(confirmations) : selected.reasons.map((reason) => `✅ ${reason}`)),
+    ...(watchlist ? ["✅ priority watchlist active", "✅ бот продовжує пошук best entry кожні 10–15 секунд"] : []),
+    ...(!qualified && !watchlist ? [`✅ quality filter active: немає входу при ${selected.score}/100`] : []),
+    "",
+    "Супровід угоди:",
+    "",
+    "🟢 ENTER NOW",
+    "🟡 HOLD POSITION",
+    "🟠 MOVE STOP LOSS TO BREAKEVEN",
+    "🟠 TAKE PARTIAL PROFIT",
+    "🔴 EXIT TRADE NOW"
+  ].join("\n");
+  const raw = [
+    activationMessage,
     "",
     "Weighted scoring:",
     `• Trend = ${selected.parts.trend}`,
@@ -128,9 +167,30 @@ async function analyzeAndSend(sendWatchlist: boolean) {
     `• Fake breakout risk: ${fakeBreakoutRisk.high ? "високий" : "низький"}`
   ].join("\n");
 
-  if (qualified || sendWatchlist) await notifier.send(message);
-  console.log(message);
-  return { qualified, score: selected.score };
+  if (qualified || invalidated || watchlist && sendWatchlist) await notifier.send(activationMessage);
+  console.log(raw);
+  return { qualified, watchlist, invalidated, score: selected.score, analysis: { symbol, side, levels, leverage, btcOk, direction, score: selected.score } };
+}
+
+async function monitorActivatedTrade(analysis: ActiveAnalysis) {
+  const sent = new Set<string>();
+  while (true) {
+    await sleep(watchIntervalMs);
+    const [candles, btcCandles] = await Promise.all([client.bybitKlines(analysis.symbol, "5", "linear", 5).catch(() => []), loadBybitFutures("BTCUSDT").catch(() => ({ "60": [] as Candle[] }))]);
+    const current = candles.at(-1)?.close;
+    if (!current) continue;
+    const btcOk = btcStable(btcCandles as Record<string, Candle[]>);
+    const short = analysis.side === "SHORT";
+    const hitSl = short ? current >= analysis.levels.stopLoss : current <= analysis.levels.stopLoss;
+    const hitTp1 = short ? current <= analysis.levels.takeProfit[0] : current >= analysis.levels.takeProfit[0];
+    const hitTp2 = short ? current <= analysis.levels.takeProfit[1] : current >= analysis.levels.takeProfit[1];
+    const hitTp3 = short ? current <= analysis.levels.takeProfit[2] : current >= analysis.levels.takeProfit[2];
+    const action = hitSl || hitTp3 || !btcOk ? "🔴 EXIT TRADE NOW" : hitTp2 ? "🟠 MOVE STOP LOSS TO BREAKEVEN" : hitTp1 ? "🟠 TAKE PARTIAL PROFIT" : "🟡 HOLD POSITION";
+    if (sent.has(action)) continue;
+    sent.add(action);
+    await notifier.send([action, "", `${analysis.side} — ${analysis.symbol}`, "", `Поточна ціна: ${fmt(current)}`, `SL: ${fmt(analysis.levels.stopLoss)}`, `TP1: ${fmt(analysis.levels.takeProfit[0])}`, `TP2: ${fmt(analysis.levels.takeProfit[1])}`, `TP3: ${fmt(analysis.levels.takeProfit[2])}`, `Плече: ${analysis.leverage}`, "", "Причина:", hitSl ? "• stop loss / invalidation reached" : hitTp3 ? "• TP3 reached" : !btcOk ? "• BTC instability" : hitTp2 ? "• TP2 reached; protect profit" : hitTp1 ? "• TP1 reached; partial profit" : "• position conditions remain valid"].join("\n"));
+    if (action === "🔴 EXIT TRADE NOW") return;
+  }
 }
 
 async function loadBybitFutures(target: string) {
@@ -183,6 +243,45 @@ function scoreSide(direction: 1 | -1, input: AnalysisInput) {
     input.fakeBreakoutRisk.high ? "Високий ризик fake breakout" : "Ризик fake breakout низький"
   ];
   return { score, parts, reasons };
+}
+
+function confirmationFlags(selected: ReturnType<typeof scoreSide>, btcOk: boolean, fakeBreakoutHigh: boolean) {
+  return {
+    volume: selected.parts.volume >= 10,
+    momentum: selected.parts.momentum >= 30,
+    smc: selected.parts.smc >= 8,
+    orderbook: selected.parts.orderbook >= 8,
+    btc: btcOk,
+    breakout: !fakeBreakoutHigh
+  };
+}
+
+function activationReasons(flags: ReturnType<typeof confirmationFlags>) {
+  return [
+    flags.volume ? "✅ volume confirmed" : "❌ volume not confirmed",
+    flags.momentum ? "✅ momentum confirmed" : "❌ momentum not confirmed",
+    flags.smc ? "✅ SMC confirmed" : "❌ SMC not confirmed",
+    flags.orderbook ? "✅ order book confirmed" : "❌ order book not confirmed",
+    flags.btc ? "✅ BTC stable" : "❌ BTC unstable"
+  ].filter((line) => line.startsWith("✅"));
+}
+
+function invalidationReasons(flags: ReturnType<typeof confirmationFlags>) {
+  const reasons = [];
+  if (!flags.momentum) reasons.push("• weak momentum");
+  if (!flags.volume) reasons.push("• volume faded");
+  if (!flags.btc) reasons.push("• BTC instability");
+  if (!flags.breakout) reasons.push("• fake breakout risk");
+  if (!flags.smc) reasons.push("• SMC trigger missing");
+  if (!flags.orderbook) reasons.push("• order book confirmation missing");
+  return reasons.length ? reasons : ["• setup quality dropped below priority threshold"];
+}
+
+function leverageFor(score: number, volatilityPct: number) {
+  let leverage = score >= 90 ? 5 : score >= 87 ? 3 : 2;
+  if (volatilityPct > 0.018) leverage = Math.min(leverage, 2);
+  else if (volatilityPct > 0.012) leverage = Math.min(leverage, 3);
+  return `x${leverage}`;
 }
 
 function mtfDirection(candles: Record<string, Candle[]>, direction: 1 | -1) {
@@ -248,6 +347,16 @@ interface AnalysisInput {
   volatilityPct: number;
   mtf: number;
   fakeBreakoutRisk: { high: boolean; support: number; resistance: number };
+}
+
+interface ActiveAnalysis {
+  symbol: string;
+  side: "LONG" | "SHORT";
+  direction: 1 | -1;
+  score: number;
+  leverage: string;
+  btcOk: boolean;
+  levels: ReturnType<typeof tradeLevels>;
 }
 
 main().catch(async (error) => {
