@@ -9,7 +9,24 @@ const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
 const tfs = ["5", "15", "60"];
 
 async function main() {
-  const btcCandles = await loadBybit("BTCUSDT");
+  let btcCandles: Record<string, Candle[]>;
+  try {
+    btcCandles = await loadBybit("BTCUSDT");
+  } catch (error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    const message = [
+      "❌ NO TRADE BTCUSDT / ETHUSDT / SOLUSDT",
+      "",
+      "Причини:",
+      "• головне джерело Bybit тимчасово недоступне",
+      `• raw Bybit error: ${raw}`,
+      "• без Bybit як головного джерела production-сигнал заборонено",
+      "• якість важливіша за кількість"
+    ].join("\n");
+    await notifier.send(message);
+    console.log(message);
+    return;
+  }
   const btcOk = btcStable(btcCandles);
   const signals: Signal[] = [];
   for (const symbol of symbols) {

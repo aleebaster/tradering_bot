@@ -9,6 +9,7 @@ const diagnostics: Diagnostics = {
   warnings: config.warning ? [config.warning] : [],
   scannedSymbols: 0,
   apiStatus: { bybit: "невідомо", okx: config.partialMode ? "частковий режим" : "невідомо", kucoin: "невідомо", binance: "невідомо", telegram: "невідомо" },
+  authErrors: {},
   validSymbols: [],
   invalidSymbols: []
 };

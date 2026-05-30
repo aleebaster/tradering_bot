@@ -9,7 +9,7 @@ const schema = z.object({
   BYBIT_API_SECRET: z.string().optional(),
   OKX_API_KEY: z.string().optional(),
   OKX_API_SECRET: z.string().optional(),
-  OKX_PASSPHRASE: z.string().optional(),
+  OKX_API_PASSPHRASE: z.string().optional(),
   KUCOIN_API_KEY: z.string().optional(),
   KUCOIN_API_SECRET: z.string().optional(),
   KUCOIN_API_PASSPHRASE: z.string().optional(),
@@ -21,7 +21,7 @@ const schema = z.object({
 });
 
 const env = schema.parse(process.env);
-const partialMode = !env.OKX_PASSPHRASE;
+const partialMode = !env.OKX_API_PASSPHRASE;
 const mode: Mode = env.BOT_MODE ?? "LOCAL_ONLY";
 
 export const config = {

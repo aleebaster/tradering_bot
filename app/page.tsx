@@ -29,7 +29,7 @@ type Signal = {
   management: string;
 };
 type BotState = {
-  diagnostics: { startedAt: string; lastScanAt: string | null; mode: string; partialMode: boolean; warnings: string[]; scannedSymbols: number; apiStatus: Record<string, string> };
+  diagnostics: { startedAt: string; lastScanAt: string | null; mode: string; partialMode: boolean; warnings: string[]; scannedSymbols: number; apiStatus: Record<string, string>; authErrors: Record<string, string> };
   marketCondition: string;
   activeSignals: Signal[];
   watchlist: Signal[];
@@ -123,6 +123,7 @@ export default function Dashboard() {
         <Panel title="Діагностика">
           <div className="space-y-3">
             {Object.entries(state?.diagnostics.apiStatus ?? {}).map(([k, v]) => <Row key={k} label={k.toUpperCase()} value={v} />)}
+            {Object.entries(state?.diagnostics.authErrors ?? {}).map(([k, v]) => <Row key={`auth-${k}`} label={`${k.toUpperCase()} AUTH`} value={v} />)}
             <Row label="Проскановано символів" value={String(state?.diagnostics.scannedSymbols ?? 0)} />
             <Row label="Локальний API" value={apiUrl} />
           </div>

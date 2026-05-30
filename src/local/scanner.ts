@@ -30,9 +30,9 @@ export class Scanner {
       logger.warn({ err }, "Не вдалося надіслати стартове повідомлення Telegram");
     });
     state.diagnostics.apiStatus.telegram = "налаштовано";
-    await this.validateSymbols();
     await this.validateOkxAuth();
     await this.validateKucoinAuth();
+    await this.validateSymbols();
     this.connectBinanceTicker();
     this.connectKucoinTicker();
     await this.scan();
@@ -148,9 +148,12 @@ export class Scanner {
     try {
       const auth = await this.client.okxAuthCheck();
       state.diagnostics.apiStatus.okx = "автентифіковано і підключено";
+      delete state.diagnostics.authErrors.okx;
       logger.info({ accountLevel: auth.accountLevel, permissions: auth.permissions }, "Автентифікація OKX успішна");
     } catch (err) {
-      state.diagnostics.apiStatus.okx = "помилка автентифікації";
+      const message = err instanceof Error ? err.message : String(err);
+      state.diagnostics.apiStatus.okx = "помилка автентифікації; public market confirmation активне";
+      state.diagnostics.authErrors.okx = message;
       logger.error({ err }, "Помилка автентифікації OKX");
     }
   }
@@ -189,7 +192,7 @@ export class Scanner {
       mode === "futures" ? this.client.openInterestChange(symbol).catch(() => 0) : Promise.resolve(0)
     ]);
     if (config.partialMode) state.diagnostics.apiStatus.okx = "часткове публічне підтвердження";
-    else if (state.diagnostics.apiStatus.okx !== "помилка автентифікації") state.diagnostics.apiStatus.okx = "автентифіковано і підключено; ринкове підтвердження активне";
+    else if (!state.diagnostics.apiStatus.okx.startsWith("помилка автентифікації")) state.diagnostics.apiStatus.okx = "автентифіковано і підключено; ринкове підтвердження активне";
     state.diagnostics.apiStatus.binance = "підключено";
     const primary = candles[mode === "futures" ? "15" : "240"] ?? [];
     const dollarVolume = primary.slice(-24).reduce((s, c) => s + c.volume * c.close, 0) / 24;

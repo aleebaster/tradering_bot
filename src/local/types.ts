@@ -77,6 +77,7 @@ export interface Diagnostics {
   warnings: string[];
   scannedSymbols: number;
   apiStatus: Record<string, string>;
+  authErrors: Record<string, string>;
   validSymbols: string[];
   invalidSymbols: string[];
 }

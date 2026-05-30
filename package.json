@@ -11,6 +11,7 @@
     "local:all": "concurrently -n API,DASH -c cyan,magenta \"npm run local:api\" \"npm run dev\"",
     "validate:live": "tsx scripts/final-live-validation.ts",
     "signal:test": "chcp 65001 >nul && tsx scripts/real-signal-test.ts",
+    "okx:diagnostics": "chcp 65001 >nul && tsx scripts/okx-diagnostics.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },

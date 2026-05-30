@@ -8,12 +8,24 @@ const BINANCE = "https://api.binance.com";
 const KUCOIN = "https://api.kucoin.com";
 const KUCOIN_FUTURES = "https://api-futures.kucoin.com";
 
+const responseCache = new Map<string, { expiresAt: number; value: unknown }>();
+const hostNextAllowedAt = new Map<string, number>();
+
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
+  const method = init?.method ?? "GET";
+  const cacheKey = `${method}:${url}`;
+  const cached = method === "GET" ? responseCache.get(cacheKey) : undefined;
+  if (cached && cached.expiresAt > Date.now()) return cached.value as T;
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
+      await throttle(url);
       const res = await fetch(url, { ...init, headers: { "user-agent": "tradering-bot/1.0", ...(init?.headers ?? {}) }, signal: AbortSignal.timeout(8000) });
-      if (res.ok) return (await res.json()) as T;
+      if (res.ok) {
+        const value = (await res.json()) as T;
+        if (method === "GET") responseCache.set(cacheKey, { expiresAt: Date.now() + cacheTtl(url), value });
+        return value;
+      }
       const text = await res.text();
       const detail = text ? `: ${text.slice(0, 300)}` : "";
       if (![403, 429, 500, 502, 503, 504].includes(res.status)) throw new Error(`${res.status} ${res.statusText} ${url}${detail}`);
@@ -21,9 +33,34 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
     } catch (err) {
       lastError = err;
     }
-    await new Promise((resolve) => setTimeout(resolve, 1200 + attempt * 1800));
+    await new Promise((resolve) => setTimeout(resolve, backoffDelay(attempt, url)));
   }
   throw lastError;
+}
+
+async function throttle(url: string) {
+  const host = new URL(url).host;
+  const now = Date.now();
+  const waitMs = Math.max(0, (hostNextAllowedAt.get(host) ?? 0) - now);
+  if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+  const minGap = host.includes("bybit") ? 900 : host.includes("binance") ? 450 : 300;
+  hostNextAllowedAt.set(host, Date.now() + minGap);
+}
+
+function cacheTtl(url: string) {
+  if (url.includes("api.bybit.com/v5/market/kline")) return 90_000;
+  if (url.includes("api.bybit.com/v5/market/orderbook")) return 20_000;
+  if (url.includes("api.bybit.com/v5/market/funding")) return 5 * 60_000;
+  if (url.includes("api.bybit.com/v5/market/open-interest")) return 60_000;
+  if (url.includes("api.binance.com")) return 45_000;
+  if (url.includes("api.kucoin.com/api/v1/market/candles")) return 60_000;
+  if (url.includes("www.okx.com/api/v5/market/candles")) return 60_000;
+  return 10_000;
+}
+
+function backoffDelay(attempt: number, url: string) {
+  const base = url.includes("bybit") ? 5_000 : 1_200;
+  return base * 2 ** attempt;
 }
 
 export class ExchangeClient {
@@ -116,7 +153,7 @@ export class ExchangeClient {
   }
 
   private async okxPrivateGet<T>(path: string): Promise<T> {
-    if (!config.OKX_API_KEY || !config.OKX_API_SECRET || !config.OKX_PASSPHRASE) throw new Error("OKX credentials incomplete");
+    if (!config.OKX_API_KEY || !config.OKX_API_SECRET || !config.OKX_API_PASSPHRASE) throw new Error("OKX credentials incomplete");
     const timestamp = new Date().toISOString();
     const prehash = `${timestamp}GET${path}`;
     const sign = crypto.createHmac("sha256", config.OKX_API_SECRET).update(prehash).digest("base64");
@@ -125,7 +162,7 @@ export class ExchangeClient {
         "OK-ACCESS-KEY": config.OKX_API_KEY,
         "OK-ACCESS-SIGN": sign,
         "OK-ACCESS-TIMESTAMP": timestamp,
-        "OK-ACCESS-PASSPHRASE": config.OKX_PASSPHRASE,
+        "OK-ACCESS-PASSPHRASE": config.OKX_API_PASSPHRASE,
         "x-simulated-trading": "0"
       }
     });
