@@ -3,7 +3,7 @@ export type Side = "LONG" | "SHORT" | "BUY" | "NO_TRADE" | "WATCHLIST";
 export type MarketRegime = "TRENDING" | "RANGING" | "VOLATILE" | "NEWS_DRIVEN" | "MANIPULATION_RISK";
 
 export interface Candle {
-  exchange: "bybit" | "okx" | "binance" | "kucoin";
+  exchange: "bybit" | "okx" | "binance" | "kucoin" | "kraken";
   symbol: string;
   timeframe: string;
   openTime: number;
@@ -20,6 +20,7 @@ export interface MarketSnapshot {
   candles: Record<string, Candle[]>;
   okxCandles: Record<string, Candle[]>;
   kucoinCandles: Record<string, Candle[]>;
+  krakenCandles: Record<string, Candle[]>;
   binanceCandles: Record<string, Candle[]>;
   orderBookImbalance: number;
   fundingRate: number;
@@ -35,6 +36,7 @@ export interface ExchangeConfirmations {
   bybit: boolean;
   okx: boolean;
   kucoin: boolean;
+  kraken: boolean;
   binance: boolean;
   alignedCount: number;
   conflict: boolean;

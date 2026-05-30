@@ -31,9 +31,10 @@ async function main() {
   const signals: Signal[] = [];
   for (const symbol of symbols) {
     const candles = symbol === "BTCUSDT" ? btcCandles : await loadBybit(symbol);
-    const [okx, kucoin, binance, imbalance, funding, oi] = await Promise.all([
+    const [okx, kucoin, kraken, binance, imbalance, funding, oi] = await Promise.all([
       loadOkx(symbol),
       loadKucoin(symbol),
+      loadKraken(symbol),
       loadBinance(symbol),
       client.orderBookImbalance(symbol).catch(() => 0),
       client.fundingRate(symbol).catch(() => 0),
@@ -45,6 +46,7 @@ async function main() {
       candles,
       okxCandles: okx,
       kucoinCandles: kucoin,
+      krakenCandles: kraken,
       binanceCandles: binance,
       orderBookImbalance: imbalance,
       fundingRate: funding,
@@ -53,7 +55,7 @@ async function main() {
       whaleScore: Math.min(100, Math.max(0, Math.abs(oi) * 2500 + Math.abs(imbalance) * 120)),
       btcStable: symbol === "BTCUSDT" ? true : btcOk,
       regime: regimeFrom(candles),
-      confirmations: confirmations(candles, okx, kucoin, binance)
+      confirmations: confirmations(candles, okx, kucoin, kraken, binance)
     };
     signals.push(buildSignal(snapshot));
   }
@@ -77,6 +79,10 @@ async function loadKucoin(symbol: string) {
   return Object.fromEntries(await Promise.all(tfs.map(async (tf) => [tf, await client.kucoinKlines(symbol, tf).catch(() => [])] as const)));
 }
 
+async function loadKraken(symbol: string) {
+  return Object.fromEntries(await Promise.all(tfs.map(async (tf) => [tf, await client.krakenSpotKlines(symbol, tf).catch(() => [])] as const)));
+}
+
 async function loadBinance(symbol: string) {
   return Object.fromEntries(await Promise.all(tfs.map(async (tf) => [tf, await client.binanceKlines(symbol, tf).catch(() => [])] as const)));
 }
@@ -86,16 +92,18 @@ function liquidity(candles: Candle[]) {
   return Math.min(100, Math.log10(Math.max(dollarVolume, 1)) * 11);
 }
 
-function confirmations(bybit: Record<string, Candle[]>, okx: Record<string, Candle[]>, kucoin: Record<string, Candle[]>, binance: Record<string, Candle[]>): ExchangeConfirmations {
+function confirmations(bybit: Record<string, Candle[]>, okx: Record<string, Candle[]>, kucoin: Record<string, Candle[]>, kraken: Record<string, Candle[]>, binance: Record<string, Candle[]>): ExchangeConfirmations {
   const bybitDir = direction(bybit["15"]);
   const okxDir = direction(okx["15"]);
   const kucoinDir = direction(kucoin["15"]);
+  const krakenDir = direction(kraken["15"]);
   const binanceDir = direction(binance["15"]);
   const okxAligned = okxDir !== 0 && okxDir === bybitDir;
   const kucoinAligned = kucoinDir !== 0 && kucoinDir === bybitDir;
+  const krakenAligned = krakenDir !== 0 && krakenDir === bybitDir;
   const binanceAligned = binanceDir !== 0 && binanceDir === bybitDir;
-  const conflict = [okxDir, kucoinDir].some((dir) => dir !== 0 && bybitDir !== 0 && dir !== bybitDir);
-  return { bybit: bybitDir !== 0, okx: okxAligned, kucoin: kucoinAligned, binance: binanceAligned, alignedCount: [bybitDir !== 0, okxAligned, kucoinAligned, binanceAligned].filter(Boolean).length, conflict, details: [] };
+  const conflict = [okxDir, kucoinDir, krakenDir].some((dir) => dir !== 0 && bybitDir !== 0 && dir !== bybitDir);
+  return { bybit: bybitDir !== 0, okx: okxAligned, kucoin: kucoinAligned, kraken: krakenAligned, binance: binanceAligned, alignedCount: [bybitDir !== 0, okxAligned, kucoinAligned, krakenAligned, binanceAligned].filter(Boolean).length, conflict, details: [] };
 }
 
 function direction(candles?: Candle[]) {
@@ -140,14 +148,14 @@ function formatSignal(signal: Signal) {
 function formatNoTrade(signals: Signal[]) {
   const lines = ["❌ НЕМАЄ ВАЛІДНОЇ УГОДИ З ВИСОКОЮ ЙМОВІРНІСТЮ", ""];
   for (const signal of signals) {
-    lines.push(`❌ NO TRADE ${signal.symbol}`, "", "Причини:", `• ${signal.rejectionReason}`, ...signal.reasons.map((reason) => `• ${reason}`), `• Підтверджень бірж: ${signal.confirmations.alignedCount}/4`, `• Оцінка: ${signal.score}/100`, "");
+    lines.push(`❌ NO TRADE ${signal.symbol}`, "", "Причини:", `• ${signal.rejectionReason}`, ...signal.reasons.map((reason) => `• ${reason}`), `• Підтверджень бірж: ${signal.confirmations.alignedCount}/5`, `• Оцінка: ${signal.score}/100`, "");
   }
   lines.push("Чесний висновок: сканер зараз не бачить валідної high-probability угоди. Якість важливіша за кількість.");
   return lines.join("\n");
 }
 
 function confirmationLines(signal: Signal) {
-  return [signal.confirmations.bybit ? "✅ Bybit" : "❌ Bybit", signal.confirmations.okx ? "✅ OKX" : "❌ OKX", signal.confirmations.kucoin ? "✅ KuCoin" : "❌ KuCoin", signal.confirmations.binance ? "✅ Binance market confirmation" : "❌ Binance market confirmation"];
+  return [signal.confirmations.bybit ? "✅ Bybit" : "❌ Bybit", signal.confirmations.okx ? "✅ OKX" : "❌ OKX", signal.confirmations.kucoin ? "✅ KuCoin" : "❌ KuCoin", signal.confirmations.kraken ? "✅ Kraken" : "❌ Kraken", signal.confirmations.binance ? "✅ Binance market confirmation" : "❌ Binance market confirmation"];
 }
 
 function fmt(value: number) {

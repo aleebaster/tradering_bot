@@ -12,6 +12,7 @@
     "validate:live": "tsx scripts/final-live-validation.ts",
     "signal:test": "chcp 65001 >nul && tsx scripts/real-signal-test.ts",
     "okx:diagnostics": "chcp 65001 >nul && tsx scripts/okx-diagnostics.ts",
+    "kraken:diagnostics": "chcp 65001 >nul && tsx scripts/kraken-diagnostics.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },

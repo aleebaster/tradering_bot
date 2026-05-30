@@ -97,6 +97,7 @@ function confirmationLines(signal: Signal) {
     signal.confirmations.bybit ? "✅ Bybit" : "❌ Bybit",
     signal.confirmations.okx ? "✅ OKX" : "❌ OKX",
     signal.confirmations.kucoin ? "✅ KuCoin" : "❌ KuCoin",
+    signal.confirmations.kraken ? "✅ Kraken" : "❌ Kraken",
     signal.confirmations.binance ? "✅ Binance market confirmation" : "❌ Binance market confirmation"
   ];
 }

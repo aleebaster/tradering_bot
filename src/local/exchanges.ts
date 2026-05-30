@@ -7,6 +7,8 @@ const OKX = "https://www.okx.com";
 const BINANCE = "https://api.binance.com";
 const KUCOIN = "https://api.kucoin.com";
 const KUCOIN_FUTURES = "https://api-futures.kucoin.com";
+const KRAKEN = "https://api.kraken.com";
+const KRAKEN_FUTURES = "https://futures.kraken.com";
 
 const responseCache = new Map<string, { expiresAt: number; value: unknown }>();
 const hostNextAllowedAt = new Map<string, number>();
@@ -71,7 +73,8 @@ export class ExchangeClient {
 
   async bybitKlines(symbol: string, interval: string, category: "linear" | "spot" = "linear", limit = 220): Promise<Candle[]> {
     const u = `${BYBIT}/v5/market/kline?category=${category}&symbol=${symbol}&interval=${interval}&limit=${limit}`;
-    const body = await json<{ result: { list: string[][] } }>(u);
+    const body = await json<{ retCode?: number; retMsg?: string; result?: { list?: string[][] } }>(u);
+    if (!body.result?.list) throw new Error(`Bybit kline failed ${body.retCode ?? "unknown"}: ${body.retMsg ?? "missing result list"}`);
     return body.result.list.reverse().map((r) => ({ exchange: "bybit", symbol, timeframe: interval, openTime: Number(r[0]), open: Number(r[1]), high: Number(r[2]), low: Number(r[3]), close: Number(r[4]), volume: Number(r[5]) }));
   }
 
@@ -127,6 +130,36 @@ export class ExchangeClient {
 
   async kucoinPrivateBullet() {
     return this.kucoinPrivatePost<{ code: string; data: { token: string; instanceServers: Array<{ endpoint: string; pingInterval: number }> } }>("/api/v1/bullet-private");
+  }
+
+  async krakenSpotKlines(symbol: string, interval: string, limit = 220): Promise<Candle[]> {
+    const pair = krakenSpotPair(symbol);
+    const minutes = interval === "D" ? 1440 : Number(interval);
+    const body = await json<{ error: string[]; result: Record<string, Array<[number, string, string, string, string, string, string, number]>> }>(`${KRAKEN}/0/public/OHLC?pair=${pair}&interval=${minutes}`);
+    if (body.error.length) throw new Error(`Kraken spot OHLC failed: ${body.error.join(",")}`);
+    const key = Object.keys(body.result).find((x) => x !== "last")!;
+    return body.result[key].slice(-limit).map((r) => ({ exchange: "kraken", symbol, timeframe: interval, openTime: r[0] * 1000, open: Number(r[1]), high: Number(r[2]), low: Number(r[3]), close: Number(r[4]), volume: Number(r[6]) }));
+  }
+
+  async krakenSpotAuthCheck(): Promise<{ ok: boolean; balances: number }> {
+    const body = await this.krakenSpotPrivate<{ error: string[]; result: Record<string, string> }>("/0/private/Balance", {});
+    if (body.error.length) throw new Error(`Kraken spot auth failed: ${body.error.join(",")}`);
+    return { ok: true, balances: Object.keys(body.result).length };
+  }
+
+  async krakenFuturesAuthCheck(): Promise<{ ok: boolean; result?: string }> {
+    const body = await this.krakenFuturesPrivate<{ result: string; error?: string }>("/api/v3/accounts", "");
+    if (body.result !== "success") throw new Error(`Kraken futures auth failed: ${body.error ?? body.result}`);
+    return { ok: true, result: body.result };
+  }
+
+  async krakenFuturesTicker(symbol: string): Promise<{ ok: boolean; price?: number }> {
+    const futuresSymbol = krakenFuturesSymbol(symbol);
+    const body = await json<{ result: string; tickers: Array<{ symbol: string; markPrice?: number; bid?: number; ask?: number }> }>(`${KRAKEN_FUTURES}/derivatives/api/v3/tickers`);
+    if (body.result !== "success") throw new Error(`Kraken futures tickers failed: ${body.result}`);
+    const ticker = body.tickers.find((x) => x.symbol === futuresSymbol);
+    if (!ticker) throw new Error(`Kraken futures symbol not found: ${futuresSymbol}`);
+    return { ok: true, price: Number(ticker.markPrice ?? ticker.bid ?? ticker.ask ?? 0) };
   }
 
   async orderBookImbalance(symbol: string): Promise<number> {
@@ -190,4 +223,31 @@ export class ExchangeClient {
   private async kucoinPrivatePost<T>(path: string): Promise<T> {
     return json<T>(`${KUCOIN}${path}`, { method: "POST", headers: this.kucoinHeaders("POST", path) });
   }
+
+  private async krakenSpotPrivate<T>(path: string, data: Record<string, string>): Promise<T> {
+    if (!config.KRAKEN_SPOT_API_KEY || !config.KRAKEN_SPOT_API_SECRET) throw new Error("Kraken spot credentials incomplete");
+    const nonce = Date.now().toString();
+    const params = new URLSearchParams({ nonce, ...data });
+    const sha = crypto.createHash("sha256").update(nonce + params.toString()).digest();
+    const hmac = crypto.createHmac("sha512", Buffer.from(config.KRAKEN_SPOT_API_SECRET, "base64")).update(Buffer.concat([Buffer.from(path), sha])).digest("base64");
+    return json<T>(`${KRAKEN}${path}`, { method: "POST", headers: { "API-Key": config.KRAKEN_SPOT_API_KEY, "API-Sign": hmac, "content-type": "application/x-www-form-urlencoded" }, body: params.toString() });
+  }
+
+  private async krakenFuturesPrivate<T>(path: string, postData: string): Promise<T> {
+    if (!config.KRAKEN_FUTURES_API_KEY || !config.KRAKEN_FUTURES_API_SECRET) throw new Error("Kraken futures credentials incomplete");
+    const nonce = Date.now().toString();
+    const hash = crypto.createHash("sha256").update(postData + nonce + path).digest();
+    const authent = crypto.createHmac("sha512", Buffer.from(config.KRAKEN_FUTURES_API_SECRET, "base64")).update(hash).digest("base64");
+    return json<T>(`${KRAKEN_FUTURES}/derivatives${path}`, { headers: { APIKey: config.KRAKEN_FUTURES_API_KEY, Nonce: nonce, Authent: authent } });
+  }
+}
+
+function krakenSpotPair(symbol: string) {
+  const base = symbol.replace("USDT", "");
+  return `${base === "BTC" ? "XBT" : base}USDT`;
+}
+
+function krakenFuturesSymbol(symbol: string) {
+  const base = symbol.replace("USDT", "");
+  return `PF_${base === "BTC" ? "XBT" : base}USD`;
 }

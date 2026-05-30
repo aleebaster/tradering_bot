@@ -193,7 +193,7 @@ function reasons(snapshot: MarketSnapshot, parts: Record<string, number>) {
 }
 
 function confirmedBy(snapshot: MarketSnapshot) {
-  return [snapshot.confirmations.bybit ? "Bybit" : "", snapshot.confirmations.okx ? "OKX" : "", snapshot.confirmations.kucoin ? "KuCoin" : "", snapshot.confirmations.binance ? "Binance" : ""].filter(Boolean);
+  return [snapshot.confirmations.bybit ? "Bybit" : "", snapshot.confirmations.okx ? "OKX" : "", snapshot.confirmations.kucoin ? "KuCoin" : "", snapshot.confirmations.kraken ? "Kraken" : "", snapshot.confirmations.binance ? "Binance" : ""].filter(Boolean);
 }
 
 function marketRegimeUa(regime: MarketRegime) {

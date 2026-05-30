@@ -32,9 +32,11 @@ export class Scanner {
     state.diagnostics.apiStatus.telegram = "налаштовано";
     await this.validateOkxAuth();
     await this.validateKucoinAuth();
+    await this.validateKrakenAuth();
     await this.validateSymbols();
     this.connectBinanceTicker();
     this.connectKucoinTicker();
+    this.connectKrakenTicker();
     await this.scan();
     this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
   }
@@ -67,6 +69,22 @@ export class Scanner {
     } catch (err) {
       state.diagnostics.apiStatus.kucoin = "помилка WebSocket KuCoin";
       logger.warn({ err }, "Помилка підключення KuCoin WebSocket");
+    }
+  }
+
+  private connectKrakenTicker() {
+    try {
+      state.diagnostics.apiStatus.krakenSpot = "підключення WebSocket";
+      const ws = new WebSocket("wss://ws.kraken.com/v2");
+      ws.on("open", () => {
+        state.diagnostics.apiStatus.krakenSpot = "WebSocket підключено";
+        ws.send(JSON.stringify({ method: "subscribe", params: { channel: "ticker", symbol: ["BTC/USDT"] } }));
+      });
+      ws.on("close", () => { state.diagnostics.apiStatus.krakenSpot = "перепідключення Kraken"; setTimeout(() => this.connectKrakenTicker(), 15000); });
+      ws.on("error", () => { state.diagnostics.apiStatus.krakenSpot = "помилка WebSocket Kraken"; });
+    } catch (err) {
+      state.diagnostics.apiStatus.krakenSpot = "помилка WebSocket Kraken";
+      logger.warn({ err }, "Помилка підключення Kraken WebSocket");
     }
   }
 
@@ -169,6 +187,29 @@ export class Scanner {
     }
   }
 
+  private async validateKrakenAuth() {
+    try {
+      const spot = await this.client.krakenSpotAuthCheck();
+      state.diagnostics.apiStatus.krakenSpot = spot.ok ? "автентифіковано і підключено" : "помилка Kraken Spot";
+      delete state.diagnostics.authErrors.krakenSpot;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      state.diagnostics.apiStatus.krakenSpot = "помилка Kraken Spot; public market confirmation активне";
+      state.diagnostics.authErrors.krakenSpot = message;
+      logger.error({ err }, "Помилка автентифікації Kraken Spot");
+    }
+    try {
+      const futures = await this.client.krakenFuturesAuthCheck();
+      state.diagnostics.apiStatus.krakenFutures = futures.ok ? "автентифіковано і підключено" : "помилка Kraken Futures";
+      delete state.diagnostics.authErrors.krakenFutures;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      state.diagnostics.apiStatus.krakenFutures = "помилка Kraken Futures; public futures confirmation активне";
+      state.diagnostics.authErrors.krakenFutures = message;
+      logger.error({ err }, "Помилка автентифікації Kraken Futures");
+    }
+  }
+
   private async loadCandles(symbol: string, mode: "spot" | "futures"): Promise<Record<string, Candle[]>> {
     const tfs = mode === "futures" ? config.futuresTimeframes : config.spotTimeframes;
     const category = mode === "spot" ? "spot" : "linear";
@@ -183,9 +224,10 @@ export class Scanner {
 
   private async snapshot(symbol: string, mode: "spot" | "futures", candles: Record<string, Candle[]>, btcOk: boolean): Promise<MarketSnapshot> {
     const tfs = mode === "futures" ? config.futuresTimeframes : config.spotTimeframes;
-    const [okxEntries, kucoinEntries, binanceEntries, imbalance, funding, oi] = await Promise.all([
+    const [okxEntries, kucoinEntries, krakenEntries, binanceEntries, imbalance, funding, oi] = await Promise.all([
       Promise.all(tfs.map(async (tf) => [tf, await this.client.okxKlines(symbol, tf).catch(() => [])] as const)),
       Promise.all(tfs.map(async (tf) => [tf, await this.client.kucoinKlines(symbol, tf).catch(() => [])] as const)),
+      Promise.all(tfs.map(async (tf) => [tf, await this.client.krakenSpotKlines(symbol, tf).catch(() => [])] as const)),
       Promise.all(tfs.map(async (tf) => [tf, await this.client.binanceKlines(symbol, tf).catch(() => [])] as const)),
       mode === "futures" ? this.client.orderBookImbalance(symbol).catch(() => 0) : Promise.resolve(0),
       mode === "futures" ? this.client.fundingRate(symbol).catch(() => 0) : Promise.resolve(0),
@@ -203,6 +245,7 @@ export class Scanner {
       candles,
       okxCandles: Object.fromEntries(okxEntries),
       kucoinCandles: Object.fromEntries(kucoinEntries),
+      krakenCandles: Object.fromEntries(krakenEntries),
       binanceCandles: Object.fromEntries(binanceEntries),
       orderBookImbalance: imbalance,
       fundingRate: funding,
@@ -211,7 +254,7 @@ export class Scanner {
       whaleScore,
       btcStable: btcOk,
       regime: regimeFrom(candles),
-      confirmations: exchangeConfirmations(candles, Object.fromEntries(okxEntries), Object.fromEntries(kucoinEntries), Object.fromEntries(binanceEntries), mode)
+      confirmations: exchangeConfirmations(candles, Object.fromEntries(okxEntries), Object.fromEntries(kucoinEntries), Object.fromEntries(krakenEntries), Object.fromEntries(binanceEntries), mode)
     };
   }
 
@@ -232,24 +275,27 @@ export class Scanner {
   }
 }
 
-function exchangeConfirmations(bybit: Record<string, Candle[]>, okx: Record<string, Candle[]>, kucoin: Record<string, Candle[]>, binance: Record<string, Candle[]>, mode: "spot" | "futures") {
+function exchangeConfirmations(bybit: Record<string, Candle[]>, okx: Record<string, Candle[]>, kucoin: Record<string, Candle[]>, kraken: Record<string, Candle[]>, binance: Record<string, Candle[]>, mode: "spot" | "futures") {
   const tf = mode === "futures" ? "15" : "240";
   const bybitDir = directionOf(bybit[tf]);
   const okxDir = directionOf(okx[tf]);
   const kucoinDir = directionOf(kucoin[tf]);
+  const krakenDir = directionOf(kraken[tf]);
   const binanceDir = directionOf(binance[tf]);
   const okxAligned = okxDir !== 0 && okxDir === bybitDir;
   const kucoinAligned = kucoinDir !== 0 && kucoinDir === bybitDir;
+  const krakenAligned = krakenDir !== 0 && krakenDir === bybitDir;
   const binanceAligned = binanceDir !== 0 && binanceDir === bybitDir;
-  const conflict = [okxDir, kucoinDir].some((dir) => dir !== 0 && bybitDir !== 0 && dir !== bybitDir);
+  const conflict = [okxDir, kucoinDir, krakenDir].some((dir) => dir !== 0 && bybitDir !== 0 && dir !== bybitDir);
   return {
     bybit: bybitDir !== 0,
     okx: okxAligned,
     kucoin: kucoinAligned,
+    kraken: krakenAligned,
     binance: binanceAligned,
-    alignedCount: [bybitDir !== 0, okxAligned, kucoinAligned, binanceAligned].filter(Boolean).length,
+    alignedCount: [bybitDir !== 0, okxAligned, kucoinAligned, krakenAligned, binanceAligned].filter(Boolean).length,
     conflict,
-    details: [`Bybit: ${dirUa(bybitDir)}`, `OKX: ${dirUa(okxDir)}`, `KuCoin: ${dirUa(kucoinDir)}`, `Binance: ${dirUa(binanceDir)}`]
+    details: [`Bybit: ${dirUa(bybitDir)}`, `OKX: ${dirUa(okxDir)}`, `KuCoin: ${dirUa(kucoinDir)}`, `Kraken: ${dirUa(krakenDir)}`, `Binance: ${dirUa(binanceDir)}`]
   };
 }
 

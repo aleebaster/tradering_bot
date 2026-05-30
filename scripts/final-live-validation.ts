@@ -37,6 +37,7 @@ async function main() {
       candles,
       okxCandles: {},
       kucoinCandles: {},
+      krakenCandles: {},
       binanceCandles: {},
       orderBookImbalance: imbalance,
       fundingRate,
@@ -45,7 +46,7 @@ async function main() {
       whaleScore: Math.min(100, Math.max(0, Math.abs(openInterestChange) * 2500 + Math.abs(imbalance) * 120)),
       btcStable: symbol === "BTCUSDT" ? true : btcOk,
       regime: regimeFrom(candles),
-      confirmations: { bybit: true, okx: false, kucoin: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit: live validation"] }
+      confirmations: { bybit: true, okx: false, kucoin: false, kraken: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit: live validation"] }
     };
     const signal = buildSignal(snapshot);
     outputs.push(signal);
