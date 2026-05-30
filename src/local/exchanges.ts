@@ -12,8 +12,10 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
     try {
       const res = await fetch(url, { ...init, headers: { "user-agent": "tradering-bot/1.0", ...(init?.headers ?? {}) }, signal: AbortSignal.timeout(8000) });
       if (res.ok) return (await res.json()) as T;
-      if (![403, 429, 500, 502, 503, 504].includes(res.status)) throw new Error(`${res.status} ${res.statusText} ${url}`);
-      lastError = new Error(`${res.status} ${res.statusText} ${url}`);
+      const text = await res.text();
+      const detail = text ? `: ${text.slice(0, 300)}` : "";
+      if (![403, 429, 500, 502, 503, 504].includes(res.status)) throw new Error(`${res.status} ${res.statusText} ${url}${detail}`);
+      lastError = new Error(`${res.status} ${res.statusText} ${url}${detail}`);
     } catch (err) {
       lastError = err;
     }
@@ -39,6 +41,13 @@ export class ExchangeClient {
     const bar = interval === "D" ? "1D" : `${interval}m`;
     const body = await json<{ data: string[][] }>(`${OKX}/api/v5/market/candles?instId=${instId}&bar=${bar}&limit=${limit}`);
     return body.data.reverse().map((r) => ({ exchange: "okx", symbol, timeframe: interval, openTime: Number(r[0]), open: Number(r[1]), high: Number(r[2]), low: Number(r[3]), close: Number(r[4]), volume: Number(r[5]) }));
+  }
+
+  async okxAuthCheck(): Promise<{ ok: boolean; accountLevel?: string; permissions?: string }> {
+    const path = "/api/v5/account/config";
+    const body = await this.okxPrivateGet<{ code: string; msg: string; data: Array<{ acctLv?: string; perm?: string }> }>(path);
+    if (body.code !== "0") throw new Error(`OKX auth failed ${body.code}: ${body.msg}`);
+    return { ok: true, accountLevel: body.data[0]?.acctLv, permissions: body.data[0]?.perm };
   }
 
   async binanceKlines(symbol: string, interval: string, limit = 220): Promise<Candle[]> {
@@ -68,5 +77,21 @@ export class ExchangeClient {
 
   signBybit(payload: string) {
     return crypto.createHmac("sha256", config.BYBIT_API_SECRET ?? "").update(payload).digest("hex");
+  }
+
+  private async okxPrivateGet<T>(path: string): Promise<T> {
+    if (!config.OKX_API_KEY || !config.OKX_API_SECRET || !config.OKX_PASSPHRASE) throw new Error("OKX credentials incomplete");
+    const timestamp = new Date().toISOString();
+    const prehash = `${timestamp}GET${path}`;
+    const sign = crypto.createHmac("sha256", config.OKX_API_SECRET).update(prehash).digest("base64");
+    return json<T>(`${OKX}${path}`, {
+      headers: {
+        "OK-ACCESS-KEY": config.OKX_API_KEY,
+        "OK-ACCESS-SIGN": sign,
+        "OK-ACCESS-TIMESTAMP": timestamp,
+        "OK-ACCESS-PASSPHRASE": config.OKX_PASSPHRASE,
+        "x-simulated-trading": "0"
+      }
+    });
   }
 }

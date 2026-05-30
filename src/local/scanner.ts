@@ -28,6 +28,7 @@ export class Scanner {
     });
     state.diagnostics.apiStatus.telegram = "configured";
     await this.validateSymbols();
+    await this.validateOkxAuth();
     this.connectBinanceTicker();
     await this.scan();
     this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
@@ -96,6 +97,21 @@ export class Scanner {
     }
   }
 
+  private async validateOkxAuth() {
+    if (config.partialMode) {
+      state.diagnostics.apiStatus.okx = "partial public confirmation";
+      return;
+    }
+    try {
+      const auth = await this.client.okxAuthCheck();
+      state.diagnostics.apiStatus.okx = "authenticated and connected";
+      logger.info({ accountLevel: auth.accountLevel, permissions: auth.permissions }, "OKX authentication successful");
+    } catch (err) {
+      state.diagnostics.apiStatus.okx = "authentication failed";
+      logger.error({ err }, "OKX authentication failed");
+    }
+  }
+
   private async loadCandles(symbol: string, mode: "spot" | "futures"): Promise<Record<string, Candle[]>> {
     const tfs = mode === "futures" ? config.futuresTimeframes : config.spotTimeframes;
     const category = mode === "spot" ? "spot" : "linear";
@@ -117,7 +133,8 @@ export class Scanner {
       mode === "futures" ? this.client.fundingRate(symbol).catch(() => 0) : Promise.resolve(0),
       mode === "futures" ? this.client.openInterestChange(symbol).catch(() => 0) : Promise.resolve(0)
     ]);
-    state.diagnostics.apiStatus.okx = config.partialMode ? "partial public confirmation" : "connected";
+    if (config.partialMode) state.diagnostics.apiStatus.okx = "partial public confirmation";
+    else if (state.diagnostics.apiStatus.okx !== "authentication failed") state.diagnostics.apiStatus.okx = "authenticated and connected; market confirmation active";
     state.diagnostics.apiStatus.binance = "connected";
     const primary = candles[mode === "futures" ? "15" : "240"] ?? [];
     const dollarVolume = primary.slice(-24).reduce((s, c) => s + c.volume * c.close, 0) / 24;
