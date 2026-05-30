@@ -25,11 +25,15 @@ export const state: BotState = {
 
 export function recordSignal(signal: Signal) {
   state.history = [signal, ...state.history].slice(0, 300);
-  if (signal.score >= 70 && signal.score < 85) state.watchlist = [signal, ...state.watchlist].slice(0, 30);
-  if (signal.side !== "NO_TRADE") {
+  if (signal.mode === "futures" && signal.score >= 80 && signal.score < 85) state.watchlist = upsertSignal(state.watchlist, signal).slice(0, 30);
+  if (signal.side !== "NO_TRADE" && signal.side !== "WATCHLIST") {
     const today = new Date().toISOString().slice(0, 10);
     const sentToday = state.activeSignals.filter((s) => s.createdAt.startsWith(today)).length;
     if (sentToday < config.maxSignalsPerDay) state.activeSignals = [signal, ...state.activeSignals].slice(0, 12);
   }
   state.stats.signalsToday = state.activeSignals.filter((s) => s.createdAt.startsWith(new Date().toISOString().slice(0, 10))).length;
+}
+
+function upsertSignal(list: Signal[], signal: Signal) {
+  return [signal, ...list.filter((x) => !(x.symbol === signal.symbol && x.mode === signal.mode))];
 }

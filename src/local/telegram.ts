@@ -15,6 +15,66 @@ export class TelegramNotifier {
     await this.send(formatSignal(signal));
   }
 
+  async setupActivated(signal: Signal, reasons: string[]) {
+    await this.send([
+      `🟢 SETUP ACTIVATED — ${signal.symbol}`,
+      "",
+      "Статус:",
+      "✅ ЗАХОДИТИ ЗАРАЗ",
+      "",
+      "Напрямок:",
+      signal.side,
+      "",
+      "Причина активації:",
+      ...reasons.map((reason) => `✅ ${reason}`),
+      "",
+      "Поточний score:",
+      `${signal.score}/100`,
+      "",
+      "Поточна ціна:",
+      fmt(signal.currentPrice),
+      "",
+      "Зона входу:",
+      `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+      "",
+      "Плече:",
+      "x3 ONLY",
+      "",
+      "Stop Loss:",
+      fmt(signal.stopLoss),
+      "",
+      "TP1:",
+      fmt(signal.takeProfit[0]),
+      "",
+      "TP2:",
+      fmt(signal.takeProfit[1]),
+      "",
+      "TP3:",
+      fmt(signal.takeProfit[2]),
+      "",
+      "Ймовірність успіху:",
+      `${signal.winProbability}%`,
+      "",
+      "Confidence:",
+      `${signal.confidence}%`,
+      "",
+      "Risk/Reward:",
+      signal.riskReward,
+      "",
+      "Супровід угоди:",
+      "",
+      "🟢 ENTER NOW",
+      "🟡 HOLD POSITION",
+      "🟠 MOVE STOP LOSS TO BREAKEVEN",
+      "🟠 TAKE PARTIAL PROFIT",
+      "🔴 EXIT TRADE NOW"
+    ].join("\n"));
+  }
+
+  async setupInvalidated(signal: Signal, reasons: string[]) {
+    await this.send([`❌ SETUP INVALIDATED — ${signal.symbol}`, "", "Reason:", ...reasons.map((reason) => `• ${reason}`)].join("\n"));
+  }
+
   async noTrade(signal: Signal) {
     await this.send([`❌ НЕ ВХОДИТИ — ${signal.symbol}`, "", "Причина:", ...reasonBullets(signal)].join("\n"));
   }
@@ -103,7 +163,7 @@ function confirmationLines(signal: Signal) {
 }
 
 function formatWatchlist(signal: Signal) {
-  return [`👀 СПОСТЕРЕЖЕННЯ — ${signal.symbol}`, "", `Впевненість: ${signal.confidence}%`, `Оцінка: ${signal.score}/100`, "", "Причина:", ...reasonBullets(signal)].join("\n");
+  return [`⚠️ WATCHLIST ONLY — ${signal.symbol}`, "", `Confidence: ${signal.confidence}%`, `Win probability: ${signal.winProbability}%`, `Score: ${signal.score}/100`, "", "Причина:", ...reasonBullets(signal), "", "Моніторинг:", "• бот перевіряє сетап кожні 10–15 секунд", "• активація тільки при score >= 85 та покращенні підтверджень"].join("\n");
 }
 
 function reasonBullets(signal: Signal) {

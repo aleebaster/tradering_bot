@@ -33,7 +33,7 @@ export const config = {
   mode,
   partialMode,
   warning: partialMode ? "Парольна фраза OKX відсутня — режим часткового підтвердження." : null,
-  symbols: ["BTCUSDT", "ETHUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT"],
+  symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "AIGENSYNUSDT"],
   futuresTimeframes: ["5", "15", "60"],
   spotTimeframes: ["60", "240", "D"],
   maxSignalsPerDay: 5

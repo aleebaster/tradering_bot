@@ -71,10 +71,10 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const rrValue = riskRewardValue(entry, stopLoss, takeProfit[2], direction);
   if (rrValue < 2) score = Math.min(score, 69);
   const roundedScore = Math.round(score);
-  const qualifiedSide: Side = roundedScore >= 85 ? side : "NO_TRADE";
-  const entryStatus = qualifiedSide === "NO_TRADE" ? "NO_TRADE" : last.close >= Math.min(...entry) && last.close <= Math.max(...entry) ? "ENTER_NOW" : "WAIT_FOR_ENTRY";
+  const qualifiedSide: Side = roundedScore >= 85 ? side : roundedScore >= 80 && snapshot.mode === "futures" && side !== "NO_TRADE" ? "WATCHLIST" : "NO_TRADE";
+  const entryStatus = qualifiedSide === "NO_TRADE" || qualifiedSide === "WATCHLIST" ? "NO_TRADE" : last.close >= Math.min(...entry) && last.close <= Math.max(...entry) ? "ENTER_NOW" : "WAIT_FOR_ENTRY";
   const riskReward = riskRewardRatio(rrValue);
-  const leverage = snapshot.mode === "futures" && qualifiedSide !== "NO_TRADE" ? leverageRecommendation(score, a / last.close, momentum, snapshot.regime) : undefined;
+  const leverage = snapshot.mode === "futures" && !["NO_TRADE", "WATCHLIST"].includes(qualifiedSide) ? leverageRecommendation(score, a / last.close, momentum, snapshot.regime) : undefined;
   const management = managementText(qualifiedSide, entryStatus);
   return {
     id: `${snapshot.symbol}-${snapshot.mode}-${Date.now()}`,
@@ -121,6 +121,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
 
 function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, weakMomentum: boolean, rrValue: number) {
   if (side !== "NO_TRADE") return "Прийнятий сетап з високою ймовірністю";
+  if (score >= 80 && score < 85 && snapshot.mode === "futures") return "WATCHLIST ONLY: сетап близько до порогу, потрібне покращення підтверджень";
   if (snapshot.regime === "MANIPULATION_RISK") return "Виявлено ризик маніпуляції";
   if (!snapshot.btcStable && snapshot.symbol !== "BTCUSDT") return "BTC нестабільний, агресивні угоди по альткоїнах заблоковані";
   if (snapshot.confirmations.conflict) return "Біржові підтвердження конфліктують, угоду пропущено";
@@ -156,12 +157,14 @@ function riskRewardRatio(value: number) {
 
 function managementText(side: Side, entryStatus: Signal["entryStatus"]) {
   if (side === "NO_TRADE") return "❌ НЕ ВХОДИТИ";
+  if (side === "WATCHLIST") return "⚠️ WATCHLIST ONLY";
   if (entryStatus === "WAIT_FOR_ENTRY") return "⏳ ЧЕКАТИ ЗОНУ ВХОДУ";
   return "✅ ЗАХОДИТИ ЗАРАЗ; після TP1 перенести SL у беззбиток, на TP2 зафіксувати частину, залишок вести трейлінгом ATR";
 }
 
 function tradeManagementActions(side: Side, entryStatus: Signal["entryStatus"]) {
   if (side === "NO_TRADE") return ["❌ НЕ ВХОДИТИ"];
+  if (side === "WATCHLIST") return ["⚠️ WATCHLIST ONLY"];
   if (entryStatus === "WAIT_FOR_ENTRY") return ["⏳ ЧЕКАТИ ЗОНУ ВХОДУ"];
   return ["🟢 ЗАХОДИТИ ЗАРАЗ", "🟡 ТРИМАТИ ПОЗИЦІЮ", "🟠 ЗАФІКСУВАТИ ЧАСТИНУ ПРИБУТКУ", "🟠 ПЕРЕНЕСТИ STOP LOSS У БЕЗЗБИТОК", "🟠 АКТИВОВАНО ТРЕЙЛІНГ-СТОП", "🔴 ВИЙТИ З УГОДИ ЗАРАЗ", "⚠️ ВИЯВЛЕНО РОЗВОРОТ ТРЕНДУ"];
 }

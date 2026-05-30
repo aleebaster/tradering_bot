@@ -13,7 +13,11 @@ export class Scanner {
   private client = new ExchangeClient();
   private notifier = new TelegramNotifier();
   private timer: NodeJS.Timeout | null = null;
+  private watchlistTimer: NodeJS.Timeout | null = null;
   private sent = new Set<string>();
+  private watchlistSent = new Set<string>();
+  private activatedWatchlist = new Set<string>();
+  private invalidatedWatchlist = new Set<string>();
   private binanceWs: WebSocket | null = null;
   private scanning = false;
   private symbols = config.symbols;
@@ -21,6 +25,8 @@ export class Scanner {
   private managementSent = new Set<string>();
   private bybitCooldownUntil = 0;
   private btcCache: { candles: Record<string, Candle[]>; expiresAt: number } | null = null;
+  private linearSymbols = new Set<string>();
+  private spotSymbols = new Set<string>();
 
   constructor(private broadcast: Broadcast) {}
 
@@ -39,10 +45,12 @@ export class Scanner {
     this.connectKrakenTicker();
     await this.scan();
     this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
+    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 12_000);
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer);
+    if (this.watchlistTimer) clearInterval(this.watchlistTimer);
     this.binanceWs?.close();
   }
 
@@ -104,7 +112,8 @@ export class Scanner {
       const attempts = Math.min(3, this.symbols.length);
       for (let attempt = 0; attempt < attempts; attempt++) {
         const symbol = this.symbols[this.cursor % this.symbols.length];
-        const mode = Math.floor(this.cursor / this.symbols.length) % 2 === 0 ? "futures" : "spot";
+        const requestedMode = Math.floor(this.cursor / this.symbols.length) % 2 === 0 ? "futures" : "spot";
+        const mode = requestedMode === "spot" && !this.spotSymbols.has(symbol) ? "futures" : requestedMode;
         this.cursor += 1;
         try {
           const candles = symbol === "BTCUSDT" && mode === "futures" ? btcCandles : await this.loadCandles(symbol, mode);
@@ -113,6 +122,7 @@ export class Scanner {
           logger.info({ symbol, mode, side: signal.side, score: signal.score, winProbability: signal.winProbability, rejectionReason: signal.rejectionReason, scoreBreakdown: signal.scoreBreakdown }, "рішення сканера");
           recordSignal(signal);
           candidates.push(signal);
+          await this.trackWatchlist(signal);
           if (!this.sent.has(signalKey(signal)) && !["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
             this.sent.add(signalKey(signal));
             await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Не вдалося надіслати сигнал Telegram"));
@@ -155,8 +165,10 @@ export class Scanner {
   private async validateSymbols() {
     try {
       const [linear, spot] = await Promise.all([this.client.bybitInstrumentSymbols("linear"), this.client.bybitInstrumentSymbols("spot")]);
-      const valid = config.symbols.filter((s) => linear.has(s) && spot.has(s));
-      const invalid = config.symbols.filter((s) => !linear.has(s) || !spot.has(s));
+      this.linearSymbols = linear;
+      this.spotSymbols = spot;
+      const valid = config.symbols.filter((s) => linear.has(s) || spot.has(s));
+      const invalid = config.symbols.filter((s) => !linear.has(s) && !spot.has(s));
       this.symbols = valid.length ? valid : ["BTCUSDT"];
       state.diagnostics.validSymbols = this.symbols;
       state.diagnostics.invalidSymbols = invalid;
@@ -164,6 +176,8 @@ export class Scanner {
       logger.info({ validSymbols: this.symbols, invalidSymbols: invalid }, "Bybit symbol validation completed");
     } catch (err) {
       this.symbols = config.symbols;
+      this.linearSymbols = new Set(config.symbols);
+      this.spotSymbols = new Set(config.symbols);
       state.diagnostics.validSymbols = this.symbols;
       state.diagnostics.invalidSymbols = [];
       state.diagnostics.apiStatus.bybit = "використовується попередньо перевірений список символів";
@@ -288,6 +302,100 @@ export class Scanner {
       await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Не вдалося надіслати Telegram-сповіщення управління угодою"));
     }
   }
+
+  private async trackWatchlist(signal: Signal) {
+    if (signal.mode !== "futures" || signal.score < 80 || signal.score >= 85) return;
+    const key = watchKey(signal.symbol, signal.mode);
+    if (this.watchlistSent.has(key)) return;
+    this.watchlistSent.add(key);
+    await this.notifier.signal(signal).catch((err) => logger.warn({ err, symbol: signal.symbol }, "Не вдалося надіслати WATCHLIST Telegram"));
+  }
+
+  private async monitorWatchlist() {
+    const items = state.watchlist.filter((signal) => signal.mode === "futures" && signal.score >= 80 && signal.score < 85);
+    if (!items.length || Date.now() < this.bybitCooldownUntil) return;
+    let btcCandles: Record<string, Candle[]>;
+    try {
+      btcCandles = await this.loadBtcCandles();
+    } catch (err) {
+      logger.warn({ err }, "Watchlist BTC filter unavailable");
+      return;
+    }
+    const btcOk = btcStable(btcCandles);
+    for (const item of items) {
+      const key = watchKey(item.symbol, item.mode);
+      if (this.activatedWatchlist.has(key) || this.invalidatedWatchlist.has(key)) continue;
+      try {
+        const candles = item.symbol === "BTCUSDT" ? btcCandles : await this.loadCandles(item.symbol, "futures");
+        const snapshot = await this.snapshot(item.symbol, "futures", candles, btcOk);
+        const signal = buildSignal(snapshot);
+        logger.info({ symbol: item.symbol, score: signal.score, side: signal.side, scoreBreakdown: signal.scoreBreakdown }, "watchlist recheck");
+        if (signal.score >= 85 && activationConfirmed(signal)) {
+          const activated = { ...signal, leverage: "3x" };
+          this.activatedWatchlist.add(key);
+          recordSignal(activated);
+          await this.notifier.setupActivated(activated, activationReasons(activated));
+          continue;
+        }
+        if (signal.score < 80) {
+          this.invalidatedWatchlist.add(key);
+          state.watchlist = state.watchlist.filter((x) => watchKey(x.symbol, x.mode) !== key);
+          await this.notifier.setupInvalidated(signal, invalidationReasons(signal));
+        } else {
+          state.watchlist = [signal, ...state.watchlist.filter((x) => watchKey(x.symbol, x.mode) !== key)].slice(0, 30);
+        }
+      } catch (err) {
+        logger.warn({ err, symbol: item.symbol }, "Watchlist recheck failed; keeping setup monitored");
+      }
+    }
+    this.broadcast({ type: "state", state });
+  }
+}
+
+function activationConfirmed(signal: Signal) {
+  return signal.score >= 85 && momentumConfirmed(signal) && smcConfirmed(signal) && volumeConfirmed(signal) && orderBookConfirmed(signal) && breakoutConfirmed(signal);
+}
+
+function activationReasons(signal: Signal) {
+  const reasons = ["score >= 85"];
+  if (volumeConfirmed(signal)) reasons.push("volume confirmation detected");
+  if (orderBookConfirmed(signal)) reasons.push("order book imbalance confirmed");
+  if (momentumConfirmed(signal)) reasons.push("momentum confirmed");
+  if (smcConfirmed(signal)) reasons.push("SMC trigger detected");
+  return reasons;
+}
+
+function invalidationReasons(signal: Signal) {
+  const reasons: string[] = [];
+  if (!momentumConfirmed(signal)) reasons.push("weak momentum");
+  if (!volumeConfirmed(signal)) reasons.push("volume faded");
+  if (!signal.btcStable && signal.symbol !== "BTCUSDT") reasons.push("BTC instability");
+  if (signal.marketRegime === "MANIPULATION_RISK") reasons.push("fake breakout risk");
+  return reasons.length ? reasons : [signal.rejectionReason || `score dropped to ${signal.score}/100`];
+}
+
+function momentumConfirmed(signal: Signal) {
+  return (signal.scoreBreakdown.momentumQuality ?? 0) >= 70;
+}
+
+function smcConfirmed(signal: Signal) {
+  return (signal.scoreBreakdown.smcConfirmation ?? 0) >= 40;
+}
+
+function volumeConfirmed(signal: Signal) {
+  return (signal.scoreBreakdown.volumeConfirmation ?? 0) >= 65;
+}
+
+function orderBookConfirmed(signal: Signal) {
+  return (signal.scoreBreakdown.orderBookImbalance ?? 0) >= 60;
+}
+
+function breakoutConfirmed(signal: Signal) {
+  return signal.marketRegime !== "MANIPULATION_RISK" && (signal.scoreBreakdown.multiTimeframeAlignment ?? 0) >= 65 && (signal.scoreBreakdown.trendStrength ?? 0) >= 45;
+}
+
+function watchKey(symbol: string, mode: string) {
+  return `${symbol}-${mode}`;
 }
 
 function exchangeConfirmations(bybit: Record<string, Candle[]>, okx: Record<string, Candle[]>, kucoin: Record<string, Candle[]>, kraken: Record<string, Candle[]>, binance: Record<string, Candle[]>, mode: "spot" | "futures") {
