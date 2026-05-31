@@ -36,6 +36,7 @@ type BotState = {
   history: Signal[];
   stats: { signalsToday: number; wins: number; losses: number; winRate: number };
 };
+type MarketItem = { symbol: string; marketType: "spot" | "linear" | "inverse"; baseAsset: string; quoteAsset: string; liquidity: number; turnover24h: number; spreadPct: number; price24hPcnt: number; tradable: boolean };
 
 const apiUrl = (process.env.NEXT_PUBLIC_LOCAL_API_URL ?? "http://localhost:4000").replace(/\/$/, "");
 type ConnectionMode = "connecting" | "local" | "engine-required" | "remote";
@@ -44,6 +45,10 @@ export default function Dashboard() {
   const [state, setState] = useState<BotState | null>(null);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>("connecting");
   const [diagnostic, setDiagnostic] = useState("Перевіряю підключення до локального рушія...");
+  const [markets, setMarkets] = useState<MarketItem[]>([]);
+  const [pairQuery, setPairQuery] = useState("DOGE");
+  const [pairResult, setPairResult] = useState<any>(null);
+  const [analysis, setAnalysis] = useState<any>(null);
 
   useEffect(() => {
     let alive = true;
@@ -76,6 +81,30 @@ export default function Dashboard() {
     const interval = setInterval(load, 15000);
     return () => { alive = false; ws.close(); clearInterval(interval); };
   }, []);
+
+  useEffect(() => {
+    let alive = true;
+    async function loadMarkets() {
+      const res = await fetch("/api/markets", { cache: "no-store" });
+      const json = await res.json();
+      if (alive && json.ok) setMarkets(json.items ?? []);
+    }
+    void loadMarkets();
+    const interval = setInterval(loadMarkets, 15 * 60_000);
+    return () => { alive = false; clearInterval(interval); };
+  }, []);
+
+  async function searchPair() {
+    const res = await fetch(`/api/markets/search?q=${encodeURIComponent(pairQuery)}`, { cache: "no-store" });
+    const json = await res.json();
+    setPairResult(json.ok ? json : null);
+    setAnalysis(null);
+  }
+
+  async function analyze(mode: "spot" | "futures") {
+    const res = await fetch(`/api/analysis/${mode}?q=${encodeURIComponent(pairQuery)}`, { cache: "no-store" });
+    setAnalysis(await res.json());
+  }
 
   const active = state?.activeSignals ?? [];
   const watchlist = state?.watchlist ?? [];
@@ -111,6 +140,29 @@ export default function Dashboard() {
         <Metric label="Сигналів сьогодні" value={String(state?.stats.signalsToday ?? 0)} />
         <Metric label="Режим сканера" value={modeUa(state?.diagnostics.mode ?? "LOCAL_ONLY")} />
         <Metric label="Останнє сканування" value={state?.diagnostics.lastScanAt ? new Date(state.diagnostics.lastScanAt).toLocaleTimeString() : "Очікується"} />
+      </section>
+
+      <section className="mb-6 grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+        <Panel title="Universal Bybit Market Registry">
+          <div className="grid gap-3 md:grid-cols-3">
+            <Metric label="All pairs" value={String(markets.length)} />
+            <Metric label="Futures" value={String(markets.filter((m) => m.marketType !== "spot").length)} />
+            <Metric label="Spot" value={String(markets.filter((m) => m.marketType === "spot").length)} />
+          </div>
+          <div className="mt-4 max-h-72 overflow-y-auto rounded-xl border border-edge">
+            {markets.slice(0, 80).map((m) => <div key={`${m.marketType}-${m.symbol}`} className="flex items-center justify-between border-b border-edge/60 px-3 py-2 text-sm"><span>{m.symbol} <b className="text-slate-500">{m.marketType}</b></span><span>{formatUsd(m.turnover24h)} · spread {(m.spreadPct * 100).toFixed(3)}%</span></div>)}
+          </div>
+        </Panel>
+        <Panel title="Pair Search + Analysis">
+          <div className="flex flex-wrap gap-2">
+            <input value={pairQuery} onChange={(e) => setPairQuery(e.target.value)} className="min-w-52 rounded-xl border border-edge bg-black/30 px-4 py-2 outline-none" placeholder="DOGE, PEPE, BTC..." />
+            <button onClick={() => void searchPair()} className="rounded-xl bg-cyan-300 px-4 py-2 font-black text-black">Search</button>
+            <button onClick={() => void analyze("futures")} className="rounded-xl border border-cyan-300/40 px-4 py-2 text-cyan-100">Analyze Futures</button>
+            <button onClick={() => void analyze("spot")} className="rounded-xl border border-profit/40 px-4 py-2 text-profit">Analyze Spot</button>
+          </div>
+          {pairResult ? <div className="mt-4 grid gap-3 md:grid-cols-2"><SearchColumn title="Futures" items={pairResult.futures ?? []} /><SearchColumn title="Spot" items={pairResult.spot ?? []} /></div> : <p className="mt-4 text-slate-400">Search resolves exact, normalized, base asset, alias, and fuzzy matches.</p>}
+          {analysis?.ok ? <pre className="mt-4 max-h-80 overflow-auto rounded-xl border border-edge bg-black/30 p-4 text-xs text-slate-200">{JSON.stringify(analysis.analysis, null, 2)}</pre> : analysis?.error ? <p className="mt-4 text-danger">{analysis.error}</p> : null}
+        </Panel>
       </section>
 
       {state?.diagnostics.warnings.map((w) => <div key={w} className="mb-4 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-warning">{w}</div>)}
@@ -173,6 +225,10 @@ function SignalList({ items }: { items: Signal[] }) {
   return <div className="space-y-3">{items.map((s) => <div key={s.id} className="rounded-xl border border-edge p-3"><div className="flex justify-between"><b>{s.symbol}</b><span className={sideClass(s.side)}>{sideUa(s.side)}</span></div><div className="mt-2 text-sm text-slate-400">Оцінка {s.score}/100 · {entryStatusUa(s.entryStatus)} · {s.leverage ?? "Немає"}</div></div>)}</div>;
 }
 
+function SearchColumn({ title, items }: { title: string; items: MarketItem[] }) {
+  return <div className="rounded-xl border border-edge p-3"><h3 className="font-black">{title}</h3>{items.length ? items.slice(0, 8).map((m) => <div key={`${m.marketType}-${m.symbol}`} className="mt-2 text-sm text-slate-300"><b>{m.symbol}</b><br />{formatUsd(m.turnover24h)} · liquidity {m.liquidity}/100 · spread {(m.spreadPct * 100).toFixed(3)}%</div>) : <p className="mt-2 text-slate-500">Not found</p>}</div>;
+}
+
 function Row({ label, value }: { label: string; value: string }) { return <div><p className="text-xs uppercase text-slate-500">{label}</p><p className="break-words text-sm text-slate-100">{value}</p></div>; }
 function Empty({ text }: { text: string }) { return <p className="rounded-xl border border-edge p-4 text-slate-400">{text}</p>; }
 function fmt(n: number) { return n >= 100 ? n.toFixed(2) : n.toFixed(5); }
@@ -182,3 +238,4 @@ function sideUa(side: Side) { return side === "NO_TRADE" ? "НЕ ВХОДИТИ"
 function entryStatusUa(status: Signal["entryStatus"]) { return status === "ENTER_NOW" ? "ЗАХОДИТИ ЗАРАЗ" : status === "WAIT_FOR_ENTRY" ? "ЧЕКАТИ ЗОНУ ВХОДУ" : "НЕ ВХОДИТИ"; }
 function modeUa(mode: string) { return mode === "futures" ? "ф'ючерси" : mode === "spot" ? "спот" : mode === "LOCAL_ONLY" ? "локальний" : mode; }
 function regimeUa(regime: string) { return ({ TRENDING: "трендовий", RANGING: "боковий", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" } as Record<string, string>)[regime] ?? regime; }
+function formatUsd(value: number) { return value >= 1_000_000_000 ? `$${(value / 1_000_000_000).toFixed(2)}B` : value >= 1_000_000 ? `$${(value / 1_000_000).toFixed(1)}M` : value >= 1_000 ? `$${(value / 1_000).toFixed(1)}K` : `$${Math.round(value)}`; }

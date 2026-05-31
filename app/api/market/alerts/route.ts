@@ -1,4 +1,5 @@
 import { localState } from "@/lib/localApi";
+import { marketRegistry } from "@/src/local/marketRegistry";
 
 export const dynamic = "force-dynamic";
 
@@ -52,7 +53,6 @@ type EngineSignal = {
   rejectionReason: string;
 };
 
-const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "TONUSDT", "SUIUSDT", "PEPEUSDT"];
 const notified = new Map<string, number>();
 
 export async function GET() {
@@ -76,11 +76,12 @@ export async function GET() {
       });
     }
 
-    const tickers = await loadTickers();
-    const selected = tickers
-      .filter((ticker) => symbols.includes(ticker.symbol))
-      .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
-      .slice(0, 10);
+    const registry = await marketRegistry();
+    const selected = registry.items
+      .filter((item) => item.marketType === "linear" && item.quoteAsset === "USDT" && item.tradable && item.turnover24h > 0)
+      .sort((a, b) => b.turnover24h - a.turnover24h)
+      .slice(0, 18)
+      .map((item) => ({ symbol: item.symbol, lastPrice: String(item.lastPrice), priceChangePercent: String(item.price24hPcnt * 100), quoteVolume: String(item.turnover24h), count: 0 }));
 
     const alerts = (await Promise.all(selected.map(buildAlert))).filter(Boolean) as Alert[];
     alerts.sort((a, b) => b.score - a.score);
@@ -90,7 +91,7 @@ export async function GET() {
 
     return Response.json({
       ok: true,
-      source: "public-market-fallback",
+      source: "bybit-registry-fallback",
       generatedAt: new Date().toISOString(),
       fearGreed,
       marketPulse: summarizeMarket(alerts),
@@ -140,12 +141,6 @@ function engineAlerts(state: { activeSignals?: EngineSignal[]; watchlist?: Engin
         createdAt: signal.createdAt
       } satisfies Alert;
     });
-}
-
-async function loadTickers() {
-  const res = await fetch("https://api.binance.com/api/v3/ticker/24hr", { next: { revalidate: 20 } });
-  if (!res.ok) throw new Error(`Binance ticker error ${res.status}`);
-  return (await res.json()) as BinanceTicker[];
 }
 
 async function loadFearGreed() {
@@ -216,9 +211,10 @@ async function buildAlert(ticker: BinanceTicker): Promise<Alert | null> {
 }
 
 async function loadKlines(symbol: string) {
-  const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=15m&limit=96`, { next: { revalidate: 20 } });
-  if (!res.ok) throw new Error(`Binance klines error ${symbol}`);
-  return (await res.json()) as BinanceKline[];
+  const res = await fetch(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=15&limit=96`, { next: { revalidate: 20 } });
+  if (!res.ok) throw new Error(`Bybit klines error ${symbol}`);
+  const json = await res.json() as { result?: { list?: string[][] } };
+  return (json.result?.list ?? []).reverse().map((r) => [Number(r[0]), r[1], r[2], r[3], r[4], r[5], Number(r[0]), r[6] ?? "0", 0, "0", "0", "0"] as BinanceKline);
 }
 
 function summarizeMarket(alerts: Alert[]) {

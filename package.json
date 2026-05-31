@@ -33,6 +33,7 @@
     "stats:test": "chcp 65001 >nul && tsx scripts/stats-performance-test.ts",
     "intelligence:test": "chcp 65001 >nul && tsx scripts/intelligence-bots-live-test.ts",
     "intelligence:impact-test": "chcp 65001 >nul && tsx scripts/intelligence-impact-live-validation.ts",
+    "market:registry-test": "chcp 65001 >nul && tsx scripts/market-registry-validation.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },

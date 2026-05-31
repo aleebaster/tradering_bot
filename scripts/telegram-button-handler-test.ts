@@ -18,6 +18,8 @@ async function main() {
 
   const checks: Record<string, boolean> = {};
   await click(center, checks, "📊 Сигнали", "📊 Сигнали");
+  await click(center, checks, "🔎 Search Pair", "Введіть пару");
+  await click(center, checks, "DOGE", "Search Pair");
   await click(center, checks, "🔍 Аналіз пари", "Введіть пару");
   await click(center, checks, "BTCUSDT", "Аналіз");
   await click(center, checks, "🔥 Найкращі сигнали", "Топ Сетапи");
@@ -75,6 +77,8 @@ async function main() {
   checks["inline_ui_conservative"] = last(notifier).includes("Risk mode оновлено") && last(notifier).includes("Conservative");
   await center.handleCallbackForTest("ui:back");
   checks["inline_ui_back"] = last(notifier).includes("Головне меню");
+  await center.handleCallbackForTest("ui:search_pair");
+  checks["inline_ui_search_pair"] = last(notifier).includes("Введіть пару");
 
   updateTelegramSettings(originalSettings);
 

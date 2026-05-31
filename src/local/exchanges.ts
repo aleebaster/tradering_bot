@@ -54,6 +54,8 @@ async function throttle(url: string) {
 
 function cacheTtl(url: string) {
   if (url.includes("api.bybit.com/v5/market/kline")) return 90_000;
+  if (url.includes("api.bybit.com/v5/market/instruments-info")) return 15 * 60_000;
+  if (url.includes("api.bybit.com/v5/market/tickers")) return 60_000;
   if (url.includes("api.bybit.com/v5/market/orderbook")) return 20_000;
   if (url.includes("api.bybit.com/v5/market/funding")) return 5 * 60_000;
   if (url.includes("api.bybit.com/v5/market/open-interest")) return 60_000;
@@ -69,6 +71,24 @@ function backoffDelay(attempt: number, url: string) {
 }
 
 export class ExchangeClient {
+  async bybitInstrumentsDetailed(category: "spot" | "linear" | "inverse"): Promise<Array<{ symbol: string; status: string; launchTime: number; baseCoin: string; quoteCoin: string; contractType: string }>> {
+    const out: Array<{ symbol: string; status: string; launchTime: number; baseCoin: string; quoteCoin: string; contractType: string }> = [];
+    let cursor = "";
+    for (let page = 0; page < 12; page++) {
+      const endpoint = `${BYBIT}/v5/market/instruments-info?category=${category}&limit=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+      const body = await json<{ retCode?: number; retMsg?: string; result?: { nextPageCursor?: string; list?: Array<{ symbol?: string; status?: string; launchTime?: string; baseCoin?: string; quoteCoin?: string; contractType?: string }> } }>(endpoint);
+      const list = safeArray<{ symbol?: string; status?: string; launchTime?: string; baseCoin?: string; quoteCoin?: string; contractType?: string }>(body.result?.list);
+      if (body.retCode !== 0 || !list.length) throw bybitDataError("Bybit instruments malformed", { endpoint, parsedData: body, category });
+      for (const row of list) {
+        if (!row.symbol || !row.status) continue;
+        out.push({ symbol: row.symbol, status: row.status, launchTime: Number(row.launchTime ?? 0), baseCoin: row.baseCoin ?? baseFromSymbol(row.symbol, row.quoteCoin ?? ""), quoteCoin: row.quoteCoin ?? "", contractType: row.contractType ?? "" });
+      }
+      cursor = body.result?.nextPageCursor ?? "";
+      if (!cursor) break;
+    }
+    return out;
+  }
+
   async bybitLinearInstrumentsDetailed(): Promise<Array<{ symbol: string; status: string; launchTime: number; quoteCoin: string; contractType: string }>> {
     const out: Array<{ symbol: string; status: string; launchTime: number; quoteCoin: string; contractType: string }> = [];
     let cursor = "";
@@ -88,10 +108,14 @@ export class ExchangeClient {
   }
 
   async bybitLinearTickers(): Promise<Array<{ symbol: string; lastPrice: number; bid1Price: number; ask1Price: number; turnover24h: number; volume24h: number; price24hPcnt: number }>> {
-    const endpoint = `${BYBIT}/v5/market/tickers?category=linear`;
+    return this.bybitTickers("linear");
+  }
+
+  async bybitTickers(category: "spot" | "linear" | "inverse"): Promise<Array<{ symbol: string; lastPrice: number; bid1Price: number; ask1Price: number; turnover24h: number; volume24h: number; price24hPcnt: number }>> {
+    const endpoint = `${BYBIT}/v5/market/tickers?category=${category}`;
     const body = await json<{ retCode?: number; retMsg?: string; result?: { list?: Array<{ symbol?: string; lastPrice?: string; bid1Price?: string; ask1Price?: string; turnover24h?: string; volume24h?: string; price24hPcnt?: string }> } }>(endpoint);
     const list = safeArray<{ symbol?: string; lastPrice?: string; bid1Price?: string; ask1Price?: string; turnover24h?: string; volume24h?: string; price24hPcnt?: string }>(body.result?.list);
-    if (body.retCode !== 0 || !list.length) throw bybitDataError("Bybit linear tickers malformed", { endpoint, parsedData: body });
+    if (body.retCode !== 0 || !list.length) throw bybitDataError("Bybit tickers malformed", { endpoint, parsedData: body, category });
     return list
       .filter((row) => typeof row.symbol === "string")
       .map((row) => ({ symbol: row.symbol!, lastPrice: Number(row.lastPrice ?? 0), bid1Price: Number(row.bid1Price ?? 0), ask1Price: Number(row.ask1Price ?? 0), turnover24h: Number(row.turnover24h ?? 0), volume24h: Number(row.volume24h ?? 0), price24hPcnt: Number(row.price24hPcnt ?? 0) }));
@@ -242,8 +266,8 @@ export class ExchangeClient {
     return bids + asks === 0 ? 0 : (bids - asks) / (bids + asks);
   }
 
-  async bybitOrderBookStats(symbol: string): Promise<{ spreadPct: number; depthUsdt: number; imbalance: number; spoofRisk: boolean }> {
-    const endpoint = `${BYBIT}/v5/market/orderbook?category=linear&symbol=${symbol}&limit=50`;
+  async bybitOrderBookStats(symbol: string, category: "linear" | "spot" | "inverse" = "linear"): Promise<{ spreadPct: number; depthUsdt: number; imbalance: number; spoofRisk: boolean }> {
+    const endpoint = `${BYBIT}/v5/market/orderbook?category=${category}&symbol=${symbol}&limit=50`;
     const body = await json<{ retCode?: number; retMsg?: string; result?: { b?: unknown; a?: unknown } }>(endpoint);
     const bidRows = safeArray<unknown>(body.result?.b);
     const askRows = safeArray<unknown>(body.result?.a);
@@ -409,6 +433,10 @@ function orderBookPrice(row: unknown) {
 
 function bybitCacheKey(symbol: string, interval: string, category: string) {
   return `${category}:${symbol}:${interval}`;
+}
+
+function baseFromSymbol(symbol: string, quote: string) {
+  return quote && symbol.endsWith(quote) ? symbol.slice(0, -quote.length) : symbol;
 }
 
 function bybitKlineWebSocket(symbol: string, interval: string, category: "linear" | "spot") {

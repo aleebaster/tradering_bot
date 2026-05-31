@@ -7,6 +7,9 @@ import { state } from "./state";
 import { Scanner } from "./scanner";
 import { logger } from "./logger";
 import { TelegramCommandCenter } from "./telegramCommands";
+import { marketRegistry, resolvePair } from "./marketRegistry";
+import { analyzeSpot } from "./spotAnalysis";
+import { analyzeFutures } from "./marketAnalysis";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -17,6 +20,22 @@ app.get("/state", (_req, res) => res.json(state));
 app.get("/signals", (_req, res) => res.json({ active: state.activeSignals, watchlist: state.watchlist, history: state.history }));
 app.get("/diagnostics", (_req, res) => res.json(state.diagnostics));
 app.get("/telegram/status", (_req, res) => res.json(telegramCommands.status()));
+app.get("/markets", async (_req, res) => {
+  try { res.json(await marketRegistry()); }
+  catch (err) { res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) }); }
+});
+app.get("/markets/search", async (req, res) => {
+  try { res.json(await resolvePair(String(req.query.q ?? ""))); }
+  catch (err) { res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) }); }
+});
+app.get("/analysis/spot/:query", async (req, res) => {
+  try { res.json(await analyzeSpot(req.params.query)); }
+  catch (err) { res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) }); }
+});
+app.get("/analysis/futures/:query", async (req, res) => {
+  try { res.json(await analyzeFutures(req.params.query)); }
+  catch (err) { res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) }); }
+});
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });

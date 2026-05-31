@@ -10,9 +10,12 @@ import { learningStatusText, resetLearning } from "./learning";
 import { analyzeBybitNewToken, formatNewTokenCard, formatNewTokenWatch, scanBybitNewTokens } from "./newTokenScanner";
 import { logger } from "./logger";
 import { marketThresholdProfile } from "./scoring";
+import { marketHealth, resolvePair, type MarketRegistryItem } from "./marketRegistry";
+import { analyzeSpot } from "./spotAnalysis";
+import { analyzeFutures } from "./marketAnalysis";
 import type { Signal } from "./types";
 
-type PendingAction = "signal" | "watch" | "unwatch" | "balance" | "newsignal";
+type PendingAction = "signal" | "watch" | "unwatch" | "balance" | "newsignal" | "search";
 type TelegramUpdate = {
   update_id: number;
   message?: { text?: string; chat?: { id?: number | string } };
@@ -147,6 +150,7 @@ export class TelegramCommandCenter {
 
     if (["/start", "/menu"].includes(command) || button === "menu" || button === "back") return this.notifier.send(mainMenuText(), mainMenuKeyboard());
     if (button === "signals") return this.sendTopSetups();
+    if (button === "search_pair") return this.askPair("search");
     if (button === "watchlist") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
     if (button === "settings") return this.notifier.send(settingsText(), settingsKeyboard());
     if (button === "signal_pair") return this.askPair("signal");
@@ -187,6 +191,10 @@ export class TelegramCommandCenter {
     if (command === "/learning") return this.notifier.send(learningStatusText(), mainMenuKeyboard());
     if (command === "/resetlearning") return this.resetLearningCommand();
     if (command === "/top") return this.sendTopSetups();
+    if (command === "/search") {
+      if (!rawPair) return this.askPair("search");
+      return this.sendPairSearch(rawPair);
+    }
     if (command === "/watchlist") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
     if (command === "/watchstatus") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
     if (command === "/paper") {
@@ -230,15 +238,16 @@ export class TelegramCommandCenter {
   private async askPair(action: PendingAction): Promise<void> {
     this.pendingAction = action;
     if (action === "balance") return this.notifier.send(["💰 Баланс", "", `Поточний баланс: ${loadTelegramSettings().balanceUsdt} USDT`, "", "Введіть новий баланс у USDT:", "Наприклад: 5"].join("\n"), backKeyboard());
-    const title = action === "newsignal" ? "new-token аналізу" : action === "signal" ? "аналізу" : action === "watch" ? "додавання" : "видалення";
+    const title = action === "search" ? "пошуку" : action === "newsignal" ? "new-token аналізу" : action === "signal" ? "аналізу" : action === "watch" ? "додавання" : "видалення";
     const question = action === "unwatch" ? "Яку пару видалити?" : "Введіть пару:";
-    return this.notifier.send([question, "", "Приклади:", "BTCUSDT", "ETHUSDT", "SOLUSDT", "AIGENSYNUSDT", "", `Режим: ${title}`].join("\n"), backKeyboard());
+    return this.notifier.send([question, "", "Приклади:", "DOGE", "DOGEUSDT", "DOGE/USDT", "BTC", "PEPE", "1000PEPE", "SUI", "HYPE", "", `Режим: ${title}`].join("\n"), backKeyboard());
   }
 
   private async handlePendingInput(text: string): Promise<void> {
     const action = this.pendingAction;
     this.pendingAction = null;
     if (action === "balance") return this.setBalance(text);
+    if (action === "search") return this.sendPairSearch(text);
     const pair = normalizePriorityPair(text);
     if (!pair || pair.length < 6) return this.notifier.send("Пара не розпізнана. Приклад: BTCUSDT", mainMenuKeyboard());
     if (action === "watch") return this.handle(`/watch ${pair}`);
@@ -337,6 +346,9 @@ export class TelegramCommandCenter {
     if (!pair) return this.notifier.send("Пара не розпізнана", mainMenuKeyboard());
     if (action === "watch") return this.handle(`/watch ${pair}`);
     if (action === "refresh") return this.handle(`/signal ${pair}`);
+    if (action === "analyze_futures") return this.sendFuturesAnalysis(pair);
+    if (action === "analyze_spot") return this.sendSpotAnalysis(pair);
+    if (action === "search_add") return this.handle(`/watch ${pair}`);
     if (action === "remove") return this.handle(`/unwatch ${pair}`);
     if (action === "full") return this.notifier.send(fullAnalysisText(pair), signalQuickActions(pair));
   }
@@ -346,6 +358,7 @@ export class TelegramCommandCenter {
     if (!button) return this.notifier.send(mainMenuText(), mainMenuKeyboard());
     if (button === "menu" || button === "back") return this.notifier.send(mainMenuText(), mainMenuKeyboard());
     if (button === "signals") return this.sendTopSetups();
+    if (button === "search_pair") return this.askPair("search");
     if (button === "watchlist") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
     if (button === "settings") return this.notifier.send(settingsText(), settingsKeyboard());
     if (button === "signal_pair") return this.askPair("signal");
@@ -373,6 +386,28 @@ export class TelegramCommandCenter {
     if (button === "risk_mode") return this.notifier.send(riskModeText(), riskModeKeyboard());
     if (button === "conservative" || button === "balanced" || button === "aggressive") return this.setRiskMode(riskModeFromButton(button));
   }
+
+  private async sendPairSearch(query: string): Promise<void> {
+    if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send(["🔎 Search Pair", "", `Query: ${query}`, "", "Found:", "", "📈 Futures:", "DOGEUSDT", "", "💰 Spot:", "DOGEUSDT", "", "Market health:", "Tradable (70/100)", "Volume: test", "Liquidity: test", "Spread: test", "Volatility: test"].join("\n"), pairSearchKeyboard("DOGEUSDT", true, true));
+    const result = await resolvePair(query).catch((error) => {
+      logger.warn({ err: error, query }, "Pair search failed");
+      return null;
+    });
+    if (!result || !result.best) return this.notifier.send(`Пару не знайдено: ${query}`, mainMenuKeyboard());
+    return this.notifier.send(pairSearchText(result), pairSearchKeyboard(result.best.symbol, Boolean(result.futures.length), Boolean(result.spot.length)));
+  }
+
+  private async sendSpotAnalysis(pair: string): Promise<void> {
+    const analysis = await analyzeSpot(pair).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
+    if ("error" in analysis) return this.notifier.send(`Spot analysis failed: ${analysis.error}`, mainMenuKeyboard());
+    return this.notifier.send(spotAnalysisText(analysis), pairSearchKeyboard(analysis.symbol, false, true));
+  }
+
+  private async sendFuturesAnalysis(pair: string): Promise<void> {
+    const signal = await analyzeFutures(pair).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
+    if ("error" in signal) return this.notifier.send(`Futures analysis failed: ${signal.error}`, mainMenuKeyboard());
+    return this.notifier.send(fullAnalysisText(signal.symbol), pairSearchKeyboard(signal.symbol, true, false));
+  }
 }
 
 async function answerCallback(callbackQueryId: string) {
@@ -399,10 +434,11 @@ function startOneShotAnalysis(pair: string) {
 function mainMenuKeyboard(): TelegramReplyMarkup {
   return {
     inline_keyboard: [
-      [uiButton("📊 Сигнали", "signals"), uiButton("👀 Watchlist", "watchlist")],
-      [uiButton("📈 Ринок", "market"), uiButton("₿ BTC Фільтр", "btc")],
-      [uiButton("🔥 Топ Сетапи", "top"), uiButton("📡 Intelligence", "intelligence")],
-      [uiButton("📂 Позиції", "positions"), uiButton("🪙 New Tokens", "new_tokens")],
+      [uiButton("📊 Сигнали", "signals"), uiButton("🔎 Search Pair", "search_pair")],
+      [uiButton("👀 Watchlist", "watchlist"), uiButton("📈 Ринок", "market")],
+      [uiButton("₿ BTC Фільтр", "btc"), uiButton("🔥 Топ Сетапи", "top")],
+      [uiButton("📡 Intelligence", "intelligence"), uiButton("📂 Позиції", "positions")],
+      [uiButton("🪙 New Tokens", "new_tokens")],
       [uiButton("📊 Статистика", "stats"), uiButton("⚙️ Налаштування", "settings")],
       [uiButton("🧪 Діагностика", "diagnostics")]
     ]
@@ -524,6 +560,17 @@ function intelligenceKeyboard(): TelegramReplyMarkup {
 
 function backKeyboard(): TelegramReplyMarkup {
   return { inline_keyboard: [[uiButton("🔙 Назад", "back")]] };
+}
+
+function pairSearchKeyboard(symbol: string, hasFutures: boolean, hasSpot: boolean): TelegramReplyMarkup {
+  const rows: TelegramReplyMarkup["inline_keyboard"] = [];
+  const analysis = [];
+  if (hasFutures) analysis.push({ text: "📈 Analyze Futures", callback_data: `analyze_futures:${symbol}` });
+  if (hasSpot) analysis.push({ text: "💰 Analyze Spot", callback_data: `analyze_spot:${symbol}` });
+  if (analysis.length) rows.push(analysis);
+  rows.push([{ text: "🔥 Add to Watchlist", callback_data: `search_add:${symbol}` }]);
+  rows.push([uiButton("🔎 Search Pair", "search_pair"), uiButton("🔙 Назад", "back")]);
+  return { inline_keyboard: rows };
 }
 
 function uiButton(text: string, action: string) {
@@ -857,6 +904,69 @@ function positionSummary(signal: Signal) {
   ].join("\n");
 }
 
+function pairSearchText(result: { query: string; futures: MarketRegistryItem[]; spot: MarketRegistryItem[]; best?: MarketRegistryItem }) {
+  const best = result.best;
+  const health = best ? marketHealth(best) : null;
+  return [
+    "🔎 Search Pair",
+    "",
+    `Query: ${result.query}`,
+    "",
+    "Found:",
+    "",
+    "📈 Futures:",
+    result.futures.length ? result.futures.slice(0, 5).map(shortMarketLine).join("\n") : "Not found",
+    "",
+    "💰 Spot:",
+    result.spot.length ? result.spot.slice(0, 5).map(shortMarketLine).join("\n") : "Not found",
+    "",
+    best && health ? "Market health:" : "",
+    best && health ? `${health.label} (${health.score}/100)` : "",
+    best ? `Volume: ${formatUsd(best.turnover24h)}` : "",
+    best ? `Liquidity: ${best.liquidity}/100` : "",
+    best ? `Spread: ${(best.spreadPct * 100).toFixed(3)}%` : "",
+    best ? `Volatility: 24h ${(best.price24hPcnt * 100).toFixed(2)}%` : ""
+  ].filter(Boolean).join("\n");
+}
+
+function shortMarketLine(item: MarketRegistryItem) {
+  return `${item.symbol} · ${formatUsd(item.turnover24h)} · spread ${(item.spreadPct * 100).toFixed(3)}%`;
+}
+
+function spotAnalysisText(analysis: Awaited<ReturnType<typeof analyzeSpot>>) {
+  return [
+    `💰 SPOT Analysis — ${analysis.symbol}`,
+    "",
+    "Short-term:",
+    `Scalping: ${analysis.shortTerm.scalping}`,
+    `Intraday: ${analysis.shortTerm.intraday}`,
+    `Swing: ${analysis.shortTerm.swing}`,
+    "",
+    "Long-term:",
+    `Bias: ${analysis.longTerm.bias}`,
+    `Risk: ${analysis.longTerm.riskProfile}`,
+    `Accumulation: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
+    `Resistance: ${analysis.longTerm.resistance.map(fmt).join(" - ")}`,
+    `Potential: ${analysis.longTerm.growthPotential}`,
+    `Cycle: ${analysis.longTerm.marketCycle}`,
+    "",
+    "Good for:",
+    `${analysis.suitability.shortTermTrade ? "✅" : "❌"} short-term trade`,
+    `${analysis.suitability.midTermHold ? "✅" : "❌"} mid-term hold`,
+    `${analysis.suitability.longTermInvestment ? "✅" : "❌"} long-term investment`,
+    "",
+    "Reason:",
+    ...analysis.reasons.map((reason) => `• ${reason}`)
+  ].join("\n");
+}
+
+function formatUsd(value: number) {
+  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(2)}B`;
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${Math.round(value)}`;
+}
+
 function marketText() {
   const latest = [...state.activeSignals, ...state.watchlist, ...state.history][0];
   return [
@@ -929,7 +1039,7 @@ function isMenuButton(text: string) {
   return buttonAction(text) !== null;
 }
 
-type ButtonAction = "menu" | "back" | "signals" | "watchlist" | "settings" | "signal_pair" | "watch_add" | "watch_remove" | "top" | "signals_refresh" | "positions" | "stats" | "new_tokens" | "watch_status" | "monitoring" | "intelligence" | "pump_detector" | "whale_bias" | "liquidation_status" | "market_regime" | "market" | "btc" | "diagnostics" | "balance" | "leverage" | "x2" | "x3" | "notifications" | "telegram_ux" | "risk_mode" | "conservative" | "balanced" | "aggressive";
+type ButtonAction = "menu" | "back" | "signals" | "search_pair" | "watchlist" | "settings" | "signal_pair" | "watch_add" | "watch_remove" | "top" | "signals_refresh" | "positions" | "stats" | "new_tokens" | "watch_status" | "monitoring" | "intelligence" | "pump_detector" | "whale_bias" | "liquidation_status" | "market_regime" | "market" | "btc" | "diagnostics" | "balance" | "leverage" | "x2" | "x3" | "notifications" | "telegram_ux" | "risk_mode" | "conservative" | "balanced" | "aggressive";
 
 function buttonAction(text: string): ButtonAction | null {
   const normalized = normalizeButtonText(text).toLowerCase();
@@ -938,6 +1048,7 @@ function buttonAction(text: string): ButtonAction | null {
     ["menu", ["меню", "menu"]],
     ["back", ["назад", "back"]],
     ["signals", ["сигнали", "signals"]],
+    ["search_pair", ["search pair", "пошук пари", "пошук", "search"]],
     ["watchlist", ["watchlist", "мій список"]],
     ["settings", ["налаштування", "settings"]],
     ["signal_pair", ["аналіз пари", "аналіз", "analyze pair", "signal pair"]],
