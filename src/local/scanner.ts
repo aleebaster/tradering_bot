@@ -11,6 +11,7 @@ import { loadPriorityWatchlist } from "./watchlistStore";
 import { recordPaperClose, recordPaperOpen, recordPaperSetup, updatePaperTradeMemory } from "./paperTrading";
 import { notificationsEnabled } from "./telegramSettings";
 import { recordTradeMemory } from "./tradeMemory";
+import { recordProtectionOutcome, signalsPaused } from "./lossProtection";
 
 type Broadcast = (payload: unknown) => void;
 
@@ -168,6 +169,7 @@ export class Scanner {
   }
 
   private canSendSignal(signal: Signal) {
+    if (signalsPaused()) return false;
     const key = signalCooldownKey(signal);
     const prev = this.signalCooldown.get(key);
     if (!prev) return true;
@@ -363,8 +365,8 @@ export class Scanner {
       this.managementSent.add(key);
       if (action.stage === "TP1") recordTradeMemory(signal, "TP1", current);
       if (action.stage === "TP2") recordTradeMemory(signal, "TP2", current);
-      if (action.stage === "TP3") { recordTradeMemory(signal, "TP3", current); recordLearningOutcome(signal, "TP"); recordPaperClose(signal, "WIN", 3); }
-      if (action.stage === "SL") { recordTradeMemory(signal, "SL", current); recordLearningOutcome(signal, signal.fakeBreakout.risk ? "FAKE_BREAKOUT" : "SL"); recordPaperClose(signal, "LOSS", -1); }
+      if (action.stage === "TP3") { recordTradeMemory(signal, "TP3", current); recordProtectionOutcome("WIN"); recordLearningOutcome(signal, "TP"); recordPaperClose(signal, "WIN", 3); }
+      if (action.stage === "SL") { recordTradeMemory(signal, "SL", current); recordProtectionOutcome("LOSS"); recordLearningOutcome(signal, signal.fakeBreakout.risk ? "FAKE_BREAKOUT" : "SL"); recordPaperClose(signal, "LOSS", -1); }
       logger.info({ symbol: signal.symbol, action: action.label, currentPrice: current, reasons: action.reasons }, "trade management alert");
       if (notificationsEnabled()) await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Не вдалося надіслати Telegram-сповіщення управління угодою"));
     }
@@ -532,11 +534,13 @@ function tradeManagementAction(signal: Signal, current: number, btcOk: boolean, 
 
 function shouldMoveToBreakeven(signal: Signal) {
   const momentum = signal.scoreBreakdown.momentumQuality ?? 0;
+  const volume = signal.scoreBreakdown.volumeConfirmation ?? 0;
+  const orderFlow = signal.scoreBreakdown.cvdOrderFlow ?? 0;
   const fast = signal.fastMoveQuality.score ?? 0;
   const volatile = signal.marketRegime === "VOLATILE" || signal.marketRegime === "NEWS_DRIVEN";
   const structure = signal.scoreBreakdown.smcConfirmation ?? 0;
-  if (volatile || momentum < 70 || structure < 35) return true;
-  if (momentum >= 82 && fast >= 65 && structure >= 45) return false;
+  if (!signal.btcStable || volatile || momentum < 70 || volume < 55 || orderFlow < 45 || structure < 35) return true;
+  if (momentum >= 82 && volume >= 70 && fast >= 65 && orderFlow >= 60 && structure >= 45) return false;
   return true;
 }
 

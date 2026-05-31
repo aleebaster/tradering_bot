@@ -89,32 +89,30 @@ function formatSignal(signal: Signal) {
   const direction = signal.side === "SHORT" ? "SHORT" : signal.side === "BUY" ? "LONG" : "LONG";
   const icon = direction === "SHORT" ? "🔴" : "🟢";
   const sizing = signal.positionSizing;
+  const balance = sizing?.balanceUsdt ?? config.USER_BALANCE_USDT;
   return [
     `${icon} ${direction} — ${signal.symbol}`,
     "",
-    signal.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : "⏳ ЧЕКАТИ ЗОНУ ВХОДУ",
+    signal.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : "⏳ ЧЕКАТИ КРАЩИЙ ВХІД",
     "",
-    "📍 Вхід:",
-    `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+    `📍 Вхід: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+    `🛑 SL: ${fmt(signal.stopLoss)}`,
+    `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
+    `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
+    `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
+    `⚡ Плече: ${leverageText(signal)}`,
+    `💵 Баланс: ${balance} USDT`,
+    `📦 Розмір входу: ${sizing ? `${sizing.positionSizeUsdt} USDT` : "після підтвердження"}`,
+    `🎯 Потенційний профіт: ${sizing ? `${sizing.potentialProfitUsdt[0]} / ${sizing.potentialProfitUsdt[1]} / ${sizing.potentialProfitUsdt[2]} USDT` : "після підтвердження"}`,
+    `🛑 Максимальний ризик: ${sizing ? `${sizing.potentialLossUsdt} USDT (${sizing.accountRiskPercent}%)` : "після підтвердження"}`,
     "",
-    "🛑 SL:",
-    fmt(signal.stopLoss),
+    `📊 Confidence: ${signal.confidence}%`,
+    `📈 RR: ${signal.riskReward}`,
     "",
-    "🎯 TP1:",
-    fmt(signal.takeProfit[0]),
+    "Причина:",
+    ...premiumReasons(signal),
     "",
-    "🎯 TP2:",
-    fmt(signal.takeProfit[1]),
-    "",
-    "🎯 TP3:",
-    fmt(signal.takeProfit[2]),
-    "",
-    `⚡ ${leverageText(signal)}`,
-    "",
-    `💰 ${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT → ${sizing ? `${sizing.positionSizeUsdt} USDT` : "після підтвердження"}`,
-    "",
-    "🟠 Беззбиток:",
-    smartBreakevenText(signal)
+    `🟠 Беззбиток: ${smartBreakevenText(signal)}`
   ].filter(Boolean).join("\n");
 }
 
@@ -185,12 +183,22 @@ function waitingReason(signal: Signal, direction: "LONG" | "SHORT") {
 
 function waitingTriggers(signal: Signal, direction: "LONG" | "SHORT") {
   const triggers = direction === "SHORT"
-    ? ["✅ повторний rejection від VWAP/SMA50", "✅ MACD bearish cross на 5M", "✅ liquidity sweep над локальним resistance"]
-    : ["✅ reclaim VWAP/SMA50 з утриманням", "✅ MACD bullish cross на 5M", "✅ liquidity sweep під локальним support"];
-  if ((signal.scoreBreakdown.volumeConfirmation ?? 0) < 65) triggers.push("✅ volume spike без fake breakout");
-  if (!signal.btcStable && signal.symbol !== "BTCUSDT") triggers.push("✅ BTC стабілізується");
-  if (signal.fakeBreakout.risk) triggers.push("✅ trap/fake breakout скасовано закриттям 5M");
+    ? ["• retest/rejection від VWAP/SMA50", "• MACD bearish trigger на 5M/1M", "• liquidity sweep над resistance"]
+    : ["• reclaim VWAP/SMA50", "• MACD bullish trigger на 5M/1M", "• liquidity sweep під support"];
+  if ((signal.scoreBreakdown.volumeConfirmation ?? 0) < 65) triggers.push("• stronger volume без fake breakout");
+  if (!signal.btcStable && signal.symbol !== "BTCUSDT") triggers.push("• BTC stable");
+  if (signal.fakeBreakout.risk) triggers.push("• fake breakout скасовано закриттям 5M");
   return triggers;
+}
+
+function premiumReasons(signal: Signal) {
+  return [
+    signal.scoreBreakdown.multiTimeframeAlignment >= 67 ? "✅ тренд підтверджено" : "⚠️ тренд ще формується",
+    signal.scoreBreakdown.momentumQuality >= 70 ? "✅ momentum" : "⚠️ momentum середній",
+    signal.scoreBreakdown.volumeConfirmation >= 65 ? "✅ volume" : "⚠️ volume слабший",
+    signal.btcStable ? "✅ BTC stable" : "⚠️ BTC нестабільний",
+    signal.scoreBreakdown.entrySniper >= 70 ? "✅ sniper entry" : "⏳ чекаємо sniper entry"
+  ];
 }
 
 function potentialLeverage(signal: Signal) {
@@ -217,7 +225,9 @@ function leverageText(signal: Signal) {
 function smartBreakevenText(signal: Signal) {
   const momentum = signal.scoreBreakdown.momentumQuality ?? 0;
   const structure = signal.scoreBreakdown.smcConfirmation ?? 0;
-  if (momentum >= 82 && structure >= 45 && signal.marketRegime !== "VOLATILE") return "Після TP1, якщо імпульс слабшає";
+  const volume = signal.scoreBreakdown.volumeConfirmation ?? 0;
+  const flow = signal.scoreBreakdown.cvdOrderFlow ?? 0;
+  if (momentum >= 82 && volume >= 70 && flow >= 60 && structure >= 45 && signal.marketRegime !== "VOLATILE") return "Після TP1; якщо імпульс сильний, дати простір до TP2";
   return "Після TP1";
 }
 

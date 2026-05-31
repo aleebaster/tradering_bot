@@ -11,5 +11,6 @@ data/learning-state.json
 data/paper-trading.json
 data/paper-trade-memory.json
 data/telegram-settings.json
+data/loss-protection.json
 
 .vercel

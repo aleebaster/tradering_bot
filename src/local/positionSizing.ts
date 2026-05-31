@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { conservativeModeActive } from "./lossProtection";
 import { loadTelegramSettings, maxLeverageNumber, riskMultiplier } from "./telegramSettings";
 import type { MarketRegime, PositionSizing, Side } from "./types";
 
@@ -69,6 +70,7 @@ function chooseLeverage(input: PositionSizingInput, priceRiskPercent: number, ma
   let leverage: typeof ALLOWED_LEVERAGE[number] = input.score >= 92 ? 5 : input.score >= 87 ? 3 : 2;
   leverage = Math.min(leverage, maxLeverageNumber()) as typeof ALLOWED_LEVERAGE[number];
   if (config.smallBalanceGrowthMode && input.score < 92) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];
+  if (conservativeModeActive()) leverage = Math.min(leverage, 2) as typeof ALLOWED_LEVERAGE[number];
   if (input.score >= 85 && input.score < 90) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];
   if ((input.volatilityPct ?? 0) > 0.018 || input.marketRegime === "VOLATILE" || input.marketRegime === "NEWS_DRIVEN") leverage = 2;
   else if ((input.volatilityPct ?? 0) > 0.012 || (input.momentumScore ?? 100) < 70) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];

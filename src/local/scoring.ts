@@ -44,7 +44,8 @@ export function btcStable(btc: MarketSnapshot["candles"]): boolean {
 export function buildSignal(snapshot: MarketSnapshot): Signal {
   const primaryTf = snapshot.mode === "futures" ? "15" : "240";
   const candles = snapshot.candles[primaryTf] ?? [];
-  const precisionCandles = snapshot.candles["5"] ?? candles;
+  const precisionCandles = snapshot.candles["1"] ?? snapshot.candles["5"] ?? candles;
+  const fiveMinuteCandles = snapshot.candles["5"] ?? candles;
   const oneHourCandles = snapshot.candles["60"] ?? candles;
   const closes = candles.map((c) => c.close);
   const last = candles.at(-1)!;
@@ -84,7 +85,8 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const confirmationProfile = adaptiveConfirmationProfile(snapshot, { volume, momentum, liquidityScore: snapshot.liquidityScore, orderbook, fastMoveScore: fastMove.score });
   const confirmationPenalty = confirmationProfile.allowed ? confirmationProfile.penalty : 35;
   const paperAdjustment = paperSetupConfidenceAdjustment(setupTypeFromScores(snapshot, { momentum, volume, mtf, liquiditySweep: liquidity.score }));
-  const advancedBonus = htf.score * 0.15 * learned.htf + liquidity.score * 0.08 * learned.liquidity + orderFlow.score * 0.1 * learned.orderFlow + oiAnalysis.score * 0.08 * learned.oi + fakeBreakout.score * 0.11 + fastMove.score * 0.08 + (correlation.aligned ? 8 : correlation.riskOff ? -18 : 0) + session.confidenceAdjustment + htf.confidenceAdjustment;
+  const sniper = entrySniperTrigger(fiveMinuteCandles, precisionCandles, direction, volume);
+  const advancedBonus = htf.score * 0.15 * learned.htf + liquidity.score * 0.08 * learned.liquidity + orderFlow.score * 0.1 * learned.orderFlow + oiAnalysis.score * 0.08 * learned.oi + fakeBreakout.score * 0.11 + fastMove.score * 0.08 + (sniper.ready ? 4 : -6) + (correlation.aligned ? 8 : correlation.riskOff ? -18 : 0) + session.confidenceAdjustment + htf.confidenceAdjustment;
   const weighted = trendStrength * 0.12 + snapshot.liquidityScore * 0.06 + volume * 0.1 * learned.volume + smc.score * 0.13 * learned.smc + mtf * 0.1 + snapshot.whaleScore * 0.05 + funding * 0.05 + oi * 0.04 + momentum * 0.09 * learned.macd + orderbook * 0.06 + advancedBonus + paperAdjustment - regimePenalty - btcPenalty;
   let score = clamp(weighted - confirmationPenalty);
   const weakMomentum = direction !== 0 && momentum < 55;
@@ -103,7 +105,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const roundedScore = Math.round(score);
   const entryThreshold = confirmationProfile.smallAltStrict ? 90 : 85;
   const qualifiedSide: Side = roundedScore >= entryThreshold ? side : roundedScore >= 80 && snapshot.mode === "futures" && side !== "NO_TRADE" ? "WATCHLIST" : "NO_TRADE";
-  const entryStatus = qualifiedSide === "NO_TRADE" || qualifiedSide === "WATCHLIST" ? "NO_TRADE" : last.close >= Math.min(...entry) && last.close <= Math.max(...entry) ? "ENTER_NOW" : "WAIT_FOR_ENTRY";
+  const entryStatus = qualifiedSide === "NO_TRADE" || qualifiedSide === "WATCHLIST" ? "NO_TRADE" : last.close >= Math.min(...entry) && last.close <= Math.max(...entry) && sniper.ready ? "ENTER_NOW" : "WAIT_FOR_ENTRY";
   const riskReward = riskRewardRatio(rrValue);
   const grade = gradeFrom(roundedScore, hardBlock.blocked, qualifiedSide);
   const leverage = snapshot.mode === "futures" && !["NO_TRADE", "WATCHLIST"].includes(qualifiedSide) ? leverageRecommendation(score, a / last.close, momentum, snapshot.regime) : undefined;
@@ -174,6 +176,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
       smartOpenInterest: Math.round(oiAnalysis.score),
       fakeBreakoutProtection: Math.round(fakeBreakout.score),
       fastMoveQuality: Math.round(fastMove.score),
+      entrySniper: sniper.ready ? 100 : Math.max(0, Math.round(sniper.score)),
       sessionQuality: session.confidenceAdjustment,
       regimePenalty: Math.round(regimePenalty),
       btcPenalty: Math.round(btcPenalty),
@@ -267,6 +270,26 @@ function precisionDirection(candles?: Candle[]) {
   return 0;
 }
 
+function entrySniperTrigger(fiveMinute: Candle[], oneMinute: Candle[], direction: number, setupVolume: number) {
+  if (direction === 0 || oneMinute.length < 25 || fiveMinute.length < 25) return { ready: false, score: 0 };
+  const last = oneMinute.at(-1)!;
+  const previous = oneMinute.at(-2)!;
+  const local = oneMinute.slice(-20, -1);
+  const vw = vwap(oneMinute);
+  const volumeScore = volumeProfileScore(oneMinute);
+  const body = Math.abs(last.close - last.open);
+  const range = Math.max(last.high - last.low, 1e-9);
+  const rejection = direction === 1
+    ? last.low <= Math.min(...local.map((c) => c.low)) && last.close > last.open && body / range >= 0.45
+    : last.high >= Math.max(...local.map((c) => c.high)) && last.close < last.open && body / range >= 0.45;
+  const retest = direction === 1 ? last.low <= vw && last.close > vw : last.high >= vw && last.close < vw;
+  const pullback = direction === 1 ? previous.close < last.close && last.low < previous.low : previous.close > last.close && last.high > previous.high;
+  const microTrend = precisionDirection(oneMinute) === direction || precisionDirection(fiveMinute) === direction;
+  const volumeOk = volumeScore >= 65 || setupVolume >= 72;
+  const score = (rejection ? 30 : 0) + (retest ? 25 : 0) + (pullback ? 15 : 0) + (microTrend ? 15 : 0) + (volumeOk ? 15 : 0);
+  return { ready: score >= 70, score };
+}
+
 function professionalTradeLevels(primary: Candle[], precision: Candle[], oneHour: Candle[], direction: number, a: number, sr: { support: number; resistance: number }) {
   const last = primary.at(-1)!;
   const precisionSr = supportResistance(precision.length >= 30 ? precision : primary);
@@ -351,10 +374,11 @@ function sessionFilter(now: Date): AccuracySession {
   const hour = now.getUTCHours();
   const minute = now.getUTCMinutes();
   const minutes = hour * 60 + minute;
+  if (minutes >= 0 && minutes <= 120) return { name: "OFF_HOURS", active: false, confidenceAdjustment: -16, message: "⚠️ Dead market hours: ліквідність низька, fake breakout risk вище" };
   if (minutes >= 420 && minutes <= 570) return { name: "LONDON_OPEN", active: true, confidenceAdjustment: 6, message: "✅ London Open: ліквідність активна" };
   if (minutes >= 780 && minutes <= 960) return { name: "LONDON_NY_OVERLAP", active: true, confidenceAdjustment: 8, message: "✅ London + NY overlap: найкраща ліквідність" };
   if (minutes >= 780 && minutes <= 930) return { name: "NEW_YORK_OPEN", active: true, confidenceAdjustment: 7, message: "✅ New York Open: ліквідність активна" };
-  if (minutes >= 0 && minutes <= 360) return { name: "ASIA_CHOP", active: false, confidenceAdjustment: -18, message: "⚠️ LOW LIQUIDITY SESSION — WAIT" };
+  if (minutes >= 0 && minutes <= 360) return { name: "ASIA_CHOP", active: false, confidenceAdjustment: -18, message: "⚠️ Asia low liquidity: тільки sniper entry, FOMO заборонено" };
   return { name: "OFF_HOURS", active: false, confidenceAdjustment: -10, message: "⚠️ Поза головними сесіями — знижена впевненість" };
 }
 
