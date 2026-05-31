@@ -24,6 +24,7 @@
     "telegram:button-test": "chcp 65001 >nul && tsx scripts/telegram-button-handler-test.ts",
     "paper:simulation-test": "chcp 65001 >nul && tsx scripts/paper-simulation-test.ts",
     "newtokens:test": "chcp 65001 >nul && tsx scripts/bybit-new-token-scan-test.ts",
+    "watchlist:test": "chcp 65001 >nul && tsx scripts/watchlist-evolution-test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },

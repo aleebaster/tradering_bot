@@ -51,7 +51,7 @@ export class Scanner {
     this.connectKrakenTicker();
     await this.scan();
     this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
-    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 5 * 60_000);
+    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 2 * 60_000);
   }
 
   stop() {
@@ -400,19 +400,22 @@ export class Scanner {
         const snapshot = await this.snapshot(item.symbol, "futures", candles, btcOk, btcCandles);
         const signal = buildSignal(snapshot);
         logger.info({ symbol: item.symbol, score: signal.score, side: signal.side, scoreBreakdown: signal.scoreBreakdown }, "watchlist recheck");
-        if (signal.score >= 90 && activationConfirmed(signal)) {
+        const evolution = watchlistEvolution(item, signal);
+        if (signal.score >= 90 && activationConfirmed(signal, evolution)) {
           const activated = { ...signal, entryStatus: "ENTER_NOW" as const };
           this.activatedWatchlist.add(key);
           recordSignal(activated);
           this.markSignalSent(activated);
-          if (notificationsEnabled()) await this.notifier.setupActivated(activated, activationReasons(activated));
+          if (notificationsEnabled()) await this.notifier.setupActivated(activated, activationReasons(activated, evolution));
           recordPaperOpen(activated);
           continue;
         }
-        if (signal.score < 80) {
+        if (watchlistDecayed(item, signal, evolution)) {
           this.invalidatedWatchlist.add(key);
           state.watchlist = state.watchlist.filter((x) => watchKey(x.symbol, x.mode) !== key);
-          logger.info({ symbol: signal.symbol, reasons: invalidationReasons(signal) }, "watchlist setup invalidated silently");
+          const reasons = invalidationReasons(signal, evolution);
+          logger.info({ symbol: signal.symbol, reasons }, "watchlist setup invalidated");
+          if (notificationsEnabled()) await this.notifier.setupInvalidated(signal, reasons);
         } else {
           state.watchlist = [signal, ...state.watchlist.filter((x) => watchKey(x.symbol, x.mode) !== key)].slice(0, 30);
         }
@@ -424,23 +427,69 @@ export class Scanner {
   }
 }
 
-function activationConfirmed(signal: Signal) {
-  return !isExpired(signal) && signal.score >= 85 && momentumConfirmed(signal) && smcConfirmed(signal) && volumeConfirmed(signal) && orderBookConfirmed(signal) && breakoutConfirmed(signal);
+function activationConfirmed(signal: Signal, evolution: WatchlistEvolution) {
+  const confirmations = [
+    momentumConfirmed(signal),
+    volumeConfirmed(signal),
+    orderBookConfirmed(signal),
+    liquiditySweepConfirmed(signal),
+    breakoutConfirmed(signal),
+    sniperConfirmed(signal),
+    signal.btcStable,
+    evolution.oiImproved,
+    evolution.volumeImproved
+  ].filter(Boolean).length;
+  return !isExpired(signal) && signal.score >= 90 && confirmations >= 5 && sniperConfirmed(signal) && signal.btcStable;
 }
 
-function activationReasons(signal: Signal) {
-  const reasons = ["score >= 85"];
-  if (volumeConfirmed(signal)) reasons.push("volume confirmation detected");
-  if (orderBookConfirmed(signal)) reasons.push("order book imbalance confirmed");
-  if (momentumConfirmed(signal)) reasons.push("momentum confirmed");
-  if (smcConfirmed(signal)) reasons.push("SMC trigger detected");
+type WatchlistEvolution = ReturnType<typeof watchlistEvolution>;
+
+function watchlistEvolution(prev: Signal, next: Signal) {
+  const oldScore = prev.scoreBreakdown;
+  const newScore = next.scoreBreakdown;
+  const improved = (key: string, by = 8) => (newScore[key] ?? 0) >= (oldScore[key] ?? 0) + by;
+  const faded = (key: string, by = 12) => (newScore[key] ?? 0) + by < (oldScore[key] ?? 0);
+  return {
+    scoreDelta: next.score - prev.score,
+    oiImproved: improved("openInterestConfirmation", 5),
+    volumeImproved: improved("volumeConfirmation", 8),
+    momentumShift: improved("momentumQuality", 8),
+    retestImproved: improved("liquiditySweep", 10) || (newScore.liquiditySweep ?? 0) >= 70,
+    orderbookImproved: improved("orderBookImbalance", 8),
+    breakoutImproved: improved("multiTimeframeAlignment", 10) || next.marketRegime === "BREAKOUT",
+    volumeFaded: faded("volumeConfirmation"),
+    oiFaded: faded("openInterestConfirmation", 8),
+    momentumFaded: faded("momentumQuality"),
+    orderbookFaded: faded("orderBookImbalance")
+  };
+}
+
+function watchlistDecayed(prev: Signal, next: Signal, evolution: WatchlistEvolution) {
+  if (next.score < 75) return true;
+  if (!next.btcStable && next.symbol !== "BTCUSDT") return true;
+  const faded = [evolution.volumeFaded, evolution.oiFaded, evolution.momentumFaded, evolution.orderbookFaded].filter(Boolean).length;
+  return prev.score >= 85 && next.score < 80 || faded >= 3;
+}
+
+function activationReasons(signal: Signal, evolution: WatchlistEvolution) {
+  const reasons = ["score upgraded to 90+"];
+  if (evolution.scoreDelta > 0) reasons.push(`score improved +${evolution.scoreDelta}`);
+  if (evolution.volumeImproved || volumeConfirmed(signal)) reasons.push("volume increased");
+  if (evolution.oiImproved || (signal.scoreBreakdown.openInterestConfirmation ?? 0) >= 58) reasons.push("OI rising");
+  if (evolution.retestImproved || liquiditySweepConfirmed(signal)) reasons.push("retest/liquidity sweep confirmed");
+  if (orderBookConfirmed(signal)) reasons.push("orderbook improved");
+  if (sniperConfirmed(signal)) reasons.push("sniper trigger");
+  if (signal.btcStable) reasons.push("BTC stable");
+  if (breakoutConfirmed(signal)) reasons.push("breakout confirmation");
   return reasons;
 }
 
-function invalidationReasons(signal: Signal) {
+function invalidationReasons(signal: Signal, evolution?: WatchlistEvolution) {
   const reasons: string[] = [];
-  if (!momentumConfirmed(signal)) reasons.push("weak momentum");
-  if (!volumeConfirmed(signal)) reasons.push("volume faded");
+  if (evolution?.volumeFaded || !volumeConfirmed(signal)) reasons.push("volume dropped");
+  if (evolution?.oiFaded) reasons.push("OI weakened");
+  if (evolution?.momentumFaded || !momentumConfirmed(signal)) reasons.push("momentum weakened");
+  if (evolution?.orderbookFaded) reasons.push("orderbook weakened");
   if (!signal.btcStable && signal.symbol !== "BTCUSDT") reasons.push("BTC instability");
   if (signal.marketRegime === "MANIPULATION_RISK") reasons.push("fake breakout risk");
   return reasons.length ? reasons : [signal.rejectionReason || `score dropped to ${signal.score}/100`];
@@ -460,6 +509,14 @@ function volumeConfirmed(signal: Signal) {
 
 function orderBookConfirmed(signal: Signal) {
   return (signal.scoreBreakdown.orderBookImbalance ?? 0) >= 60;
+}
+
+function liquiditySweepConfirmed(signal: Signal) {
+  return (signal.scoreBreakdown.liquiditySweep ?? 0) >= 70;
+}
+
+function sniperConfirmed(signal: Signal) {
+  return (signal.scoreBreakdown.entrySniper ?? 0) >= 70;
 }
 
 function breakoutConfirmed(signal: Signal) {

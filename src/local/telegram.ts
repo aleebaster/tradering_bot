@@ -24,12 +24,36 @@ export class TelegramNotifier {
   }
 
   async setupActivated(signal: Signal, reasons: string[]) {
-    const side = signal.side === "SHORT" ? "🔴 SETUP ACTIVATED" : "🟢 SETUP ACTIVATED";
-    await this.send([`${side} — ${signal.symbol}`, "", formatSignal({ ...signal, entryStatus: "ENTER_NOW" })].join("\n"), signalQuickActions(signal.symbol));
+    await this.send([
+      "🟢 SETUP ACTIVATED",
+      "",
+      signal.symbol,
+      "",
+      "Status:",
+      "✅ ЗАХОДИТИ ЗАРАЗ",
+      "",
+      "Причина:",
+      ...reasons.slice(0, 8).map((reason) => `✅ ${reason}`),
+      "",
+      `📍 Вхід: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+      `🛑 SL: ${fmt(signal.stopLoss)}`,
+      `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
+      `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
+      `⚡ Плече: ${leverageText(signal)}`
+    ].join("\n"), signalQuickActions(signal.symbol));
   }
 
   async setupInvalidated(signal: Signal, reasons: string[]) {
-    await this.noTrade(signal);
+    await this.send([
+      "❌ WATCHLIST CANCELLED",
+      "",
+      signal.symbol,
+      "",
+      "Причина:",
+      ...reasons.slice(0, 6).map((reason) => `⚠️ ${reason}`),
+      "",
+      "No trade."
+    ].join("\n"));
   }
 
   async noTrade(signal: Signal) {

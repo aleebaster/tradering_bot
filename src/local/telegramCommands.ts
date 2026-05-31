@@ -122,6 +122,7 @@ export class TelegramCommandCenter {
     if (sameButton(cleanText, "📊 Статистика")) return this.notifier.send(tradeStatsText(), mainMenuKeyboard());
     if (sameButton(cleanText, "🚀 New Tokens")) return this.sendNewTokens();
     if (sameButton(cleanText, "📄 Мій список")) return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
+    if (sameButton(cleanText, "👀 Watch status")) return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
     if (sameButton(cleanText, "🔴 Моніторинг")) return this.sendMonitoring();
     if (sameButton(cleanText, "📈 Ринок") || sameButton(cleanText, "🔄 Оновити Ринок")) return this.notifier.send(marketText(), marketActionsKeyboard());
     if (sameButton(cleanText, "₿ BTC Фільтр")) return this.notifier.send(btcText(), marketActionsKeyboard());
@@ -146,6 +147,7 @@ export class TelegramCommandCenter {
     if (command === "/resetlearning") return this.resetLearningCommand();
     if (command === "/top") return this.sendTopSetups();
     if (command === "/watchlist") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
+    if (command === "/watchstatus") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
     if (command === "/paper") {
       const action = rawPair?.toLowerCase();
       if (action === "on") return this.notifier.send(paperModeText(true));
@@ -263,7 +265,7 @@ export class TelegramCommandCenter {
   private async sendMonitoring(): Promise<void> {
     const pairs = loadPriorityWatchlist();
     if (!pairs.length) return this.notifier.send("👀 Моніторинг\n\nWatchlist порожній. Натисни ➕ Додати пару.", watchlistActionsKeyboard());
-    await this.notifier.send("👀 Моніторинг активний\n\n⏱ Перевірка кожні 10-15 сек", watchlistActionsKeyboard());
+      await this.notifier.send("👀 Моніторинг активний\n\n⏱ Watchlist evolution: перевірка кожні 2 хв", watchlistActionsKeyboard());
     for (const pair of pairs.slice(0, 10)) await this.notifier.send(monitoringStatusFor(pair), signalQuickActions(pair));
   }
 
@@ -353,6 +355,7 @@ function watchlistMenuKeyboard(): TelegramReplyMarkup {
   return {
     keyboard: [
       [{ text: "➕ Додати пару" }, { text: "📄 Мій список" }],
+      [{ text: "👀 Watch status" }],
       [{ text: "❌ Видалити пару" }, { text: "🔴 Моніторинг" }],
       [{ text: "🔙 Назад" }]
     ],
@@ -388,7 +391,8 @@ function marketActionsKeyboard(): TelegramReplyMarkup {
 function watchlistActionsKeyboard(): TelegramReplyMarkup {
   return {
     keyboard: [
-      [{ text: "📄 Мій список" }, { text: "🔴 Моніторинг" }],
+      [{ text: "📄 Мій список" }, { text: "👀 Watch status" }],
+      [{ text: "🔴 Моніторинг" }],
       [{ text: "➕ Додати пару" }, { text: "❌ Видалити пару" }],
       [{ text: "📊 Аналіз" }, { text: "🔙 Назад" }]
     ],
@@ -423,7 +427,8 @@ function diagnosticsActionsKeyboard(): TelegramReplyMarkup {
 function watchlistQuickKeyboard(_pair: string): TelegramReplyMarkup {
   return {
     keyboard: [
-      [{ text: "📄 Мій список" }, { text: "❌ Видалити пару" }],
+      [{ text: "📄 Мій список" }, { text: "👀 Watch status" }],
+      [{ text: "❌ Видалити пару" }],
       [{ text: "📊 Аналіз" }, { text: "🔴 Моніторинг" }],
       [{ text: "🔙 Назад" }]
     ],
@@ -508,6 +513,7 @@ function helpText() {
     "/watch AIGENSYNUSDT — додати в watchlist",
     "/unwatch AIGENSYNUSDT — прибрати з watchlist",
     "/watchlist — список пар",
+    "/watchstatus — активні setup, score, missing confirmations",
     "/top — найкращі сетапи зараз",
     "/newtokens — Bybit Futures new-token watch",
     "/newsignal TOKENUSDT — аналіз нового futures токена",
@@ -592,7 +598,66 @@ function topSignals() {
 
 function watchlistText() {
   const pairs = loadPriorityWatchlist();
-  return ["👁 Watchlist", "", ...(pairs.length ? pairs.map((pair) => `✅ ${pair}`) : ["Watchlist порожній"])].join("\n");
+  const ranked = rankedWatchlist();
+  return [
+    "👀 ТОП WATCHLIST",
+    "",
+    ...(ranked.length ? ranked.slice(0, 10).map((signal, index) => `#${index + 1} ${signal.symbol} — ${signal.score}/100`) : ["Активних setup 80+ поки немає"]),
+    "",
+    "Priority pairs:",
+    ...(pairs.length ? pairs.map((pair) => `✅ ${pair}`) : ["Watchlist порожній"])
+  ].join("\n");
+}
+
+function watchStatusText() {
+  const ranked = rankedWatchlist();
+  if (!ranked.length) return ["👀 Watch status", "", "Активних setup 80+ зараз немає.", "Scanner продовжує моніторинг без FOMO."].join("\n");
+  return ["👀 ТОП WATCHLIST", "", ...ranked.slice(0, 8).map(watchStatusCard)].join("\n\n");
+}
+
+function rankedWatchlist() {
+  return state.watchlist
+    .filter((signal) => signal.mode === "futures" && signal.score >= 80 && signal.score < 90)
+    .sort((a, b) => readinessScore(b) - readinessScore(a));
+}
+
+function watchStatusCard(signal: Signal, index: number) {
+  const missing = missingWatchConfirmations(signal);
+  return [
+    `#${index + 1} ${signal.symbol}`,
+    "",
+    `${signal.score}/100`,
+    "",
+    "Waiting for:",
+    ...(missing.length ? missing.map((item) => `⚠️ ${item}`) : ["✅ entry trigger nearly ready"]),
+    "",
+    "Estimated readiness:",
+    readinessLabel(signal)
+  ].join("\n");
+}
+
+function missingWatchConfirmations(signal: Signal) {
+  const missing: string[] = [];
+  if ((signal.scoreBreakdown.liquiditySweep ?? 0) < 70) missing.push("retest / liquidity sweep");
+  if ((signal.scoreBreakdown.volumeConfirmation ?? 0) < 65) missing.push("volume confirmation");
+  if ((signal.scoreBreakdown.openInterestConfirmation ?? 0) < 58) missing.push("OI rising");
+  if ((signal.scoreBreakdown.momentumQuality ?? 0) < 70) missing.push("momentum shift");
+  if ((signal.scoreBreakdown.orderBookImbalance ?? 0) < 60) missing.push("orderbook improvement");
+  if ((signal.scoreBreakdown.entrySniper ?? 0) < 70) missing.push("sniper trigger");
+  if (!signal.btcStable && signal.symbol !== "BTCUSDT") missing.push("BTC stable");
+  return missing.slice(0, 5);
+}
+
+function readinessScore(signal: Signal) {
+  const confirmations = 7 - missingWatchConfirmations(signal).length;
+  return signal.score * 10 + confirmations * 12 + (signal.scoreBreakdown.entrySniper ?? 0) * 0.2 + (signal.scoreBreakdown.liquiditySweep ?? 0) * 0.15;
+}
+
+function readinessLabel(signal: Signal) {
+  const missing = missingWatchConfirmations(signal).length;
+  if (signal.score >= 88 && missing <= 2) return "HIGH";
+  if (signal.score >= 84 && missing <= 4) return "MEDIUM";
+  return "EARLY";
 }
 
 function signalAnalysisText(pair: string) {
@@ -606,7 +671,7 @@ function watchAddedText(pair: string) {
     `✅ ${pair} додано до Watchlist`,
     "",
     "👀 Моніторинг активний",
-    "⏱ Перевірка кожні 10-15 сек",
+    "⏱ Evolution check кожні 2 хв",
     "",
     monitoringStatusFor(pair)
   ].join("\n");
@@ -615,8 +680,8 @@ function watchAddedText(pair: string) {
 function monitoringStatusFor(pair: string) {
   const signal = findSignal(pair);
   if (!signal) return [pair, "", "Статус:", "⏳ Очікуємо дані scanner", "", "Чекаємо кращу точку входу."].join("\n");
-  const side = signal.side === "WATCHLIST" ? "⚠️ WATCHLIST ONLY" : signal.side === "NO_TRADE" ? "❌ NO TRADE" : `${signal.side} ${signal.score}%`;
-  return [pair, "", "Статус:", side, "", signal.side === "WATCHLIST" ? "Чекаємо кращу точку входу." : signal.management].join("\n");
+  const side = signal.side === "WATCHLIST" ? `🟡 WATCHLIST ${signal.score}/100` : signal.side === "NO_TRADE" ? "❌ NO TRADE" : `${signal.side} ${signal.score}%`;
+  return [pair, "", "Статус:", side, "", signal.side === "WATCHLIST" ? `Readiness: ${readinessLabel(signal)}` : signal.management].join("\n");
 }
 
 function findSignal(pair: string) {
@@ -710,7 +775,7 @@ function isMenuButton(text: string) {
     "📊 Сигнали", "👀 Watchlist", "📈 Ринок", "₿ BTC Фільтр", "🔥 Топ Сетапи", "📂 Позиції", "🚀 New Tokens", "🧪 Діагностика", "⚙️ Налаштування", "📋 Меню", "🔙 Назад",
     "🔍 Аналіз пари", "🔥 Найкращі сигнали", "🟢 Активні угоди", "➕ Додати пару", "📄 Мій список", "❌ Видалити пару", "🔴 Моніторинг",
     "🔄 Оновити Ринок", "🔄 Оновити Статус", "🔄 Оновити Сигнали", "🔄 Оновити Позиції", "📊 Аналіз",
-    "💰 Баланс", "⚡ Плече", "🔔 Сповіщення", "📱 Telegram UX", "🎯 Risk mode", "x2", "x3", "x5", "Conservative", "Balanced", "Aggressive"
+    "💰 Баланс", "⚡ Плече", "🔔 Сповіщення", "📱 Telegram UX", "🎯 Risk mode", "👀 Watch status", "x2", "x3", "x5", "Conservative", "Balanced", "Aggressive"
   ].map(normalizeButtonText)).has(normalizeButtonText(text));
 }
 
