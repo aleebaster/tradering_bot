@@ -5,6 +5,7 @@ import { config } from "./config";
 import { logger } from "./logger";
 
 const BYBIT = process.env.BYBIT_REST_URL ?? "https://api.bybit.com";
+const BYBIT_FALLBACK_HOSTS = [BYBIT, "https://api.bybitglobal.com", "https://api.bybit.nl", "https://api.bybit-tr.com", "https://api.bytick.com", "https://api.bybit.kz"];
 const OKX = "https://www.okx.com";
 const BINANCE = "https://api.binance.com";
 const KUCOIN = "https://api.kucoin.com";
@@ -23,24 +24,34 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
   if (cached && cached.expiresAt > Date.now()) return cached.value as T;
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      await throttle(url);
-      const res = await fetch(url, { ...init, headers: { "user-agent": "tradering-bot/1.0", ...(init?.headers ?? {}) }, signal: AbortSignal.timeout(8000) });
-      if (res.ok) {
-        const value = (await res.json()) as T;
-        if (method === "GET") responseCache.set(cacheKey, { expiresAt: Date.now() + cacheTtl(url), value });
-        return value;
+    for (const requestUrl of bybitRequestUrls(url)) {
+      try {
+        await throttle(requestUrl);
+        const res = await fetch(requestUrl, { ...init, headers: { "user-agent": "tradering-bot/1.0", ...(init?.headers ?? {}) }, signal: AbortSignal.timeout(8000) });
+        if (res.ok) {
+          const value = (await res.json()) as T;
+          if (method === "GET") responseCache.set(cacheKey, { expiresAt: Date.now() + cacheTtl(url), value });
+          return value;
+        }
+        const text = await res.text();
+        const detail = text ? `: ${text.slice(0, 300)}` : "";
+        if (![403, 429, 500, 502, 503, 504].includes(res.status)) throw new Error(`${res.status} ${res.statusText} ${requestUrl}${detail}`);
+        lastError = new Error(`${res.status} ${res.statusText} ${requestUrl}${detail}`);
+        if (res.status !== 403) break;
+      } catch (err) {
+        lastError = err;
       }
-      const text = await res.text();
-      const detail = text ? `: ${text.slice(0, 300)}` : "";
-      if (![403, 429, 500, 502, 503, 504].includes(res.status)) throw new Error(`${res.status} ${res.statusText} ${url}${detail}`);
-      lastError = new Error(`${res.status} ${res.statusText} ${url}${detail}`);
-    } catch (err) {
-      lastError = err;
     }
     await new Promise((resolve) => setTimeout(resolve, backoffDelay(attempt, url)));
   }
   throw lastError;
+}
+
+function bybitRequestUrls(url: string) {
+  if (!url.includes("/v5/market/")) return [url];
+  const parsed = new URL(url);
+  if (!parsed.hostname.includes("bybit") && !parsed.hostname.includes("bytick")) return [url];
+  return [...new Set(BYBIT_FALLBACK_HOSTS)].map((host) => `${host}${parsed.pathname}${parsed.search}`);
 }
 
 async function throttle(url: string) {
