@@ -20,7 +20,7 @@ async function main() {
   const checks = {
     commandWorks: text.includes("ТОП WATCHLIST"),
     rankedClosestFirst: text.indexOf("#1 BSBUSDT") >= 0 && text.indexOf("#1 BSBUSDT") < text.indexOf("#2 NVDAUSDT"),
-    readinessShown: text.includes("Estimated readiness"),
+    readinessShown: text.includes("Readiness:") && text.includes("Estimated trigger"),
     missingShown: text.includes("Waiting for") && text.includes("sniper trigger")
   };
   const failed = Object.entries(checks).filter(([, ok]) => !ok);

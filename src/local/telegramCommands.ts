@@ -617,7 +617,7 @@ function watchStatusText() {
 
 function rankedWatchlist() {
   return state.watchlist
-    .filter((signal) => signal.mode === "futures" && signal.score >= 80 && signal.score < 90)
+    .filter((signal) => signal.mode === "futures" && signal.score >= 80)
     .sort((a, b) => readinessScore(b) - readinessScore(a));
 }
 
@@ -628,10 +628,13 @@ function watchStatusCard(signal: Signal, index: number) {
     "",
     `${signal.score}/100`,
     "",
+    "Readiness:",
+    `${readinessPercent(signal)}%`,
+    "",
     "Waiting for:",
     ...(missing.length ? missing.map((item) => `⚠️ ${item}`) : ["✅ entry trigger nearly ready"]),
     "",
-    "Estimated readiness:",
+    "Estimated trigger:",
     readinessLabel(signal)
   ].join("\n");
 }
@@ -651,6 +654,11 @@ function missingWatchConfirmations(signal: Signal) {
 function readinessScore(signal: Signal) {
   const confirmations = 7 - missingWatchConfirmations(signal).length;
   return signal.score * 10 + confirmations * 12 + (signal.scoreBreakdown.entrySniper ?? 0) * 0.2 + (signal.scoreBreakdown.liquiditySweep ?? 0) * 0.15;
+}
+
+function readinessPercent(signal: Signal) {
+  const confirmations = 7 - missingWatchConfirmations(signal).length;
+  return Math.min(99, Math.max(40, Math.round(signal.score * 0.65 + confirmations / 7 * 35)));
 }
 
 function readinessLabel(signal: Signal) {

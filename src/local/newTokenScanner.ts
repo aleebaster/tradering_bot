@@ -131,10 +131,14 @@ export function formatNewTokenWatch(items: NewTokenOpportunity[]) {
 
 export function formatNewTokenCard(item: NewTokenOpportunity) {
   const statusLabel = item.status === "SIGNAL" ? "🟢 REAL ENTRY" : item.score >= 85 ? "🟡 WATCHLIST" : item.score >= 80 ? "👀 EARLY SETUP" : item.status === "REJECTED" ? "❌ rejected" : "❌ weak setup";
+  const pumpDetected = item.waitingFor.some((reason) => reason.toLowerCase().includes("pump")) || item.rejectionReason.toLowerCase().includes("pumped");
   const header = item.status === "SIGNAL" ? `🟢 REAL ENTRY — ${item.symbol}` : item.score >= 85 ? `🚀 HIGH POTENTIAL DETECTED\n\n${item.symbol}` : item.score >= 80 ? `👀 EARLY SETUP — ${item.symbol}` : `🚀 NEW TOKEN WATCH\n\n${item.symbol}`;
   return [
     header,
     "",
+    pumpDetected ? "⚠️ PUMP DETECTED" : null,
+    pumpDetected ? "WAIT RETEST" : null,
+    pumpDetected ? "" : null,
     "Current status:",
     statusLabel,
     `Score: ${item.score}/100 · confirmations ${item.confirmations}/9`,
@@ -146,15 +150,16 @@ export function formatNewTokenCard(item: NewTokenOpportunity) {
     "",
     item.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : item.score >= 85 ? "Waiting for:" : "Missing:",
     ...(item.entryStatus === "ENTER_NOW" ? [] : item.waitingFor.slice(0, 5).map((reason) => item.score >= 85 ? `• ${reason}` : `⚠️ ${reason}`)),
-    item.entryStatus === "ENTER_NOW" ? "" : "Наступна перевірка: 5 хв",
+    item.entryStatus === "ENTER_NOW" ? "" : "Наступна перевірка: 1-2 хв",
     "",
     `📍 Вхід: ${fmt(item.entry[0])}-${fmt(item.entry[1])}`,
     `🛑 SL: ${fmt(item.stopLoss)}`,
     `🎯 TP1: ${fmt(item.takeProfit[0])}`,
     `🎯 TP2: ${fmt(item.takeProfit[1])}`,
+    `🎯 TP3: ${fmt(item.takeProfit[2])}`,
     `⚡ Плече: ${item.leverage} максимум`,
     item.status === "REJECTED" ? `Причина відхилення: ${item.rejectionReason}` : item.entryStatus === "ENTER_NOW" ? "Risk: 1-2% account max, no FOMO." : "Bot continues monitoring. Auto-upgrade only after OI/volume/retest/orderbook/sniper improve."
-  ].join("\n");
+  ].filter((line) => line !== null).join("\n");
 }
 
 async function loadCandles(symbol: string) {

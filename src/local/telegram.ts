@@ -24,8 +24,9 @@ export class TelegramNotifier {
   }
 
   async setupActivated(signal: Signal, reasons: string[]) {
+    const short = signal.side === "SHORT";
     await this.send([
-      "🟢 SETUP ACTIVATED",
+      short ? "🔴 SETUP ACTIVATED" : "🟢 SETUP ACTIVATED",
       "",
       signal.symbol,
       "",
@@ -39,7 +40,28 @@ export class TelegramNotifier {
       `🛑 SL: ${fmt(signal.stopLoss)}`,
       `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
       `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
+      `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
       `⚡ Плече: ${leverageText(signal)}`
+    ].join("\n"), signalQuickActions(signal.symbol));
+  }
+
+  async pumpDetected(signal: Signal, reasons: string[]) {
+    await this.send([
+      "⚠️ PUMP DETECTED",
+      "",
+      signal.symbol,
+      "",
+      "WAIT RETEST",
+      "",
+      "Причина:",
+      ...reasons.slice(0, 6).map((reason) => `⚠️ ${reason}`),
+      "",
+      "No FOMO trade.",
+      "Потрібно:",
+      "✅ pullback",
+      "✅ retest",
+      "✅ liquidity sweep",
+      "✅ sniper confirmation"
     ].join("\n"), signalQuickActions(signal.symbol));
   }
 
@@ -162,6 +184,12 @@ function formatWaitingSignal(signal: Signal, label: string) {
     "⏳ Що чекаємо:",
     ...trigger,
     "",
+    "⏳ ENTRY READINESS:",
+    `${entryReadinessPercent(signal)}%`,
+    "",
+    "Estimated trigger:",
+    entryReadinessLabel(signal),
+    "",
     "📍 Потенційна зона входу:",
     `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
     "",
@@ -230,8 +258,30 @@ function premiumReasons(signal: Signal) {
 }
 
 function potentialLeverage(signal: Signal) {
-  if (signal.confidence >= 85) return "x2–x3";
+  if (signal.confidence >= 95) return "x2–x3 тільки A+ setup";
+  if (signal.confidence >= 85) return "x2 default";
   return "x2 тільки після підтвердження";
+}
+
+function entryReadinessPercent(signal: Signal) {
+  const checks = [
+    (signal.scoreBreakdown.liquiditySweep ?? 0) >= 70,
+    (signal.scoreBreakdown.volumeConfirmation ?? 0) >= 65,
+    (signal.scoreBreakdown.openInterestConfirmation ?? 0) >= 58,
+    (signal.scoreBreakdown.momentumQuality ?? 0) >= 70,
+    (signal.scoreBreakdown.orderBookImbalance ?? 0) >= 60,
+    (signal.scoreBreakdown.entrySniper ?? 0) >= 70,
+    signal.btcStable || signal.symbol === "BTCUSDT"
+  ];
+  const confirmationScore = checks.filter(Boolean).length / checks.length * 35;
+  return Math.min(99, Math.max(40, Math.round(signal.score * 0.65 + confirmationScore)));
+}
+
+function entryReadinessLabel(signal: Signal) {
+  const readiness = entryReadinessPercent(signal);
+  if (signal.score >= 88 && readiness >= 85) return "HIGH";
+  if (signal.score >= 84 && readiness >= 72) return "MEDIUM";
+  return "EARLY";
 }
 
 function fmt(n: number) {
@@ -243,7 +293,7 @@ function leverageText(signal: Signal) {
   if (signal.leverage?.startsWith("x")) return signal.leverage;
   if (signal.mode !== "futures") return "не використовується";
   const volatility = volatilityFromSignal(signal);
-  let leverage = signal.confidence >= 90 ? 5 : signal.confidence >= 87 ? 3 : 2;
+  let leverage = signal.confidence >= 95 ? 3 : 2;
   if (volatility === "high") leverage = Math.min(leverage, 2);
   else if (volatility === "medium") leverage = Math.min(leverage, 3);
   if (signal.confidence < 85) leverage = 2;

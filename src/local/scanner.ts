@@ -24,6 +24,7 @@ export class Scanner {
   private watchlistSent = new Set<string>();
   private activatedWatchlist = new Set<string>();
   private invalidatedWatchlist = new Set<string>();
+  private fomoWatchlist = new Set<string>();
   private binanceWs: WebSocket | null = null;
   private scanning = false;
   private symbols = config.symbols;
@@ -51,7 +52,7 @@ export class Scanner {
     this.connectKrakenTicker();
     await this.scan();
     this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
-    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 2 * 60_000);
+    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 3 * 60_000);
   }
 
   stop() {
@@ -382,7 +383,7 @@ export class Scanner {
   }
 
   private async monitorWatchlist() {
-    const items = state.watchlist.filter((signal) => signal.mode === "futures" && signal.score >= 80 && signal.score < 90);
+    const items = state.watchlist.filter((signal) => signal.mode === "futures" && signal.score >= 80);
     if (!items.length || Date.now() < this.bybitCooldownUntil) return;
     let btcCandles: Record<string, Candle[]>;
     try {
@@ -401,8 +402,17 @@ export class Scanner {
         const signal = buildSignal(snapshot);
         logger.info({ symbol: item.symbol, score: signal.score, side: signal.side, scoreBreakdown: signal.scoreBreakdown }, "watchlist recheck");
         const evolution = watchlistEvolution(item, signal);
+        const fomo = fomoBlock(signal);
+        if (signal.score >= 90 && fomo.blocked) {
+          if (!this.fomoWatchlist.has(key)) {
+            this.fomoWatchlist.add(key);
+            if (notificationsEnabled()) await this.notifier.pumpDetected(signal, fomo.reasons);
+          }
+          state.watchlist = [signal, ...state.watchlist.filter((x) => watchKey(x.symbol, x.mode) !== key)].slice(0, 30);
+          continue;
+        }
         if (signal.score >= 90 && activationConfirmed(signal, evolution)) {
-          const activated = { ...signal, entryStatus: "ENTER_NOW" as const };
+          const activated = signal;
           this.activatedWatchlist.add(key);
           recordSignal(activated);
           this.markSignalSent(activated);
@@ -427,7 +437,7 @@ export class Scanner {
   }
 }
 
-function activationConfirmed(signal: Signal, evolution: WatchlistEvolution) {
+export function activationConfirmed(signal: Signal, evolution: WatchlistEvolution) {
   const confirmations = [
     momentumConfirmed(signal),
     volumeConfirmed(signal),
@@ -439,12 +449,12 @@ function activationConfirmed(signal: Signal, evolution: WatchlistEvolution) {
     evolution.oiImproved,
     evolution.volumeImproved
   ].filter(Boolean).length;
-  return !isExpired(signal) && signal.score >= 90 && confirmations >= 5 && sniperConfirmed(signal) && signal.btcStable;
+  return !isExpired(signal) && signal.score >= 90 && confirmations >= 5 && sniperConfirmed(signal) && signal.btcStable && signal.entryStatus === "ENTER_NOW" && !fomoBlock(signal).blocked;
 }
 
-type WatchlistEvolution = ReturnType<typeof watchlistEvolution>;
+export type WatchlistEvolution = ReturnType<typeof watchlistEvolution>;
 
-function watchlistEvolution(prev: Signal, next: Signal) {
+export function watchlistEvolution(prev: Signal, next: Signal) {
   const oldScore = prev.scoreBreakdown;
   const newScore = next.scoreBreakdown;
   const improved = (key: string, by = 8) => (newScore[key] ?? 0) >= (oldScore[key] ?? 0) + by;
@@ -472,11 +482,11 @@ function watchlistDecayed(prev: Signal, next: Signal, evolution: WatchlistEvolut
 }
 
 function activationReasons(signal: Signal, evolution: WatchlistEvolution) {
-  const reasons = ["score upgraded to 90+"];
-  if (evolution.scoreDelta > 0) reasons.push(`score improved +${evolution.scoreDelta}`);
+  const reasons = ["score оновився до 90+"];
+  if (evolution.scoreDelta > 0) reasons.push(`score покращився +${evolution.scoreDelta}`);
   if (evolution.volumeImproved || volumeConfirmed(signal)) reasons.push("volume increased");
   if (evolution.oiImproved || (signal.scoreBreakdown.openInterestConfirmation ?? 0) >= 58) reasons.push("OI rising");
-  if (evolution.retestImproved || liquiditySweepConfirmed(signal)) reasons.push("retest/liquidity sweep confirmed");
+  if (evolution.retestImproved || liquiditySweepConfirmed(signal)) reasons.push("retest confirmed");
   if (orderBookConfirmed(signal)) reasons.push("orderbook improved");
   if (sniperConfirmed(signal)) reasons.push("sniper trigger");
   if (signal.btcStable) reasons.push("BTC stable");
@@ -486,13 +496,25 @@ function activationReasons(signal: Signal, evolution: WatchlistEvolution) {
 
 function invalidationReasons(signal: Signal, evolution?: WatchlistEvolution) {
   const reasons: string[] = [];
-  if (evolution?.volumeFaded || !volumeConfirmed(signal)) reasons.push("volume dropped");
-  if (evolution?.oiFaded) reasons.push("OI weakened");
+  if (evolution?.volumeFaded || !volumeConfirmed(signal)) reasons.push("volume weakened");
+  if (evolution?.oiFaded) reasons.push("OI dropped");
   if (evolution?.momentumFaded || !momentumConfirmed(signal)) reasons.push("momentum weakened");
   if (evolution?.orderbookFaded) reasons.push("orderbook weakened");
-  if (!signal.btcStable && signal.symbol !== "BTCUSDT") reasons.push("BTC instability");
+  if (!signal.btcStable && signal.symbol !== "BTCUSDT") reasons.push("BTC unstable");
   if (signal.marketRegime === "MANIPULATION_RISK") reasons.push("fake breakout risk");
   return reasons.length ? reasons : [signal.rejectionReason || `score dropped to ${signal.score}/100`];
+}
+
+export function fomoBlock(signal: Signal) {
+  const reasons: string[] = [];
+  const entryLow = Math.min(...signal.entry);
+  const entryHigh = Math.max(...signal.entry);
+  const outsideEntryZone = signal.side === "SHORT" ? signal.currentPrice < entryLow * 0.995 : signal.currentPrice > entryHigh * 1.005;
+  if (signal.fakeBreakout.risk) reasons.push("fake breakout / manipulation risk");
+  if (!signal.fastMoveQuality.clean || signal.fastMoveQuality.score < 45) reasons.push("parabolic candle / vertical move");
+  if (signal.marketRegime === "MANIPULATION_RISK" || signal.marketRegime === "NEWS_DRIVEN") reasons.push("market overheated");
+  if (outsideEntryZone || signal.entryStatus !== "ENTER_NOW") reasons.push("price not in smart entry zone");
+  return { blocked: reasons.length > 0, reasons };
 }
 
 function momentumConfirmed(signal: Signal) {

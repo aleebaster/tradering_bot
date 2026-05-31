@@ -67,8 +67,10 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
 }
 
 function chooseLeverage(input: PositionSizingInput, priceRiskPercent: number, maxRiskPercent: number) {
-  let leverage: typeof ALLOWED_LEVERAGE[number] = input.score >= 92 ? 5 : input.score >= 87 ? 3 : 2;
+  const smallAccount = loadTelegramSettings().balanceUsdt <= 5.5;
+  let leverage: typeof ALLOWED_LEVERAGE[number] = smallAccount ? input.score >= 95 ? 3 : 2 : input.score >= 92 ? 5 : input.score >= 87 ? 3 : 2;
   leverage = Math.min(leverage, maxLeverageNumber()) as typeof ALLOWED_LEVERAGE[number];
+  if (smallAccount) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];
   if (config.smallBalanceGrowthMode && input.score < 92) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];
   if (conservativeModeActive()) leverage = Math.min(leverage, 2) as typeof ALLOWED_LEVERAGE[number];
   if (input.score >= 85 && input.score < 90) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];

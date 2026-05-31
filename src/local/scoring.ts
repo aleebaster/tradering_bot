@@ -298,7 +298,7 @@ function earlySetupFloor(snapshot: MarketSnapshot, quality: { side: Side; execut
 }
 
 function leverageRecommendation(score: number, volatility: number, momentum: number, regime: MarketRegime) {
-  let leverage = score >= 90 ? 5 : score >= 85 ? 3 : 2;
+  let leverage = score >= 95 ? 3 : 2;
   if (volatility > 0.018 || regime === "VOLATILE" || regime === "HIGH_VOLATILITY" || regime === "NEWS_DRIVEN" || regime === "CHOPPY") leverage = Math.min(leverage, 2);
   else if (volatility > 0.012 || momentum < 70) leverage = Math.min(leverage, 3);
   if (score < 90) leverage = Math.min(leverage, 3);
