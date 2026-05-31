@@ -127,6 +127,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const rrValue = riskRewardValue(entry, stopLoss, takeProfit[2], direction);
   if (rrValue < 2) score = Math.min(score, 69);
   score = Math.max(score, earlySetupFloor(snapshot, { side, executionAligned: execution.aligned, htfScore: htf.score, trendStrength, mtf, volume, orderFlowScore: orderFlow.score, liquidityScore: liquidity.score, funding, fakeBreakoutRisk: fakeBreakout.risk, newsBlocked: newsRisk.blocked, rrValue }));
+  score = clamp(score + professionalIntelligenceAdjustment(snapshot, intel, { side, rrValue, newsRisk, volume, momentum, sniperReady: sniper.ready, liquidityScore: liquidity.score, fakeBreakoutRisk: fakeBreakout.risk }));
   const roundedScore = Math.round(score);
   const thresholds = marketThresholdProfile(snapshot.regime, snapshot.btcStable);
   const entryThreshold = thresholds.entry;
@@ -227,7 +228,8 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
       liqBot: Math.round(intel.liqScore),
       marketReport: Math.round(intel.marketScore),
       intelligenceBonus: Math.round(intel.bonus),
-      intelligencePenalty: Math.round(intel.penalty)
+      intelligencePenalty: Math.round(intel.penalty),
+      intelligenceEntryQuality: Math.round(intel.entryQuality)
     },
     tradeManagementActions: tradeManagementActions(qualifiedSide, entryStatus),
     management
@@ -270,6 +272,28 @@ function intelligenceScores(snapshot: MarketSnapshot, direction: number) {
     bonus,
     penalty
   };
+}
+
+function professionalIntelligenceAdjustment(snapshot: MarketSnapshot, intel: ReturnType<typeof intelligenceScores>, quality: { side: Side; rrValue: number; newsRisk: AccuracyRisk; volume: number; momentum: number; sniperReady: boolean; liquidityScore: number; fakeBreakoutRisk: boolean }) {
+  if (!snapshot.intelligence || snapshot.mode !== "futures" || quality.side === "NO_TRADE" || quality.newsRisk.blocked || quality.rrValue < 2) return 0;
+  if (intel.hardRisk || quality.fakeBreakoutRisk) return -8;
+  const bundle = snapshot.intelligence;
+  const constructive = [
+    bundle.pump.pumpScore >= 62 && bundle.pump.entryTiming !== "AVOID",
+    bundle.whale.smartMoneyScore >= 58 && bundle.whale.trapRisk < 70,
+    bundle.liq.entryQuality >= 55 || bundle.liq.reclaimConfirmed,
+    bundle.market.marketAggression >= 45 && bundle.market.riskScore < 70,
+    intel.aligned
+  ].filter(Boolean).length;
+  const caution = [
+    bundle.pump.fakeBreakoutRisk >= 65,
+    bundle.whale.trapRisk >= 65,
+    bundle.liq.trapProbability >= 65,
+    bundle.market.riskScore >= 70
+  ].filter(Boolean).length;
+  const watchlistUpgrade = constructive >= 3 && quality.volume >= 45 && quality.momentum >= 45 && (quality.liquidityScore >= 45 || bundle.liq.reclaimConfirmed);
+  const sniperBoost = quality.sniperReady && constructive >= 3 ? 2 : 0;
+  return clamp((watchlistUpgrade ? 4 : constructive >= 2 ? 2 : 0) + sniperBoost - caution * 3, -9, 7);
 }
 
 function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, weakMomentum: boolean, rrValue: number, entryThreshold: number, hardBlockReason?: string) {

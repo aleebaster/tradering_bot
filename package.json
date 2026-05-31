@@ -23,6 +23,7 @@
     "telegram:menu-test": "chcp 65001 >nul && tsx scripts/telegram-menu-test.ts",
     "telegram:button-test": "chcp 65001 >nul && tsx scripts/telegram-button-handler-test.ts",
     "telegram:entry-only-test": "chcp 65001 >nul && tsx scripts/telegram-real-entry-only-test.ts",
+    "telegram:silent-proof": "chcp 65001 >nul && tsx scripts/telegram-silent-live-proof.ts",
     "telegram:real-flow-test": "chcp 65001 >nul && tsx scripts/telegram-real-flow-validation.ts",
     "paper:simulation-test": "chcp 65001 >nul && tsx scripts/paper-simulation-test.ts",
     "newtokens:test": "chcp 65001 >nul && tsx scripts/bybit-new-token-scan-test.ts",
@@ -30,6 +31,7 @@
     "sniper:test": "chcp 65001 >nul && tsx scripts/sniper-entry-test.ts",
     "stats:test": "chcp 65001 >nul && tsx scripts/stats-performance-test.ts",
     "intelligence:test": "chcp 65001 >nul && tsx scripts/intelligence-bots-live-test.ts",
+    "intelligence:impact-test": "chcp 65001 >nul && tsx scripts/intelligence-impact-live-validation.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },
