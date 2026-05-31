@@ -183,11 +183,11 @@ export class TelegramCommandCenter {
 
   private async handle(text: string): Promise<void> {
     const cleanText = normalizeButtonText(text);
-    if (this.pendingAction && !cleanText.startsWith("/") && !isMenuButton(cleanText)) return this.handlePendingInput(cleanText);
+    const button = buttonAction(cleanText);
+    if (this.pendingAction && !cleanText.startsWith("/") && (!button || isPairQueryText(cleanText))) return this.handlePendingInput(cleanText);
     const [rawCommand, rawPair] = cleanText.split(/\s+/, 2);
     const command = rawCommand.split("@")[0].toLowerCase();
     const pair = rawPair ? normalizePriorityPair(rawPair) : "";
-    const button = buttonAction(cleanText);
 
     if (["/start", "/menu"].includes(command) || button === "menu" || button === "back") return this.notifier.send(mainMenuText(), mainMenuKeyboard());
     if (button === "signals") return this.sendTopSetups();
@@ -1328,6 +1328,10 @@ function buttonAction(text: string): ButtonAction | null {
     ["aggressive", ["aggressive"]]
   ];
   return aliases.find(([, names]) => names.includes(stripped))?.[0] ?? null;
+}
+
+function isPairQueryText(text: string) {
+  return /^[a-z0-9]{2,30}$/i.test(text);
 }
 
 function riskModeFromButton(button: "conservative" | "balanced" | "aggressive"): RiskMode {
