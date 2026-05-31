@@ -4,7 +4,7 @@ import type { Candle } from "./types";
 import { config } from "./config";
 import { logger } from "./logger";
 
-const BYBIT = process.env.BYBIT_REST_URL ?? (process.env.VERCEL ? "https://api.bytick.com" : "https://api.bybit.com");
+const BYBIT = process.env.BYBIT_REST_URL ?? (process.env.VERCEL ? "https://api.bybit.kz" : "https://api.bybit.com");
 const OKX = "https://www.okx.com";
 const BINANCE = "https://api.binance.com";
 const KUCOIN = "https://api.kucoin.com";

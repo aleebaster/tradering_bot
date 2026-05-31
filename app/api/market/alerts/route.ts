@@ -54,7 +54,7 @@ type EngineSignal = {
 };
 
 const notified = new Map<string, number>();
-const bybitRestUrl = process.env.BYBIT_REST_URL ?? (process.env.VERCEL ? "https://api.bytick.com" : "https://api.bybit.com");
+const bybitRestUrl = process.env.BYBIT_REST_URL ?? (process.env.VERCEL ? "https://api.bybit.kz" : "https://api.bybit.com");
 
 export async function GET() {
   try {
