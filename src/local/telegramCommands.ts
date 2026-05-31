@@ -7,10 +7,11 @@ import { addPriorityPair, loadPriorityWatchlist, normalizePriorityPair, removePr
 import { loadTelegramSettings, updateTelegramSettings, type MaxLeverage, type RiskMode } from "./telegramSettings";
 import { tradeStatsText } from "./tradeMemory";
 import { learningStatusText, resetLearning } from "./learning";
+import { analyzeBybitNewToken, formatNewTokenCard, formatNewTokenWatch, scanBybitNewTokens } from "./newTokenScanner";
 import { logger } from "./logger";
 import type { Signal } from "./types";
 
-type PendingAction = "signal" | "watch" | "unwatch" | "balance";
+type PendingAction = "signal" | "watch" | "unwatch" | "balance" | "newsignal";
 type TelegramUpdate = {
   update_id: number;
   message?: { text?: string; chat?: { id?: number | string } };
@@ -119,6 +120,7 @@ export class TelegramCommandCenter {
     if (sameButton(cleanText, "🔥 Найкращі сигнали") || sameButton(cleanText, "🔥 Топ Сетапи") || sameButton(cleanText, "🔄 Оновити Сигнали")) return this.sendTopSetups();
     if (sameButton(cleanText, "🟢 Активні угоди") || sameButton(cleanText, "📂 Позиції") || sameButton(cleanText, "🔄 Оновити Позиції")) return this.sendPositions();
     if (sameButton(cleanText, "📊 Статистика")) return this.notifier.send(tradeStatsText(), mainMenuKeyboard());
+    if (sameButton(cleanText, "🚀 New Tokens")) return this.sendNewTokens();
     if (sameButton(cleanText, "📄 Мій список")) return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
     if (sameButton(cleanText, "🔴 Моніторинг")) return this.sendMonitoring();
     if (sameButton(cleanText, "📈 Ринок") || sameButton(cleanText, "🔄 Оновити Ринок")) return this.notifier.send(marketText(), marketActionsKeyboard());
@@ -151,6 +153,11 @@ export class TelegramCommandCenter {
       return this.notifier.send(paperStatsText(), settingsKeyboard());
     }
     if (command === "/paperstats") return this.notifier.send(paperMemoryStatsText(), mainMenuKeyboard());
+    if (command === "/newtokens" || command === "/newwatch") return this.sendNewTokens();
+    if (command === "/newsignal") {
+      if (!pair) return this.askPair("newsignal");
+      return this.sendNewSignal(pair);
+    }
 
     if (command === "/watch") {
       if (!pair) return this.askPair("watch");
@@ -180,7 +187,7 @@ export class TelegramCommandCenter {
   private async askPair(action: PendingAction): Promise<void> {
     this.pendingAction = action;
     if (action === "balance") return this.notifier.send(["💰 Баланс", "", `Поточний баланс: ${loadTelegramSettings().balanceUsdt} USDT`, "", "Введіть новий баланс у USDT:", "Наприклад: 5"].join("\n"), backKeyboard());
-    const title = action === "signal" ? "аналізу" : action === "watch" ? "додавання" : "видалення";
+    const title = action === "newsignal" ? "new-token аналізу" : action === "signal" ? "аналізу" : action === "watch" ? "додавання" : "видалення";
     const question = action === "unwatch" ? "Яку пару видалити?" : "Введіть пару:";
     return this.notifier.send([question, "", "Приклади:", "BTCUSDT", "ETHUSDT", "SOLUSDT", "AIGENSYNUSDT", "", `Режим: ${title}`].join("\n"), backKeyboard());
   }
@@ -193,7 +200,44 @@ export class TelegramCommandCenter {
     if (!pair || pair.length < 6) return this.notifier.send("Пара не розпізнана. Приклад: BTCUSDT", mainMenuKeyboard());
     if (action === "watch") return this.handle(`/watch ${pair}`);
     if (action === "unwatch") return this.handle(`/unwatch ${pair}`);
+    if (action === "newsignal") return this.handle(`/newsignal ${pair}`);
     return this.handle(`/signal ${pair}`);
+  }
+
+  private async sendNewTokens(): Promise<void> {
+    if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send("🚀 NEW TOKENS WATCH\n\nТестовий режим: Bybit scan skipped.", signalActionsKeyboard());
+    await this.notifier.send("⏳ Сканую Bybit Futures new listings з hard filters...", signalActionsKeyboard());
+    const items = await scanBybitNewTokens(5).catch((error) => {
+      logger.warn({ err: error }, "Bybit new token scan failed");
+      return [];
+    });
+    return this.notifier.send(formatNewTokenWatch(items), signalActionsKeyboard());
+  }
+
+  private async sendNewSignal(pair: string): Promise<void> {
+    if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send(`🚀 NEW TOKEN ANALYSIS\n\n${pair}\n\nТестовий режим: Bybit scan skipped.`, signalQuickActions(pair));
+    await this.notifier.send(`⏳ Аналізую new token ${pair} тільки через Bybit Futures...`, signalActionsKeyboard());
+    const item = await analyzeBybitNewToken(pair).catch((error) => ({
+      symbol: pair,
+      status: "REJECTED" as const,
+      side: "WAIT" as const,
+      score: 0,
+      listedDays: null,
+      turnover24h: 0,
+      spreadPct: 1,
+      depthUsdt: 0,
+      confirmations: 0,
+      btcStable: false,
+      entryStatus: "NO_TRADE" as const,
+      entry: [0, 0] as [number, number],
+      stopLoss: 0,
+      takeProfit: [0, 0, 0] as [number, number, number],
+      leverage: "x2" as const,
+      reasons: ["Bybit Futures only"],
+      waitingFor: ["quality liquidity", "BTC stable", "retest", "sniper trigger"],
+      rejectionReason: error instanceof Error ? error.message : String(error)
+    }));
+    return this.notifier.send(formatNewTokenCard(item), signalQuickActions(pair));
   }
 
   private async setBalance(text: string): Promise<void> {
@@ -283,7 +327,7 @@ function mainMenuKeyboard(): TelegramReplyMarkup {
       [{ text: "📊 Сигнали" }, { text: "👀 Watchlist" }],
       [{ text: "📈 Ринок" }, { text: "₿ BTC Фільтр" }],
       [{ text: "🔥 Топ Сетапи" }, { text: "📂 Позиції" }],
-      [{ text: "📊 Статистика" }],
+      [{ text: "🚀 New Tokens" }, { text: "📊 Статистика" }],
       [{ text: "🧪 Діагностика" }, { text: "⚙️ Налаштування" }],
       [{ text: "📋 Меню" }]
     ],
@@ -296,6 +340,7 @@ function signalMenuKeyboard(): TelegramReplyMarkup {
   return {
     keyboard: [
       [{ text: "🔍 Аналіз пари" }],
+      [{ text: "🚀 New Tokens" }],
       [{ text: "🔥 Найкращі сигнали" }, { text: "🟢 Активні угоди" }],
       [{ text: "🔙 Назад" }]
     ],
@@ -417,7 +462,7 @@ function mainMenuText() {
     "📋 Головне меню",
     "",
     "Обери дію кнопками нижче.",
-    "Команди також працюють: /signal, /watch, /top, /market, /btc."
+    "Команди також працюють: /signal, /watch, /top, /newtokens, /market, /btc."
   ].join("\n");
 }
 
@@ -464,6 +509,9 @@ function helpText() {
     "/unwatch AIGENSYNUSDT — прибрати з watchlist",
     "/watchlist — список пар",
     "/top — найкращі сетапи зараз",
+    "/newtokens — Bybit Futures new-token watch",
+    "/newsignal TOKENUSDT — аналіз нового futures токена",
+    "/newwatch — якісні нові лістинги під моніторингом",
     "/market — стан ринку",
     "/btc — BTC фільтр",
     "/status — статус сканера",
@@ -659,7 +707,7 @@ function fullAnalysisText(pair: string) {
 
 function isMenuButton(text: string) {
   return new Set([
-    "📊 Сигнали", "👀 Watchlist", "📈 Ринок", "₿ BTC Фільтр", "🔥 Топ Сетапи", "📂 Позиції", "🧪 Діагностика", "⚙️ Налаштування", "📋 Меню", "🔙 Назад",
+    "📊 Сигнали", "👀 Watchlist", "📈 Ринок", "₿ BTC Фільтр", "🔥 Топ Сетапи", "📂 Позиції", "🚀 New Tokens", "🧪 Діагностика", "⚙️ Налаштування", "📋 Меню", "🔙 Назад",
     "🔍 Аналіз пари", "🔥 Найкращі сигнали", "🟢 Активні угоди", "➕ Додати пару", "📄 Мій список", "❌ Видалити пару", "🔴 Моніторинг",
     "🔄 Оновити Ринок", "🔄 Оновити Статус", "🔄 Оновити Сигнали", "🔄 Оновити Позиції", "📊 Аналіз",
     "💰 Баланс", "⚡ Плече", "🔔 Сповіщення", "📱 Telegram UX", "🎯 Risk mode", "x2", "x3", "x5", "Conservative", "Balanced", "Aggressive"

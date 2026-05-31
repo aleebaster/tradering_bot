@@ -204,7 +204,7 @@ function scoreSide(direction: 1 | -1, input: AnalysisInput) {
     btc: input.btcOk ? 8 : -16,
     volatility: volatilityOk ? 6 : -12,
     fakeBreakout: input.fakeBreakoutRisk.high ? -20 : 4,
-    regime: input.regime === "TRENDING" ? 8 : input.regime === "RANGING" ? -8 : input.regime === "VOLATILE" ? -10 : -18
+    regime: input.regime === "TRENDING" || input.regime === "BREAKOUT" ? 8 : input.regime === "SIDEWAYS" || input.regime === "RANGING" || input.regime === "LOW_VOLATILITY" ? -8 : input.regime === "HIGH_VOLATILITY" || input.regime === "VOLATILE" ? -10 : -18
   };
   const score = Math.round(Math.max(0, Math.min(100, Object.values(parts).reduce((sum, value) => sum + value, 0))));
   const reasons = [
@@ -319,7 +319,7 @@ function yes(value: boolean) {
 }
 
 function regimeUa(regime: MarketRegime) {
-  const map: Record<MarketRegime, string> = { TRENDING: "трендовий", RANGING: "боковий", EXPANSION: "розширення", COMPRESSION: "стиснення", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" };
+  const map: Record<MarketRegime, string> = { TRENDING: "трендовий", SIDEWAYS: "боковий", BREAKOUT: "breakout", REVERSAL: "reversal", HIGH_VOLATILITY: "висока волатильність", LOW_VOLATILITY: "низька волатильність", CHOPPY: "шумний", RANGING: "боковий", EXPANSION: "розширення", COMPRESSION: "стиснення", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" };
   return map[regime];
 }
 

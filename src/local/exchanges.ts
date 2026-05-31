@@ -69,6 +69,34 @@ function backoffDelay(attempt: number, url: string) {
 }
 
 export class ExchangeClient {
+  async bybitLinearInstrumentsDetailed(): Promise<Array<{ symbol: string; status: string; launchTime: number; quoteCoin: string; contractType: string }>> {
+    const out: Array<{ symbol: string; status: string; launchTime: number; quoteCoin: string; contractType: string }> = [];
+    let cursor = "";
+    for (let page = 0; page < 8; page++) {
+      const endpoint = `${BYBIT}/v5/market/instruments-info?category=linear&limit=1000${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+      const body = await json<{ retCode?: number; retMsg?: string; result?: { nextPageCursor?: string; list?: Array<{ symbol?: string; status?: string; launchTime?: string; quoteCoin?: string; contractType?: string }> } }>(endpoint);
+      const list = safeArray<{ symbol?: string; status?: string; launchTime?: string; quoteCoin?: string; contractType?: string }>(body.result?.list);
+      if (body.retCode !== 0 || !list.length) throw bybitDataError("Bybit linear instruments malformed", { endpoint, parsedData: body });
+      for (const row of list) {
+        if (!row.symbol || !row.status) continue;
+        out.push({ symbol: row.symbol, status: row.status, launchTime: Number(row.launchTime ?? 0), quoteCoin: row.quoteCoin ?? "", contractType: row.contractType ?? "" });
+      }
+      cursor = body.result?.nextPageCursor ?? "";
+      if (!cursor) break;
+    }
+    return out;
+  }
+
+  async bybitLinearTickers(): Promise<Array<{ symbol: string; lastPrice: number; bid1Price: number; ask1Price: number; turnover24h: number; volume24h: number; price24hPcnt: number }>> {
+    const endpoint = `${BYBIT}/v5/market/tickers?category=linear`;
+    const body = await json<{ retCode?: number; retMsg?: string; result?: { list?: Array<{ symbol?: string; lastPrice?: string; bid1Price?: string; ask1Price?: string; turnover24h?: string; volume24h?: string; price24hPcnt?: string }> } }>(endpoint);
+    const list = safeArray<{ symbol?: string; lastPrice?: string; bid1Price?: string; ask1Price?: string; turnover24h?: string; volume24h?: string; price24hPcnt?: string }>(body.result?.list);
+    if (body.retCode !== 0 || !list.length) throw bybitDataError("Bybit linear tickers malformed", { endpoint, parsedData: body });
+    return list
+      .filter((row) => typeof row.symbol === "string")
+      .map((row) => ({ symbol: row.symbol!, lastPrice: Number(row.lastPrice ?? 0), bid1Price: Number(row.bid1Price ?? 0), ask1Price: Number(row.ask1Price ?? 0), turnover24h: Number(row.turnover24h ?? 0), volume24h: Number(row.volume24h ?? 0), price24hPcnt: Number(row.price24hPcnt ?? 0) }));
+  }
+
   async bybitInstrumentSymbols(category: "linear" | "spot"): Promise<Set<string>> {
     const endpoint = `${BYBIT}/v5/market/instruments-info?category=${category}`;
     const body = await json<{ retCode?: number; retMsg?: string; result?: { list?: Array<{ symbol?: string; status?: string }> } }>(endpoint);
@@ -214,6 +242,23 @@ export class ExchangeClient {
     return bids + asks === 0 ? 0 : (bids - asks) / (bids + asks);
   }
 
+  async bybitOrderBookStats(symbol: string): Promise<{ spreadPct: number; depthUsdt: number; imbalance: number; spoofRisk: boolean }> {
+    const endpoint = `${BYBIT}/v5/market/orderbook?category=linear&symbol=${symbol}&limit=50`;
+    const body = await json<{ retCode?: number; retMsg?: string; result?: { b?: unknown; a?: unknown } }>(endpoint);
+    const bidRows = safeArray<unknown>(body.result?.b);
+    const askRows = safeArray<unknown>(body.result?.a);
+    if (body.retCode !== 0 || !bidRows.length || !askRows.length) throw bybitDataError("Bybit orderbook malformed", { endpoint, parsedData: body, symbol });
+    const bestBid = orderBookPrice(bidRows[0]);
+    const bestAsk = orderBookPrice(askRows[0]);
+    const bids = bidRows.reduce<number>((s, row) => s + orderBookValue(row), 0);
+    const asks = askRows.reduce<number>((s, row) => s + orderBookValue(row), 0);
+    const depthUsdt = bids + asks;
+    const imbalance = depthUsdt === 0 ? 0 : (bids - asks) / depthUsdt;
+    const largestBidShare = Math.max(...bidRows.map(orderBookValue)) / Math.max(bids, 1);
+    const largestAskShare = Math.max(...askRows.map(orderBookValue)) / Math.max(asks, 1);
+    return { spreadPct: bestBid > 0 && bestAsk > 0 ? (bestAsk - bestBid) / ((bestAsk + bestBid) / 2) : 1, depthUsdt, imbalance, spoofRisk: largestBidShare > 0.38 || largestAskShare > 0.38 || Math.abs(imbalance) > 0.72 };
+  }
+
   async fundingRate(symbol: string): Promise<number> {
     const endpoint = `${BYBIT}/v5/market/funding/history?category=linear&symbol=${symbol}&limit=1`;
     const body = await json<{ retCode?: number; retMsg?: string; result?: { list?: Array<{ fundingRate?: string }> } }>(endpoint);
@@ -354,6 +399,12 @@ function orderBookValue(row: unknown) {
   const price = Number(data[0]);
   const quantity = Number(data[1]);
   return Number.isFinite(price) && Number.isFinite(quantity) ? price * quantity : 0;
+}
+
+function orderBookPrice(row: unknown) {
+  const data = safeArray<string | number>(row);
+  const price = Number(data[0]);
+  return Number.isFinite(price) ? price : 0;
 }
 
 function bybitCacheKey(symbol: string, interval: string, category: string) {

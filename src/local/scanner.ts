@@ -584,6 +584,6 @@ function sideUa(side: Signal["side"]) {
 }
 
 function regimeUa(regime: Signal["marketRegime"]) {
-  const map: Record<Signal["marketRegime"], string> = { TRENDING: "трендовий", RANGING: "боковий", EXPANSION: "розширення", COMPRESSION: "стиснення", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" };
+  const map: Record<Signal["marketRegime"], string> = { TRENDING: "трендовий", SIDEWAYS: "боковий", BREAKOUT: "breakout", REVERSAL: "reversal", HIGH_VOLATILITY: "висока волатильність", LOW_VOLATILITY: "низька волатильність", CHOPPY: "шумний", RANGING: "боковий", EXPANSION: "розширення", COMPRESSION: "стиснення", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" };
   return map[regime];
 }

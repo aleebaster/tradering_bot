@@ -1,6 +1,6 @@
 export type Mode = "LOCAL_ONLY" | "HYBRID" | "OFFLINE_TEST";
 export type Side = "LONG" | "SHORT" | "BUY" | "NO_TRADE" | "WATCHLIST";
-export type MarketRegime = "TRENDING" | "RANGING" | "EXPANSION" | "COMPRESSION" | "VOLATILE" | "NEWS_DRIVEN" | "MANIPULATION_RISK";
+export type MarketRegime = "TRENDING" | "SIDEWAYS" | "BREAKOUT" | "REVERSAL" | "HIGH_VOLATILITY" | "LOW_VOLATILITY" | "CHOPPY" | "RANGING" | "EXPANSION" | "COMPRESSION" | "VOLATILE" | "NEWS_DRIVEN" | "MANIPULATION_RISK";
 export type SignalGrade = "A+" | "A" | "B" | "C" | "D";
 
 export interface Candle {

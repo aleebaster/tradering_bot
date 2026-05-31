@@ -208,9 +208,9 @@ function rankedPattern(state: LearningState, best: boolean) {
 }
 
 function regimeBucket(regime: MarketRegime): RegimeBucket {
-  if (regime === "TRENDING" || regime === "EXPANSION") return "trending";
-  if (regime === "RANGING") return "sideways";
-  if (regime === "VOLATILE" || regime === "NEWS_DRIVEN" || regime === "MANIPULATION_RISK") return "high_volatility";
+  if (regime === "TRENDING" || regime === "BREAKOUT" || regime === "EXPANSION") return "trending";
+  if (regime === "SIDEWAYS" || regime === "RANGING" || regime === "CHOPPY") return "sideways";
+  if (regime === "HIGH_VOLATILITY" || regime === "VOLATILE" || regime === "NEWS_DRIVEN" || regime === "MANIPULATION_RISK") return "high_volatility";
   return "low_volatility";
 }
 

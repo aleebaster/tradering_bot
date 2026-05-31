@@ -23,6 +23,8 @@ async function main() {
   await click(center, checks, "🔥 Найкращі сигнали", "Топ Сетапи");
   await click(center, checks, "📂 Позиції", "Активних угод");
   await click(center, checks, "📊 Статистика", "Trading Stats");
+  await click(center, checks, "🚀 New Tokens", "NEW TOKENS WATCH");
+  await click(center, checks, "/newsignal AIGENSYNUSDT", "NEW TOKEN ANALYSIS");
   await click(center, checks, "/learning", "Learning Mode");
   await click(center, checks, "/paperstats", "Paper Trade Memory");
   await click(center, checks, "👀 Watchlist", "Watchlist");
