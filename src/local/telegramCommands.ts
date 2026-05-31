@@ -5,6 +5,7 @@ import { signalQuickActions, TelegramNotifier, type TelegramReplyMarkup } from "
 import { paperStatsText, setPaperMode } from "./paperTrading";
 import { addPriorityPair, loadPriorityWatchlist, normalizePriorityPair, removePriorityPair } from "./watchlistStore";
 import { loadTelegramSettings, updateTelegramSettings, type MaxLeverage, type RiskMode } from "./telegramSettings";
+import { tradeStatsText } from "./tradeMemory";
 import { logger } from "./logger";
 import type { Signal } from "./types";
 
@@ -116,6 +117,7 @@ export class TelegramCommandCenter {
     if (sameButton(cleanText, "❌ Видалити пару")) return this.askPair("unwatch");
     if (sameButton(cleanText, "🔥 Найкращі сигнали") || sameButton(cleanText, "🔥 Топ Сетапи") || sameButton(cleanText, "🔄 Оновити Сигнали")) return this.sendTopSetups();
     if (sameButton(cleanText, "🟢 Активні угоди") || sameButton(cleanText, "📂 Позиції") || sameButton(cleanText, "🔄 Оновити Позиції")) return this.sendPositions();
+    if (sameButton(cleanText, "📊 Статистика")) return this.notifier.send(tradeStatsText(), mainMenuKeyboard());
     if (sameButton(cleanText, "📄 Мій список")) return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
     if (sameButton(cleanText, "🔴 Моніторинг")) return this.sendMonitoring();
     if (sameButton(cleanText, "📈 Ринок") || sameButton(cleanText, "🔄 Оновити Ринок")) return this.notifier.send(marketText(), marketActionsKeyboard());
@@ -136,6 +138,7 @@ export class TelegramCommandCenter {
     if (command === "/market") return this.notifier.send(marketText(), marketActionsKeyboard());
     if (command === "/btc") return this.notifier.send(btcText(), marketActionsKeyboard());
     if (command === "/positions") return this.sendPositions();
+    if (command === "/stats") return this.notifier.send(tradeStatsText(), mainMenuKeyboard());
     if (command === "/top") return this.sendTopSetups();
     if (command === "/watchlist") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
     if (command === "/paper") {
@@ -271,6 +274,7 @@ function mainMenuKeyboard(): TelegramReplyMarkup {
       [{ text: "📊 Сигнали" }, { text: "👀 Watchlist" }],
       [{ text: "📈 Ринок" }, { text: "₿ BTC Фільтр" }],
       [{ text: "🔥 Топ Сетапи" }, { text: "📂 Позиції" }],
+      [{ text: "📊 Статистика" }],
       [{ text: "🧪 Діагностика" }, { text: "⚙️ Налаштування" }],
       [{ text: "📋 Меню" }]
     ],
@@ -455,6 +459,7 @@ function helpText() {
     "/btc — BTC фільтр",
     "/status — статус сканера",
     "/positions — активні угоди",
+    "/stats — journal статистика",
     "/paper on — увімкнути paper trading",
     "/paper off — вимкнути paper trading",
     "/paper — статистика paper trading",

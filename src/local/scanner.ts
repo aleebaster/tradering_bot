@@ -10,6 +10,7 @@ import { recordLearningOutcome } from "./learning";
 import { loadPriorityWatchlist } from "./watchlistStore";
 import { recordPaperClose, recordPaperOpen } from "./paperTrading";
 import { notificationsEnabled } from "./telegramSettings";
+import { recordTradeMemory } from "./tradeMemory";
 
 type Broadcast = (payload: unknown) => void;
 
@@ -359,8 +360,10 @@ export class Scanner {
       const key = `${signal.id}-${action.stage}`;
       if (this.managementSent.has(key)) continue;
       this.managementSent.add(key);
-      if (action.stage === "TP3") { recordLearningOutcome(signal, "TP"); recordPaperClose(signal, "WIN", 3); }
-      if (action.stage === "SL") { recordLearningOutcome(signal, signal.fakeBreakout.risk ? "FAKE_BREAKOUT" : "SL"); recordPaperClose(signal, "LOSS", -1); }
+      if (action.stage === "TP1") recordTradeMemory(signal, "TP1", current);
+      if (action.stage === "TP2") recordTradeMemory(signal, "TP2", current);
+      if (action.stage === "TP3") { recordTradeMemory(signal, "TP3", current); recordLearningOutcome(signal, "TP"); recordPaperClose(signal, "WIN", 3); }
+      if (action.stage === "SL") { recordTradeMemory(signal, "SL", current); recordLearningOutcome(signal, signal.fakeBreakout.risk ? "FAKE_BREAKOUT" : "SL"); recordPaperClose(signal, "LOSS", -1); }
       logger.info({ symbol: signal.symbol, action: action.label, currentPrice: current, reasons: action.reasons }, "trade management alert");
       if (notificationsEnabled()) await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Не вдалося надіслати Telegram-сповіщення управління угодою"));
     }
