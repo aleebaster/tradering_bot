@@ -54,6 +54,7 @@ type EngineSignal = {
 };
 
 const notified = new Map<string, number>();
+const bybitRestUrl = process.env.BYBIT_REST_URL ?? (process.env.VERCEL ? "https://api.bytick.com" : "https://api.bybit.com");
 
 export async function GET() {
   try {
@@ -211,7 +212,7 @@ async function buildAlert(ticker: BinanceTicker): Promise<Alert | null> {
 }
 
 async function loadKlines(symbol: string) {
-  const res = await fetch(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=15&limit=96`, { next: { revalidate: 20 } });
+  const res = await fetch(`${bybitRestUrl}/v5/market/kline?category=linear&symbol=${symbol}&interval=15&limit=96`, { next: { revalidate: 20 } });
   if (!res.ok) throw new Error(`Bybit klines error ${symbol}`);
   const json = await res.json() as { result?: { list?: string[][] } };
   return (json.result?.list ?? []).reverse().map((r) => [Number(r[0]), r[1], r[2], r[3], r[4], r[5], Number(r[0]), r[6] ?? "0", 0, "0", "0", "0"] as BinanceKline);

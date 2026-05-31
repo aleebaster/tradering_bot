@@ -4,7 +4,7 @@ import type { Candle } from "./types";
 import { config } from "./config";
 import { logger } from "./logger";
 
-const BYBIT = "https://api.bybit.com";
+const BYBIT = process.env.BYBIT_REST_URL ?? (process.env.VERCEL ? "https://api.bytick.com" : "https://api.bybit.com");
 const OKX = "https://www.okx.com";
 const BINANCE = "https://api.binance.com";
 const KUCOIN = "https://api.kucoin.com";
@@ -53,12 +53,12 @@ async function throttle(url: string) {
 }
 
 function cacheTtl(url: string) {
-  if (url.includes("api.bybit.com/v5/market/kline")) return 90_000;
-  if (url.includes("api.bybit.com/v5/market/instruments-info")) return 15 * 60_000;
-  if (url.includes("api.bybit.com/v5/market/tickers")) return 60_000;
-  if (url.includes("api.bybit.com/v5/market/orderbook")) return 20_000;
-  if (url.includes("api.bybit.com/v5/market/funding")) return 5 * 60_000;
-  if (url.includes("api.bybit.com/v5/market/open-interest")) return 60_000;
+  if (url.includes("/v5/market/kline")) return 90_000;
+  if (url.includes("/v5/market/instruments-info")) return 15 * 60_000;
+  if (url.includes("/v5/market/tickers")) return 60_000;
+  if (url.includes("/v5/market/orderbook")) return 20_000;
+  if (url.includes("/v5/market/funding")) return 5 * 60_000;
+  if (url.includes("/v5/market/open-interest")) return 60_000;
   if (url.includes("api.binance.com")) return 45_000;
   if (url.includes("api.kucoin.com/api/v1/market/candles")) return 60_000;
   if (url.includes("www.okx.com/api/v5/market/candles")) return 60_000;
