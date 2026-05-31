@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { loadTelegramSettings, maxLeverageNumber, riskMultiplier } from "./telegramSettings";
 import type { MarketRegime, PositionSizing, Side } from "./types";
 
 const ALLOWED_LEVERAGE = [2, 3, 5] as const;
@@ -27,7 +28,7 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
   const priceRiskPercent = Math.abs(averageEntry - input.stopLoss) / averageEntry * 100;
   if (!Number.isFinite(priceRiskPercent) || priceRiskPercent <= 0) return undefined;
 
-  const balanceUsdt = config.USER_BALANCE_USDT;
+  const balanceUsdt = loadTelegramSettings().balanceUsdt;
   const maxRiskPercent = maxRiskPercentFor(input.score);
   const leverage = chooseLeverage(input, priceRiskPercent, maxRiskPercent);
   const maxLossUsdt = balanceUsdt * maxRiskPercent / 100;
@@ -66,6 +67,7 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
 
 function chooseLeverage(input: PositionSizingInput, priceRiskPercent: number, maxRiskPercent: number) {
   let leverage: typeof ALLOWED_LEVERAGE[number] = input.score >= 92 ? 5 : input.score >= 87 ? 3 : 2;
+  leverage = Math.min(leverage, maxLeverageNumber()) as typeof ALLOWED_LEVERAGE[number];
   if (config.smallBalanceGrowthMode && input.score < 92) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];
   if (input.score >= 85 && input.score < 90) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];
   if ((input.volatilityPct ?? 0) > 0.018 || input.marketRegime === "VOLATILE" || input.marketRegime === "NEWS_DRIVEN") leverage = 2;
@@ -78,10 +80,11 @@ function chooseLeverage(input: PositionSizingInput, priceRiskPercent: number, ma
 }
 
 function maxRiskPercentFor(score: number) {
-  if (!config.smallBalanceGrowthMode) return score >= 90 ? 4 : 3;
-  if (score >= 94) return 2;
-  if (score >= 90) return 1.5;
-  return 1.25;
+  const multiplier = riskMultiplier();
+  if (!config.smallBalanceGrowthMode) return (score >= 90 ? 4 : 3) * multiplier;
+  if (score >= 94) return 2 * multiplier;
+  if (score >= 90) return 1.5 * multiplier;
+  return 1.25 * multiplier;
 }
 
 function uniqueLeverage(value: number, index: number, arr: number[]) {

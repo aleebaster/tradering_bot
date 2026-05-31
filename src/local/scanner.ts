@@ -9,6 +9,7 @@ import { TelegramNotifier } from "./telegram";
 import { recordLearningOutcome } from "./learning";
 import { loadPriorityWatchlist } from "./watchlistStore";
 import { recordPaperClose, recordPaperOpen } from "./paperTrading";
+import { notificationsEnabled } from "./telegramSettings";
 
 type Broadcast = (payload: unknown) => void;
 
@@ -133,7 +134,7 @@ export class Scanner {
               break;
             }
             this.markSignalSent(signal);
-            await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Не вдалося надіслати сигнал Telegram"));
+            if (notificationsEnabled()) await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Не вдалося надіслати сигнал Telegram"));
             recordPaperOpen(signal);
           }
           break;
@@ -361,7 +362,7 @@ export class Scanner {
       if (action.stage === "TP3") { recordLearningOutcome(signal, "TP"); recordPaperClose(signal, "WIN", 3); }
       if (action.stage === "SL") { recordLearningOutcome(signal, signal.fakeBreakout.risk ? "FAKE_BREAKOUT" : "SL"); recordPaperClose(signal, "LOSS", -1); }
       logger.info({ symbol: signal.symbol, action: action.label, currentPrice: current, reasons: action.reasons }, "trade management alert");
-      await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Не вдалося надіслати Telegram-сповіщення управління угодою"));
+      if (notificationsEnabled()) await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Не вдалося надіслати Telegram-сповіщення управління угодою"));
     }
   }
 
@@ -397,7 +398,7 @@ export class Scanner {
           this.activatedWatchlist.add(key);
           recordSignal(activated);
           this.markSignalSent(activated);
-          await this.notifier.setupActivated(activated, activationReasons(activated));
+          if (notificationsEnabled()) await this.notifier.setupActivated(activated, activationReasons(activated));
           recordPaperOpen(activated);
           continue;
         }

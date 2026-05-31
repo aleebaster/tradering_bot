@@ -4,9 +4,10 @@ import { state } from "./state";
 import { signalQuickActions, TelegramNotifier, type TelegramReplyMarkup } from "./telegram";
 import { paperStatsText, setPaperMode } from "./paperTrading";
 import { addPriorityPair, loadPriorityWatchlist, normalizePriorityPair, removePriorityPair } from "./watchlistStore";
+import { loadTelegramSettings, updateTelegramSettings, type MaxLeverage, type RiskMode } from "./telegramSettings";
 import type { Signal } from "./types";
 
-type PendingAction = "signal" | "watch" | "unwatch";
+type PendingAction = "signal" | "watch" | "unwatch" | "balance";
 type TelegramUpdate = {
   update_id: number;
   message?: { text?: string; chat?: { id?: number | string } };
@@ -60,7 +61,7 @@ export class TelegramCommandCenter {
   }
 
   private async handle(text: string): Promise<void> {
-    if (this.pendingAction && !text.startsWith("/") && !isMenuButton(text)) return this.handlePairInput(text);
+    if (this.pendingAction && !text.startsWith("/") && !isMenuButton(text)) return this.handlePendingInput(text);
     const [rawCommand, rawPair] = text.split(/\s+/, 2);
     const command = rawCommand.split("@")[0].toLowerCase();
     const pair = rawPair ? normalizePriorityPair(rawPair) : "";
@@ -75,12 +76,17 @@ export class TelegramCommandCenter {
     if (text === "🔥 Найкращі сигнали" || text === "🔥 Топ Сетапи") return this.notifier.send(topText(), mainMenuKeyboard());
     if (text === "🟢 Активні угоди" || text === "📂 Позиції") return this.notifier.send(positionsText(), mainMenuKeyboard());
     if (text === "📄 Мій список") return this.notifier.send(watchlistText(), watchlistMenuKeyboard());
-    if (text === "🔴 Активувати моніторинг") return this.notifier.send(monitoringText(), watchlistMenuKeyboard());
-    if (text === "🟢 Setup Activated") return this.notifier.send(setupActivatedListText(), watchlistMenuKeyboard());
+    if (text === "🔴 Моніторинг") return this.notifier.send(monitoringText(), watchlistMenuKeyboard());
     if (text === "📈 Ринок") return this.notifier.send(marketText(), mainMenuKeyboard());
     if (text === "₿ BTC Фільтр") return this.notifier.send(btcText(), mainMenuKeyboard());
     if (text === "🧪 Діагностика") return this.notifier.send(diagnosticsText(), mainMenuKeyboard());
-    if (text === "💰 Баланс (5 USDT)" || text === "⚡ Максимальне плече" || text === "🔔 Сповіщення" || text === "📱 Telegram UX" || text === "🎯 Risk mode") return this.notifier.send(settingsDetailText(text), settingsKeyboard());
+    if (text === "💰 Баланс") return this.askPair("balance");
+    if (text === "⚡ Плече") return this.notifier.send(leverageText(), leverageKeyboard());
+    if (text === "x2" || text === "x3" || text === "x5") return this.setLeverage(text);
+    if (text === "🔔 Сповіщення") return this.toggleNotifications();
+    if (text === "📱 Telegram UX") return this.notifier.send(settingsDetailText(text), settingsKeyboard());
+    if (text === "🎯 Risk mode") return this.notifier.send(riskModeText(), riskModeKeyboard());
+    if (text === "Conservative" || text === "Balanced" || text === "Aggressive") return this.setRiskMode(text);
 
     if (command === "/help") return this.notifier.send(helpText(), mainMenuKeyboard());
     if (command === "/status") return this.notifier.send(statusText(), mainMenuKeyboard());
@@ -99,8 +105,8 @@ export class TelegramCommandCenter {
 
     if (command === "/watch") {
       if (!pair) return this.askPair("watch");
-      const pairs = addPriorityPair(pair);
-      return this.notifier.send(["✅ Додано в моніторинг", "", `Моніторинг: ${pair}`, "", "Бот шукатиме найкращу точку входу кожні 10-15 секунд.", "", `Активний watchlist: ${pairs.join(", ")}`].join("\n"), watchlistMenuKeyboard());
+      addPriorityPair(pair);
+      return this.notifier.send([`✅ ${pair} додано до watchlist`, "", monitoringStatusFor(pair)].join("\n"), watchlistMenuKeyboard());
     }
 
     if (command === "/unwatch") {
@@ -113,7 +119,7 @@ export class TelegramCommandCenter {
       if (!pair) return this.askPair("signal");
       addPriorityPair(pair);
       startOneShotAnalysis(pair);
-      return this.notifier.send(["✅ Аналіз запущено", "", pair, "", "Пара додана в постійний моніторинг.", "Бот повідомить тільки коли з'явиться валідний сетап."].join("\n"), signalQuickActions(pair));
+      return this.notifier.send(signalAnalysisText(pair), signalQuickActions(pair));
     }
 
     return this.notifier.send("Невідома дія. Натисни 📋 Меню", mainMenuKeyboard());
@@ -121,18 +127,44 @@ export class TelegramCommandCenter {
 
   private async askPair(action: PendingAction): Promise<void> {
     this.pendingAction = action;
+    if (action === "balance") return this.notifier.send(["💰 Баланс", "", `Поточний баланс: ${loadTelegramSettings().balanceUsdt} USDT`, "", "Введіть новий баланс у USDT:", "Наприклад: 5"].join("\n"), backKeyboard());
     const title = action === "signal" ? "аналізу" : action === "watch" ? "додавання" : "видалення";
-    return this.notifier.send(["Введіть пару", "", "Приклади:", "BTCUSDT", "ETHUSDT", "SOLUSDT", "AIGENSYNUSDT", "", `Режим: ${title}`].join("\n"), backKeyboard());
+    const question = action === "unwatch" ? "Яку пару видалити?" : "Введіть пару:";
+    return this.notifier.send([question, "", "Приклади:", "BTCUSDT", "ETHUSDT", "SOLUSDT", "AIGENSYNUSDT", "", `Режим: ${title}`].join("\n"), backKeyboard());
   }
 
-  private async handlePairInput(text: string): Promise<void> {
+  private async handlePendingInput(text: string): Promise<void> {
     const action = this.pendingAction;
     this.pendingAction = null;
+    if (action === "balance") return this.setBalance(text);
     const pair = normalizePriorityPair(text);
     if (!pair || pair.length < 6) return this.notifier.send("Пара не розпізнана. Приклад: BTCUSDT", mainMenuKeyboard());
     if (action === "watch") return this.handle(`/watch ${pair}`);
     if (action === "unwatch") return this.handle(`/unwatch ${pair}`);
     return this.handle(`/signal ${pair}`);
+  }
+
+  private async setBalance(text: string): Promise<void> {
+    const balance = Number(text.replace(",", "."));
+    if (!Number.isFinite(balance) || balance <= 0) return this.notifier.send("Баланс не розпізнано. Приклад: 5", settingsKeyboard());
+    const settings = updateTelegramSettings({ balanceUsdt: Math.round(balance * 100) / 100 });
+    return this.notifier.send(["✅ Баланс оновлено", "", `Поточний баланс: ${settings.balanceUsdt} USDT`].join("\n"), settingsKeyboard());
+  }
+
+  private async setLeverage(value: MaxLeverage): Promise<void> {
+    const settings = updateTelegramSettings({ maxLeverage: value });
+    return this.notifier.send(["✅ Максимальне плече оновлено", "", `Поточний ліміт: ${settings.maxLeverage}`, "x5 MAX збережено системно."].join("\n"), settingsKeyboard());
+  }
+
+  private async toggleNotifications(): Promise<void> {
+    const current = loadTelegramSettings();
+    const settings = updateTelegramSettings({ notifications: !current.notifications });
+    return this.notifier.send(["🔔 Сповіщення", "", `Статус: ${settings.notifications ? "ON" : "OFF"}`, "Командні відповіді залишаються активними."].join("\n"), settingsKeyboard());
+  }
+
+  private async setRiskMode(value: RiskMode): Promise<void> {
+    const settings = updateTelegramSettings({ riskMode: value });
+    return this.notifier.send(["✅ Risk mode оновлено", "", `Поточний режим: ${settings.riskMode}`].join("\n"), settingsKeyboard());
   }
 
   private async handleCallback(id: string, data: string): Promise<void> {
@@ -197,8 +229,7 @@ function watchlistMenuKeyboard(): TelegramReplyMarkup {
   return {
     keyboard: [
       [{ text: "➕ Додати пару" }, { text: "📄 Мій список" }],
-      [{ text: "❌ Видалити пару" }, { text: "🔴 Активувати моніторинг" }],
-      [{ text: "🟢 Setup Activated" }],
+      [{ text: "❌ Видалити пару" }, { text: "🔴 Моніторинг" }],
       [{ text: "🔙 Назад" }]
     ],
     resize_keyboard: true,
@@ -209,7 +240,7 @@ function watchlistMenuKeyboard(): TelegramReplyMarkup {
 function settingsKeyboard(): TelegramReplyMarkup {
   return {
     keyboard: [
-      [{ text: "💰 Баланс (5 USDT)" }, { text: "⚡ Максимальне плече" }],
+      [{ text: "💰 Баланс" }, { text: "⚡ Плече" }],
       [{ text: "🔔 Сповіщення" }, { text: "📱 Telegram UX" }],
       [{ text: "🎯 Risk mode" }],
       [{ text: "🔙 Назад" }]
@@ -217,6 +248,14 @@ function settingsKeyboard(): TelegramReplyMarkup {
     resize_keyboard: true,
     is_persistent: true
   };
+}
+
+function leverageKeyboard(): TelegramReplyMarkup {
+  return { keyboard: [[{ text: "x2" }, { text: "x3" }, { text: "x5" }], [{ text: "🔙 Назад" }]], resize_keyboard: true, one_time_keyboard: true };
+}
+
+function riskModeKeyboard(): TelegramReplyMarkup {
+  return { keyboard: [[{ text: "Conservative" }, { text: "Balanced" }], [{ text: "Aggressive" }], [{ text: "🔙 Назад" }]], resize_keyboard: true, one_time_keyboard: true };
 }
 
 function backKeyboard(): TelegramReplyMarkup {
@@ -242,25 +281,28 @@ function watchlistMenuText() {
 
 function monitoringText() {
   const pairs = loadPriorityWatchlist();
-  return ["🔴 Моніторинг активний", "", "Бот перевіряє watchlist кожні 10-15 секунд.", "Сигнал прийде тільки після підтвердження setup.", "", pairs.length ? `Пари: ${pairs.join(", ")}` : "Watchlist порожній"].join("\n");
-}
-
-function setupActivatedListText() {
-  const active = state.activeSignals.filter((signal) => signal.entryStatus === "ENTER_NOW" && signal.side !== "NO_TRADE");
-  if (!active.length) return "🟢 Setup Activated\n\nЗараз немає активованих setup.";
-  return ["🟢 Setup Activated", "", ...active.slice(0, 8).map(signalSummary)].join("\n\n");
+  if (!pairs.length) return "👀 Моніторинг\n\nWatchlist порожній. Натисни ➕ Додати пару.";
+  return ["👀 Моніторинг активний", "", ...pairs.map(monitoringStatusFor)].join("\n\n");
 }
 
 function settingsText() {
-  return ["⚙️ Налаштування", "", "💰 Баланс: 5 USDT", "⚡ Максимальне плече: x5 MAX", "🔔 Сповіщення: увімкнено", "📱 Telegram UX: кнопкове меню", "🎯 Risk mode: малий баланс / контроль ризику"].join("\n");
+  const settings = loadTelegramSettings();
+  return ["⚙️ Налаштування", "", `💰 Баланс: ${settings.balanceUsdt} USDT`, `⚡ Плече: ${settings.maxLeverage} MAX`, `🔔 Сповіщення: ${settings.notifications ? "ON" : "OFF"}`, "📱 Telegram UX: кнопкове меню", `🎯 Risk mode: ${settings.riskMode}`].join("\n");
 }
 
 function settingsDetailText(button: string) {
-  if (button.startsWith("💰")) return "💰 Баланс\n\nПоточний баланс для розрахунків: 5 USDT";
-  if (button.startsWith("⚡")) return "⚡ Максимальне плече\n\nx5 MAX\nРекомендовано: x2-x3";
+  const settings = loadTelegramSettings();
   if (button.startsWith("🔔")) return "🔔 Сповіщення\n\nУвімкнено тільки якісні сигнали, setup activation та lifecycle alerts.";
   if (button.startsWith("📱")) return "📱 Telegram UX\n\nУвімкнено чисте кнопкове меню, inline quick actions та короткий формат сигналів.";
-  return "🎯 Risk mode\n\nФокус: менше сигналів, кращі входи, контроль ризику для малого балансу.";
+  return `⚙️ Налаштування\n\nБаланс: ${settings.balanceUsdt} USDT\nПлече: ${settings.maxLeverage}\nСповіщення: ${settings.notifications ? "ON" : "OFF"}\nRisk mode: ${settings.riskMode}`;
+}
+
+function leverageText() {
+  return ["⚡ Плече", "", `Поточний ліміт: ${loadTelegramSettings().maxLeverage}`, "", "Обери максимальне плече:", "x2", "x3", "x5"].join("\n");
+}
+
+function riskModeText() {
+  return ["🎯 Risk mode", "", `Поточний режим: ${loadTelegramSettings().riskMode}`, "", "Conservative — найменший ризик", "Balanced — стандартний ризик", "Aggressive — більше ризику тільки для сильних setup"].join("\n");
 }
 
 function helpText() {
@@ -332,7 +374,7 @@ function btcText() {
 }
 
 function positionsText() {
-  if (!state.activeSignals.length) return "📦 Активні угоди\n\nНемає активних угод.";
+  if (!state.activeSignals.length) return "📂 Активних угод немає.";
   return ["📂 Позиції", "", ...state.activeSignals.slice(0, 8).map(positionSummary)].join("\n\n");
 }
 
@@ -345,6 +387,23 @@ function topText() {
 function watchlistText() {
   const pairs = loadPriorityWatchlist();
   return ["👁 Watchlist", "", ...(pairs.length ? pairs.map((pair) => `✅ ${pair}`) : ["Watchlist порожній"])].join("\n");
+}
+
+function signalAnalysisText(pair: string) {
+  const signal = findSignal(pair);
+  if (!signal) return ["🔍 Реальний аналіз запущено", "", pair, "", "Пара додана в постійний моніторинг.", "Live scanner перевіряє Bybit і поверне setup після підтвердження.", "", monitoringStatusFor(pair)].join("\n");
+  return ["🔍 Аналіз пари", "", signalSummary(signal), "", `Ймовірність: ${signal.winProbability}%`, `Статус: ${signal.management}`, "", `BTC: ${signal.btcStable ? "стабільний" : "нестабільний"}`, `Ринок: ${signal.marketRegime}`].join("\n");
+}
+
+function monitoringStatusFor(pair: string) {
+  const signal = findSignal(pair);
+  if (!signal) return [pair, "", "Статус:", "⏳ Очікуємо дані scanner", "", "Чекаємо кращу точку входу."].join("\n");
+  const side = signal.side === "WATCHLIST" ? "⚠️ WATCHLIST ONLY" : signal.side === "NO_TRADE" ? "❌ NO TRADE" : `${signal.side} ${signal.score}%`;
+  return [pair, "", "Статус:", side, "", signal.side === "WATCHLIST" ? "Чекаємо кращу точку входу." : signal.management].join("\n");
+}
+
+function findSignal(pair: string) {
+  return [...state.activeSignals, ...state.watchlist, ...state.history].find((item) => item.symbol === pair);
 }
 
 function signalSummary(signal: Signal) {
@@ -395,7 +454,7 @@ function fundingText(signal: Signal) {
 }
 
 function fullAnalysisText(pair: string) {
-  const signal = [...state.activeSignals, ...state.watchlist, ...state.history].find((item) => item.symbol === pair);
+  const signal = findSignal(pair);
   if (!signal) return [`📊 Повний аналіз — ${pair}`, "", "Даних ще немає.", "Натисни 🔄 Оновити або запусти аналіз пари."].join("\n");
   return [
     `📊 Повний аналіз — ${pair}`,
@@ -415,8 +474,8 @@ function fullAnalysisText(pair: string) {
 function isMenuButton(text: string) {
   return new Set([
     "📊 Сигнали", "👀 Watchlist", "📈 Ринок", "₿ BTC Фільтр", "🔥 Топ Сетапи", "📂 Позиції", "🧪 Діагностика", "⚙️ Налаштування", "📋 Меню", "🔙 Назад",
-    "🔍 Аналіз пари", "🔥 Найкращі сигнали", "🟢 Активні угоди", "➕ Додати пару", "📄 Мій список", "❌ Видалити пару", "🔴 Активувати моніторинг", "🟢 Setup Activated",
-    "💰 Баланс (5 USDT)", "⚡ Максимальне плече", "🔔 Сповіщення", "📱 Telegram UX", "🎯 Risk mode"
+    "🔍 Аналіз пари", "🔥 Найкращі сигнали", "🟢 Активні угоди", "➕ Додати пару", "📄 Мій список", "❌ Видалити пару", "🔴 Моніторинг",
+    "💰 Баланс", "⚡ Плече", "🔔 Сповіщення", "📱 Telegram UX", "🎯 Risk mode", "x2", "x3", "x5", "Conservative", "Balanced", "Aggressive"
   ]).has(text);
 }
 
