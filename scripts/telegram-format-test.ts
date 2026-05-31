@@ -22,14 +22,9 @@ const longMessage = [
   "🎯 TP3:",
   "107200",
   "",
-  "⚡ Плече:",
-  "x3",
+  "⚡ x3",
   "",
-  "💰 Баланс:",
-  "5 USDT",
-  "",
-  "📦 Вхід:",
-  "15 USDT",
+  "💰 5 USDT → 15 USDT",
   "",
   "🟠 Беззбиток:",
   "Після TP1"
@@ -55,14 +50,9 @@ const shortMessage = [
   "🎯 TP3:",
   "102400",
   "",
-  "⚡ Плече:",
-  "x3",
+  "⚡ x3",
   "",
-  "💰 Баланс:",
-  "5 USDT",
-  "",
-  "📦 Вхід:",
-  "15 USDT",
+  "💰 5 USDT → 15 USDT",
   "",
   "🟠 Беззбиток:",
   "Після TP1"
@@ -80,7 +70,7 @@ async function main() {
     checks: {
       telegramDelivery: true,
       emojis: "🟢 🔴 ✅ 📌 📍 🛑 🎯 ⚡",
-      ukrainianText: "Вхід / SL / Плече / Баланс / Беззбиток",
+      ukrainianText: "Вхід / SL / Плече / Баланс / Беззбиток / quick format",
       readableInSeconds: "3-5"
     }
   }, null, 2));

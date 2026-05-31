@@ -67,8 +67,8 @@ export class TelegramNotifier {
 export function signalQuickActions(symbol: string): TelegramReplyMarkup {
   return {
     inline_keyboard: [
-      [{ text: "🟢 Моніторити", callback_data: `watch:${symbol}` }, { text: "🔄 Оновити", callback_data: `refresh:${symbol}` }],
-      [{ text: "❌ Видалити", callback_data: `remove:${symbol}` }, { text: "📊 Повний аналіз", callback_data: `full:${symbol}` }]
+      [{ text: "🟢 Моніторити", callback_data: `watch:${symbol}` }, { text: "🔄 Оновити Аналіз", callback_data: `refresh:${symbol}` }],
+      [{ text: "📊 Повний Аналіз", callback_data: `full:${symbol}` }, { text: "❌ Видалити", callback_data: `remove:${symbol}` }]
     ]
   };
 }
@@ -105,14 +105,9 @@ function formatSignal(signal: Signal) {
     "🎯 TP3:",
     fmt(signal.takeProfit[2]),
     "",
-    "⚡ Плече:",
-    leverageText(signal),
+    `⚡ ${leverageText(signal)}`,
     "",
-    "💰 Баланс:",
-    `${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT`,
-    "",
-    "📦 Вхід:",
-    sizing ? `${sizing.positionSizeUsdt} USDT` : "після підтвердження входу",
+    `💰 ${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT → ${sizing ? `${sizing.positionSizeUsdt} USDT` : "після підтвердження"}`,
     "",
     "🟠 Беззбиток:",
     smartBreakevenText(signal)
