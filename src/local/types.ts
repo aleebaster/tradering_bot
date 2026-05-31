@@ -113,6 +113,9 @@ export interface AccuracyRisk {
 export interface HigherTimeframeBias {
   direction: number;
   aligned: boolean;
+  executionAligned: boolean;
+  counterTrend: boolean;
+  confidenceAdjustment: number;
   score: number;
   details: string[];
 }

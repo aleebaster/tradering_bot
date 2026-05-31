@@ -241,7 +241,7 @@ function accuracyLines(signal: Signal) {
     "🧠 Accuracy engine:",
     signal.session.message,
     signal.newsRisk.blocked ? signal.newsRisk.message : "✅ High-impact news risk: clean",
-    signal.higherTimeframe.aligned ? "✅ HTF bias 5m/15m/1H/4H/D aligned" : "⚠️ HTF bias не підтверджений",
+    signal.higherTimeframe.executionAligned ? signal.higherTimeframe.counterTrend ? "⚠️ Counter-trend: 1H/15M/5M aligned, 4H/Daily тільки знижують confidence" : "✅ 1H/15M/5M execution aligned" : "⚠️ 1H/15M/5M execution не підтверджений",
     signal.liquidityIntelligence.message,
     signal.orderFlow.message,
     signal.openInterestAnalysis.message,
