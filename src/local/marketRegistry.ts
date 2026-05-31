@@ -43,6 +43,7 @@ export async function marketRegistry(force = false) {
 
 export async function resolvePair(query: string): Promise<PairSearchResult> {
   const normalized = normalizeQuery(query);
+  if (!normalized) return { query, normalized, exact: false, futures: [], spot: [], suggestions: [] };
   const { items } = await marketRegistry();
   const scored = items.map((item) => ({ item, score: matchScore(item, normalized) })).filter((x) => x.score > 0).sort((a, b) => b.score - a.score || b.item.turnover24h - a.item.turnover24h);
   const matches = scored.map((x) => x.item);
@@ -108,6 +109,7 @@ function matchScore(item: MarketRegistryItem, normalized: string) {
   if (aliases.includes(base) || aliases.includes(noQuote)) return 110;
   if (symbol.startsWith(normalized) || base.startsWith(normalized) || noQuote.startsWith(normalized)) return 80;
   if (normalized.length >= 5 && (symbol.includes(normalized) || base.includes(normalized) || noQuote.includes(normalized))) return 55;
+  if (sameInitial(base, normalized) && typoDistance(base, normalized) <= typoLimit(normalized) || sameInitial(noQuote, normalized) && typoDistance(noQuote, normalized) <= typoLimit(normalized)) return 45;
   return fuzzy(base, normalized) || fuzzy(noQuote, normalized) ? 35 : 0;
 }
 
@@ -130,6 +132,36 @@ function fuzzy(a: string, b: string) {
   let j = 0;
   for (const char of a) if (char === b[j]) j += 1;
   return j >= Math.min(b.length, 4);
+}
+
+function typoLimit(value: string) {
+  if (value.length === 3) return 1;
+  if (value.length < 3) return 0;
+  return value.length <= 6 ? 1 : 2;
+}
+
+function sameInitial(a: string, b: string) {
+  return Boolean(a && b && a[0] === b[0]);
+}
+
+function typoDistance(a: string, b: string) {
+  if (!a || !b) return Math.max(a.length, b.length);
+  const limit = typoLimit(b);
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let last = prev[0];
+    prev[0] = i;
+    let rowMin = prev[0];
+    for (let j = 1; j <= b.length; j++) {
+      const old = prev[j];
+      prev[j] = a[i - 1] === b[j - 1] ? last : Math.min(last, prev[j - 1], prev[j]) + 1;
+      last = old;
+      rowMin = Math.min(rowMin, prev[j]);
+    }
+    if (rowMin > limit) return limit + 1;
+  }
+  return prev[b.length];
 }
 
 function liquidityScore(turnover: number, spreadPct: number) {

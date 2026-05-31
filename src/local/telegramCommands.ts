@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { config } from "./config";
 import { state } from "./state";
 import { signalQuickActions, TelegramNotifier, type TelegramReplyMarkup } from "./telegram";
@@ -32,6 +35,8 @@ export class TelegramCommandCenter {
   private offset = 0;
   private polling = false;
   private timer: NodeJS.Timeout | null = null;
+  private lockTimer: NodeJS.Timeout | null = null;
+  private lockAcquired = false;
   private pendingAction: PendingAction | null = null;
   private startedAt: string | null = null;
   private lastPollAt: string | null = null;
@@ -51,6 +56,7 @@ export class TelegramCommandCenter {
       logger.info(this.status(), "Telegram command center already running");
       return;
     }
+    if (!this.acquirePollingLock()) return;
     await this.resetPollingOffset();
     this.startedAt = new Date().toISOString();
     logger.info("Telegram command center started");
@@ -60,7 +66,10 @@ export class TelegramCommandCenter {
 
   stop() {
     if (this.timer) clearInterval(this.timer);
+    if (this.lockTimer) clearInterval(this.lockTimer);
     this.timer = null;
+    this.lockTimer = null;
+    this.releasePollingLock();
     logger.info(this.status(), "Telegram command center stopped");
   }
 
@@ -77,8 +86,30 @@ export class TelegramCommandCenter {
       handledCallbacks: this.handledCallbacks,
       handledMessages: this.handledMessages,
       pendingAction: this.pendingAction,
-      lastPollingError: this.lastPollingError
+      lastPollingError: this.lastPollingError,
+      lockAcquired: this.lockAcquired
     };
+  }
+
+  private acquirePollingLock() {
+    const now = Date.now();
+    const current = readPollingLock();
+    if (current && current.pid !== process.pid && now - current.updatedAt < 20_000) {
+      this.lastPollingError = `Polling already owned by pid ${current.pid}`;
+      logger.warn({ lock: current }, "Telegram polling lock is active; skipping duplicate listener");
+      return false;
+    }
+    writePollingLock();
+    this.lockAcquired = true;
+    this.lockTimer = setInterval(writePollingLock, 5_000);
+    return true;
+  }
+
+  private releasePollingLock() {
+    if (!this.lockAcquired) return;
+    const current = readPollingLock();
+    if (current?.pid === process.pid) rmSync(telegramLockPath(), { force: true });
+    this.lockAcquired = false;
   }
 
   private async poll() {
@@ -443,6 +474,24 @@ async function telegramFetch(url: string, init?: RequestInit, timeoutMs = 8_000)
   } finally {
     clearTimeout(timer);
   }
+}
+
+function telegramLockPath() {
+  const dir = join(tmpdir(), "tradering-bot");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return join(dir, "telegram-polling.lock.json");
+}
+
+function readPollingLock(): { pid: number; updatedAt: number } | null {
+  try {
+    return JSON.parse(readFileSync(telegramLockPath(), "utf8")) as { pid: number; updatedAt: number };
+  } catch {
+    return null;
+  }
+}
+
+function writePollingLock() {
+  writeFileSync(telegramLockPath(), JSON.stringify({ pid: process.pid, updatedAt: Date.now() }));
 }
 
 function startOneShotAnalysis(pair: string) {
@@ -970,6 +1019,7 @@ function futuresProfessionalAnalysisText(signal: Signal, market?: MarketRegistry
   const breakdown = signal.scoreBreakdown ?? {};
   const oi = signal.openInterestAnalysis;
   const funding = signal.scoreBreakdown.fundingConfirmation ?? 0;
+  const intel = signal.intelligence;
   return [
     `🔍 Пошук по парах — ${signal.symbol}`,
     "",
@@ -977,9 +1027,20 @@ function futuresProfessionalAnalysisText(signal: Signal, market?: MarketRegistry
     `Тип ринку: futures / perpetual${market?.quoteAsset ? ` / ${market.quoteAsset}` : ""}`,
     result?.spot.length ? `Також є Spot: ${result.spot.slice(0, 3).map((item) => item.symbol).join(", ")}` : "Spot: не знайдено або нижча ліквідність",
     "",
+    "SHORT TERM:",
+    `Scalp: ${scalpOutlook(signal)}`,
+    `Intraday: ${intradayOutlook(signal)}`,
+    `5m outlook: ${scoreLabel(breakdown.fastMoveQuality ?? breakdown.entrySniper)} / ${signal.fastMoveQuality.message}`,
+    `15m outlook: ${signal.side === "NO_TRADE" ? "немає якісного входу" : signal.side === "WATCHLIST" ? "watchlist only" : signal.side}`,
+    `1h outlook: ${signal.higherTimeframe.aligned ? "aligned" : signal.higherTimeframe.counterTrend ? "counter-trend risk" : "mixed"}`,
+    "",
+    "LONG TERM:",
+    `Swing: ${signal.higherTimeframe.score >= 70 ? "continuation favored" : signal.higherTimeframe.counterTrend ? "reversal risk" : "range/mixed"}`,
+    `Continuation: ${signal.higherTimeframe.aligned && !signal.fakeBreakout.risk ? "так" : "потрібне підтвердження"}`,
+    `Reversal: ${signal.marketRegime === "REVERSAL" ? "активний сценарій" : "не основний сценарій"}`,
+    `Accumulation/Distribution: ${signal.marketRegime === "SIDEWAYS" || signal.marketRegime === "LOW_VOLATILITY" ? "range accumulation/distribution" : "немає явної зони"}`,
+    "",
     "Професійний аналіз:",
-    `Long-term outlook: ${signal.higherTimeframe.aligned ? "узгоджений" : signal.higherTimeframe.counterTrend ? "counter-trend risk" : "нейтральний"} (${signal.higherTimeframe.score}/100)`,
-    `Short-term outlook: ${signal.side === "NO_TRADE" ? "немає якісного входу" : signal.side === "WATCHLIST" ? "під моніторингом" : signal.side}`,
     `Trend: ${signal.marketRegime}`,
     `Momentum: ${scoreLabel(breakdown.momentumQuality)}`,
     `Volume: ${scoreLabel(breakdown.volumeConfirmation)}${market ? ` / 24h ${formatUsd(market.turnover24h)}` : ""}`,
@@ -991,16 +1052,19 @@ function futuresProfessionalAnalysisText(signal: Signal, market?: MarketRegistry
     `Market regime: ${signal.marketRegime}`,
     `Sniper trigger: ${scoreLabel(breakdown.entrySniper)}`,
     `Retest status: ${scoreLabel(breakdown.liquiditySweep)} / ${signal.liquidityIntelligence.message}`,
+    `Manipulation risk: ${manipulationRisk(signal)}`,
+    `Whale activity: ${scoreLabel(breakdown.whaleActivity)}${intel ? ` / ${intel.whale.whaleBias} ${intel.whale.smartMoneyScore}/100` : ""}`,
+    `Liquidation pressure: ${intel ? `${intel.liq.sweepDirection} / strength ${intel.liq.liqSignalStrength}/100 / trap ${intel.liq.trapProbability}/100` : signal.liquidityIntelligence.message}`,
     "",
-    "Trade plan:",
-    `Smart entry zone: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
-    `SL: ${fmt(signal.stopLoss)}`,
-    `TP1: ${fmt(signal.takeProfit[0])}`,
-    `TP2: ${fmt(signal.takeProfit[1])}`,
-    `TP3: ${fmt(signal.takeProfit[2])}`,
-    `Confidence score: ${signal.confidence}% / score ${signal.score}%`,
-    `Risk/Reward: ${signal.riskReward}`,
-    `Реальний статус: ${status}`,
+    "ENTRY:",
+    `📍 entry zone: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
+    `🛑 SL: ${fmt(signal.stopLoss)}`,
+    `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
+    `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
+    `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
+    `Confidence: ${signal.confidence}% / score ${signal.score}%`,
+    `RR: ${signal.riskReward}`,
+    `STATUS ONLY: ${status}`,
     "",
     signal.rejectionReason ? `Фільтр: ${signal.rejectionReason}` : "Фільтр: setup валідний тільки після підтвердження entry-зони",
     "Причини:",
@@ -1019,9 +1083,20 @@ function spotProfessionalAnalysisText(analysis: Awaited<ReturnType<typeof analyz
     "Тип ринку: spot",
     result?.futures.length ? `Також є Futures: ${result.futures.slice(0, 3).map((item) => item.symbol).join(", ")}` : "Futures: не знайдено або нижча ліквідність",
     "",
+    "SHORT TERM:",
+    `Scalp: ${analysis.shortTerm.scalping}`,
+    `Intraday: ${analysis.shortTerm.intraday}`,
+    `5m outlook: N/A для spot scalping engine` ,
+    `15m outlook: ${analysis.shortTerm.scalping}`,
+    `1h outlook: ${analysis.shortTerm.intraday}`,
+    "",
+    "LONG TERM:",
+    `Swing: ${analysis.shortTerm.swing}`,
+    `Continuation: ${analysis.metrics.trendScore >= 65 ? "можлива" : "потрібне підтвердження"}`,
+    `Reversal: ${analysis.longTerm.marketCycle.includes("Distribution") ? "ризик від resistance" : "не основний сценарій"}`,
+    `Accumulation/Distribution: ${analysis.longTerm.marketCycle}`,
+    "",
     "Професійний аналіз:",
-    `Long-term outlook: ${analysis.longTerm.bias} / ${analysis.longTerm.marketCycle}`,
-    `Short-term outlook: ${analysis.shortTerm.intraday}`,
     `Trend: ${analysis.metrics.trendScore}/100`,
     `Momentum: ${analysis.metrics.momentumScore}/100`,
     `Volume: ${formatUsd(analysis.metrics.volume24h)}`,
@@ -1033,16 +1108,19 @@ function spotProfessionalAnalysisText(analysis: Awaited<ReturnType<typeof analyz
     `Market regime: ${analysis.longTerm.marketCycle}`,
     `Sniper trigger: ${ready ? "очікувати підтвердження біля smart entry" : "не готовий"}`,
     `Retest status: ${analysis.metrics.price <= analysis.longTerm.accumulationZone[1] ? "біля accumulation/retest" : "чекати відкат"}`,
+    `Manipulation risk: ${spotManipulationRisk(analysis)}`,
+    `Whale activity: ${analysis.metrics.whaleScore}/100`,
+    "Liquidation pressure: N/A для spot",
     "",
-    "Trade plan:",
-    `Smart entry zone: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
-    `SL: ${fmt(sl)}`,
-    `TP1: ${fmt(analysis.longTerm.resistance[0])}`,
-    `TP2: ${fmt(analysis.longTerm.resistance[1])}`,
-    `TP3: ${analysis.longTerm.growthPotential}`,
-    `Confidence score: ${analysis.shortTerm.confidence}% short / ${analysis.longTerm.confidence}% long`,
-    `Risk/Reward: ${spotRiskReward(analysis.metrics.price, sl, analysis.longTerm.resistance[0])}`,
-    `Реальний статус: ${status}`,
+    "ENTRY:",
+    `📍 entry zone: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
+    `🛑 SL: ${fmt(sl)}`,
+    `🎯 TP1: ${fmt(analysis.longTerm.resistance[0])}`,
+    `🎯 TP2: ${fmt(analysis.longTerm.resistance[1])}`,
+    `🎯 TP3: ${analysis.longTerm.growthPotential}`,
+    `Confidence: ${analysis.shortTerm.confidence}% short / ${analysis.longTerm.confidence}% long`,
+    `RR: ${spotRiskReward(analysis.metrics.price, sl, analysis.longTerm.resistance[0])}`,
+    `STATUS ONLY: ${status}`,
     market ? `Market health: ${marketHealth(market).label} (${marketHealth(market).score}/100)` : "",
     "",
     "Причини:",
@@ -1055,6 +1133,37 @@ function realStatus(signal: Signal) {
   if (signal.entryStatus === "WAIT_FOR_ENTRY" && signal.score >= 88) return "✅ READY";
   if (signal.side === "WATCHLIST" || signal.score >= 72) return "👀 WATCHLIST";
   return "❌ NO TRADE";
+}
+
+function scalpOutlook(signal: Signal) {
+  const breakdown = signal.scoreBreakdown ?? {};
+  if ((breakdown.entrySniper ?? 0) >= 90 && (breakdown.fastMoveQuality ?? 0) >= 70) return "sniper scalp possible after trigger";
+  if ((breakdown.entrySniper ?? 0) >= 70) return "wait for retest confirmation";
+  return "no scalp entry";
+}
+
+function intradayOutlook(signal: Signal) {
+  if (signal.side === "NO_TRADE") return "stand aside";
+  if (signal.side === "WATCHLIST") return "watchlist until entry zone confirms";
+  return `${signal.side} continuation if BTC/regime stays aligned`;
+}
+
+function manipulationRisk(signal: Signal) {
+  const intel = signal.intelligence;
+  const risks = [
+    signal.fakeBreakout.risk ? "fake-breakout" : null,
+    signal.orderFlow.trapRisk ? "order-flow trap" : null,
+    intel && intel.whale.trapRisk >= 70 ? "whale trap" : null,
+    intel && intel.liq.trapProbability >= 70 ? "liquidation trap" : null,
+    signal.marketRegime === "MANIPULATION_RISK" ? "regime" : null
+  ].filter(Boolean);
+  return risks.length ? `HIGH (${risks.join(", ")})` : "LOW/MEDIUM";
+}
+
+function spotManipulationRisk(analysis: Awaited<ReturnType<typeof analyzeSpot>>) {
+  if (analysis.metrics.spreadPct > 0.01 || analysis.longTerm.riskProfile === "Extreme") return "HIGH";
+  if (analysis.metrics.whaleScore < 35 || analysis.longTerm.riskProfile === "High") return "MEDIUM";
+  return "LOW";
 }
 
 function scoreLabel(value: number | undefined) {

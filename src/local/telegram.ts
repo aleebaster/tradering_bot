@@ -55,10 +55,15 @@ export class TelegramNotifier {
 
   async send(text: string, replyMarkup?: TelegramReplyMarkup) {
     if (!this.enabled) return;
+    const chunks = chunkTelegramText(text);
+    for (let index = 0; index < chunks.length; index++) await this.sendChunk(chunks[index], index === chunks.length - 1 ? replyMarkup : undefined);
+  }
+
+  private async sendChunk(text: string, replyMarkup?: TelegramReplyMarkup) {
     const url = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`;
     const body: Record<string, unknown> = { chat_id: config.TELEGRAM_CHAT_ID, text };
     if (replyMarkup) body.reply_markup = replyMarkup;
-    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
     if (!res.ok) throw new Error(`Помилка Telegram ${res.status}: ${(await res.text()).slice(0, 180)}`);
   }
 
@@ -162,4 +167,18 @@ function rrNumber(value: string) {
 
 function fmt(n: number) {
   return n >= 100 ? n.toFixed(2) : n.toFixed(5);
+}
+
+function chunkTelegramText(text: string) {
+  const limit = 3900;
+  if (text.length <= limit) return [text];
+  const chunks: string[] = [];
+  let rest = text;
+  while (rest.length > limit) {
+    const cut = Math.max(rest.lastIndexOf("\n", limit), Math.floor(limit * 0.8));
+    chunks.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) chunks.push(rest);
+  return chunks;
 }
