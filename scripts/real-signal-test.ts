@@ -143,6 +143,7 @@ function formatSignal(signal: Signal) {
     `🚀 ${signal.side} ${signal.symbol}`,
     "",
     `📍 Зона входу: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+    ...positionSizingLines(signal),
     `🛑 Стоп-лосс: ${fmt(signal.stopLoss)}`,
     `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
     `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
@@ -184,6 +185,30 @@ function confirmationLines(signal: Signal) {
 
 function fmt(value: number) {
   return value >= 100 ? value.toFixed(2) : value.toFixed(5);
+}
+
+function positionSizingLines(signal: Signal) {
+  const sizing = signal.positionSizing;
+  if (!sizing) return [];
+  const action = signal.side === "SHORT" ? "Шортити" : "Купувати";
+  return [
+    `💰 Баланс: ${sizing.balanceUsdt} USDT`,
+    `⚡ Плече: ${sizing.leverage}`,
+    `💵 По скільки входити: ${sizing.marginUsdt} USDT маржа / ${sizing.positionSizeUsdt} USDT позиція`,
+    `📍 ${action} по: ${fmt(sizing.entryRange[0])}–${fmt(sizing.entryRange[1])}`,
+    `📦 Взяти: ${formatQuantity(sizing.quantity)} ${sizing.baseAsset}`,
+    `📉 Максимальний ризик: ${sizing.accountRiskPercent}% від балансу (ліміт ${sizing.maxRiskPercent}%)`,
+    `💸 Потенційний збиток: $${sizing.potentialLossUsdt}`,
+    `💰 Потенційний прибуток: TP1 $${sizing.potentialProfitUsdt[0]} / TP2 $${sizing.potentialProfitUsdt[1]} / TP3 $${sizing.potentialProfitUsdt[2]}`,
+    `🛡 Liquidation safety: ${sizing.liquidationSafety}`,
+    ""
+  ];
+}
+
+function formatQuantity(value: number) {
+  if (value >= 1000) return String(Math.floor(value));
+  if (value >= 1) return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+  return value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 main().catch((err) => {

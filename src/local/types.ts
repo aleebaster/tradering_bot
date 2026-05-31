@@ -1,6 +1,7 @@
 export type Mode = "LOCAL_ONLY" | "HYBRID" | "OFFLINE_TEST";
 export type Side = "LONG" | "SHORT" | "BUY" | "NO_TRADE" | "WATCHLIST";
-export type MarketRegime = "TRENDING" | "RANGING" | "VOLATILE" | "NEWS_DRIVEN" | "MANIPULATION_RISK";
+export type MarketRegime = "TRENDING" | "RANGING" | "EXPANSION" | "COMPRESSION" | "VOLATILE" | "NEWS_DRIVEN" | "MANIPULATION_RISK";
+export type SignalGrade = "A+" | "A" | "B" | "C" | "D";
 
 export interface Candle {
   exchange: "bybit" | "okx" | "binance" | "kucoin" | "kraken";
@@ -30,6 +31,19 @@ export interface MarketSnapshot {
   btcStable: boolean;
   regime: MarketRegime;
   confirmations: ExchangeConfirmations;
+  correlation?: CorrelationContext;
+}
+
+export interface CorrelationContext {
+  btcDirection: number;
+  ethDirection: number;
+  total3Direction: number;
+  btcDominanceDirection: number;
+  dxyDirection: number;
+  nasdaqDirection: number;
+  aligned: boolean;
+  riskOff: boolean;
+  details: string[];
 }
 
 export interface ExchangeConfirmations {
@@ -52,12 +66,23 @@ export interface Signal {
   score: number;
   winProbability: number;
   confidence: number;
+  grade: SignalGrade;
+  expiresAt: string;
+  session: AccuracySession;
+  newsRisk: AccuracyRisk;
+  higherTimeframe: HigherTimeframeBias;
+  liquidityIntelligence: LiquidityIntelligence;
+  orderFlow: OrderFlowAnalysis;
+  openInterestAnalysis: OpenInterestAnalysis;
+  fakeBreakout: FakeBreakoutAnalysis;
+  correlation: CorrelationContext;
   currentPrice: number;
   entryStatus: "ENTER_NOW" | "WAIT_FOR_ENTRY" | "NO_TRADE";
   entry: [number, number];
   stopLoss: number;
   takeProfit: [number, number, number];
   leverage?: string;
+  positionSizing?: PositionSizing;
   riskReward: string;
   invalidationLevel: number;
   holdTime: string;
@@ -69,6 +94,78 @@ export interface Signal {
   scoreBreakdown: Record<string, number>;
   tradeManagementActions: string[];
   management: string;
+}
+
+export interface AccuracySession {
+  name: "LONDON_OPEN" | "NEW_YORK_OPEN" | "LONDON_NY_OVERLAP" | "ASIA_CHOP" | "OFF_HOURS";
+  active: boolean;
+  confidenceAdjustment: number;
+  message: string;
+}
+
+export interface AccuracyRisk {
+  blocked: boolean;
+  severity: "LOW" | "MEDIUM" | "HIGH";
+  message: string;
+  reasons: string[];
+}
+
+export interface HigherTimeframeBias {
+  direction: number;
+  aligned: boolean;
+  score: number;
+  details: string[];
+}
+
+export interface LiquidityIntelligence {
+  direction: number;
+  score: number;
+  sweptAbove: boolean;
+  sweptBelow: boolean;
+  liquidityPoolAbove: number;
+  liquidityPoolBelow: number;
+  message: string;
+}
+
+export interface OrderFlowAnalysis {
+  cvd: number;
+  direction: number;
+  score: number;
+  trapRisk: boolean;
+  message: string;
+}
+
+export interface OpenInterestAnalysis {
+  direction: number;
+  score: number;
+  message: string;
+}
+
+export interface FakeBreakoutAnalysis {
+  risk: boolean;
+  score: number;
+  reasons: string[];
+  message: string;
+}
+
+export interface PositionSizing {
+  balanceUsdt: number;
+  marginUsdt: number;
+  leverage: "x2" | "x3" | "x5";
+  positionSizeUsdt: number;
+  quantity: number;
+  baseAsset: string;
+  entryRange: [number, number];
+  averageEntry: number;
+  stopLoss: number;
+  takeProfit: [number, number, number];
+  maxRiskPercent: number;
+  accountRiskPercent: number;
+  priceRiskPercent: number;
+  potentialLossUsdt: number;
+  potentialProfitUsdt: [number, number, number];
+  liquidationSafety: string;
+  liquidationSafetyPercent: number;
 }
 
 export interface Diagnostics {

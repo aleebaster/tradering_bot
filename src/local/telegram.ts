@@ -33,11 +33,16 @@ export class TelegramNotifier {
       "Поточний score:",
       `${signal.score}/100`,
       "",
+      `🔥 Grade: ${signal.grade}`,
+      ...accuracyLines(signal),
+      "",
       "Поточна ціна:",
       fmt(signal.currentPrice),
       "",
       "Зона входу:",
       `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+      "",
+      ...positionSizingLines(signal),
       "",
       "Плече:",
       leverageText(signal),
@@ -129,15 +134,22 @@ function formatSignal(signal: Signal) {
   return [
     `${icon} ${direction} — ${signal.symbol}`,
     "",
+    `🔥 Grade: ${signal.grade}`,
+    `⏳ Діє до: ${new Date(signal.expiresAt).toLocaleTimeString("uk-UA")}`,
+    "",
     "Статус:",
     signal.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : "⏳ ЧЕКАТИ ЗОНУ ВХОДУ",
     "",
     `📍 Вхід: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+    `📍 ${direction === "SHORT" ? "Шортити" : "Купувати"} по: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+    ...positionSizingLines(signal),
     `🛑 SL: ${fmt(signal.stopLoss)}`,
     `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
     `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
     `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
     `⚡ Плече: ${leverageText(signal)}`,
+    "",
+    ...accuracyLines(signal),
     "",
     "Ймовірність:",
     `${signal.winProbability}%`,
@@ -171,7 +183,7 @@ function confirmationLines(signal: Signal) {
 }
 
 function formatWatchlist(signal: Signal) {
-  return [`⚠️ WATCHLIST ONLY — ${signal.symbol}`, "", `Confidence: ${signal.confidence}%`, `Win probability: ${signal.winProbability}%`, `Score: ${signal.score}/100`, "", "Причина:", ...reasonBullets(signal), "", "Моніторинг:", "• бот перевіряє сетап кожні 10–15 секунд", "• активація тільки при score >= 85 та покращенні підтверджень"].join("\n");
+  return [`⚠️ WATCHLIST ONLY — ${signal.symbol}`, "", `🔥 Grade: ${signal.grade}`, `Confidence: ${signal.confidence}%`, `Win probability: ${signal.winProbability}%`, `Score: ${signal.score}/100`, `⏳ Діє до: ${new Date(signal.expiresAt).toLocaleTimeString("uk-UA")}`, "", ...accuracyLines(signal), "", "Причина:", ...reasonBullets(signal), "", "Моніторинг:", "• бот перевіряє сетап кожні 10–15 секунд", "• активація тільки при score >= 85 та покращенні підтверджень"].join("\n");
 }
 
 function reasonBullets(signal: Signal) {
@@ -183,7 +195,70 @@ function fmt(n: number) {
   return n >= 100 ? n.toFixed(2) : n.toFixed(5);
 }
 
+function money(n: number) {
+  return `$${n.toFixed(4).replace(/\.0+$/, "")}`;
+}
+
+function positionSizingLines(signal: Signal) {
+  const sizing = signal.positionSizing;
+  if (!sizing) {
+    if (signal.side === "WATCHLIST") return ["💰 Розмір позиції:", "WATCHLIST ONLY — точний вхід буде розрахований після активації score >= 85"];
+    return [];
+  }
+  const action = signal.side === "SHORT" ? "Шортити" : "Купувати";
+  return [
+    "💰 Баланс:",
+    `${sizing.balanceUsdt} USDT`,
+    "",
+    "⚡ Плече:",
+    sizing.leverage,
+    "",
+    "💵 По скільки входити:",
+    `${sizing.marginUsdt} USDT маржа / ${sizing.positionSizeUsdt} USDT позиція`,
+    "",
+    `📍 ${action} по:`,
+    `${fmt(sizing.entryRange[0])}–${fmt(sizing.entryRange[1])}`,
+    "",
+    "📦 Взяти:",
+    `${formatQuantity(sizing.quantity)} ${sizing.baseAsset}`,
+    "",
+    "📉 Максимальний ризик:",
+    `${sizing.accountRiskPercent}% від балансу (ліміт ${sizing.maxRiskPercent}%)`,
+    "",
+    "💸 Потенційний збиток:",
+    money(sizing.potentialLossUsdt),
+    "",
+    "💰 Потенційний прибуток:",
+    `TP1 ${money(sizing.potentialProfitUsdt[0])} / TP2 ${money(sizing.potentialProfitUsdt[1])} / TP3 ${money(sizing.potentialProfitUsdt[2])}`,
+    "",
+    "🛡 Liquidation safety:",
+    sizing.liquidationSafety
+  ];
+}
+
+function accuracyLines(signal: Signal) {
+  return [
+    "🧠 Accuracy engine:",
+    signal.session.message,
+    signal.newsRisk.blocked ? signal.newsRisk.message : "✅ High-impact news risk: clean",
+    signal.higherTimeframe.aligned ? "✅ HTF bias 5m/15m/1H/4H/D aligned" : "⚠️ HTF bias не підтверджений",
+    signal.liquidityIntelligence.message,
+    signal.orderFlow.message,
+    signal.openInterestAnalysis.message,
+    signal.fakeBreakout.risk ? signal.fakeBreakout.message : "✅ Fake breakout risk low",
+    signal.correlation.aligned || signal.correlation.riskOff ? `✅ Correlation: ${signal.correlation.details.join("; ")}` : `⚠️ Correlation: ${signal.correlation.details.join("; ")}`
+  ];
+}
+
+function formatQuantity(value: number) {
+  if (value >= 1000) return String(Math.floor(value));
+  if (value >= 1) return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+  return value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+}
+
 function leverageText(signal: Signal) {
+  if (signal.positionSizing) return signal.positionSizing.leverage;
+  if (signal.leverage?.startsWith("x")) return signal.leverage;
   if (signal.mode !== "futures") return "не використовується";
   const volatility = volatilityFromSignal(signal);
   let leverage = signal.confidence >= 90 ? 5 : signal.confidence >= 87 ? 3 : 2;

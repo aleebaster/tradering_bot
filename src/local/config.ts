@@ -19,6 +19,8 @@ const schema = z.object({
   KRAKEN_FUTURES_API_SECRET: z.string().optional(),
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
+  USER_BALANCE_USDT: z.coerce.number().positive().default(5),
+  HIGH_IMPACT_NEWS_BLOCK_UNTIL: z.string().optional(),
   LOCAL_API_PORT: z.coerce.number().default(4000),
   SCAN_INTERVAL_SECONDS: z.coerce.number().min(10).max(15).default(12),
   BOT_MODE: z.enum(["LOCAL_ONLY", "HYBRID", "OFFLINE_TEST"]).optional()
@@ -34,7 +36,7 @@ export const config = {
   partialMode,
   warning: partialMode ? "Парольна фраза OKX відсутня — режим часткового підтвердження." : null,
   symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "AIGENSYNUSDT"],
-  futuresTimeframes: ["5", "15", "60"],
+  futuresTimeframes: ["5", "15", "60", "240", "D"],
   spotTimeframes: ["60", "240", "D"],
   maxSignalsPerDay: 5
 };

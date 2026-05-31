@@ -3,7 +3,9 @@ import { atr, ema, macd, rsi, supportResistance, volumeProfileScore, vwap } from
 import { analyzeSmc } from "../src/local/smc";
 import { btcStable, regimeFrom } from "../src/local/scoring";
 import { TelegramNotifier } from "../src/local/telegram";
-import type { Candle, MarketRegime } from "../src/local/types";
+import { calculatePositionSizing } from "../src/local/positionSizing";
+import { addPriorityPair } from "../src/local/watchlistStore";
+import type { Candle, MarketRegime, PositionSizing } from "../src/local/types";
 
 const client = new ExchangeClient();
 const notifier = new TelegramNotifier();
@@ -13,6 +15,7 @@ const watchMode = process.env.WATCH_AIGENSYN === "1" || process.env.PRIORITY_WAT
 const watchIntervalMs = 12_000;
 
 async function main() {
+  addPriorityPair(symbol);
   console.log(`PRIORITY WATCHLIST: ${symbol} Bybit Futures, interval ${watchIntervalMs / 1000}s`);
   if (!watchMode) {
     await analyzeAndSend(true, false);
@@ -85,7 +88,8 @@ async function analyzeAndSend(sendWatchlist: boolean, priorityMode: boolean, can
   const qualified = selected.score >= 85 && confirmations.volume && confirmations.momentum && confirmations.smc && confirmations.orderbook && confirmations.btc && confirmations.breakout;
   const watchlist = !qualified && selected.score >= 80 && selected.score < 85;
   const invalidated = priorityMode && canInvalidate && selected.score < 80 && (!confirmations.momentum || !confirmations.volume || !confirmations.btc || !confirmations.breakout);
-  const leverage = leverageFor(selected.score, volatilityPct);
+  const positionSizing = calculatePositionSizing({ symbol, mode: "futures", side, score: selected.score, entry: levels.entry, stopLoss: levels.stopLoss, takeProfit: levels.takeProfit, marketRegime: regime, volatilityPct, momentumScore: selected.parts.momentum });
+  const leverage = positionSizing?.leverage ?? leverageFor(selected.score, volatilityPct);
   const icon = side === "SHORT" ? "🔴" : "🟢";
   const title = qualified ? `${icon} ${side} ACTIVATED — ${symbol}` : watchlist ? `⚠️ WATCHLIST ONLY — ${symbol}` : invalidated ? `❌ SETUP INVALIDATED — ${symbol}` : `❌ НЕ ВХОДИТИ — ${symbol}`;
   const probability = selected.score;
@@ -98,11 +102,12 @@ async function analyzeAndSend(sendWatchlist: boolean, priorityMode: boolean, can
     "📌 Коротко:",
     "",
     `📍 Вхід: ${fmt(levels.entry[0])}–${fmt(levels.entry[1])}`,
+    ...(positionSizing ? positionSizingLines(positionSizing, side, qualified) : watchlist ? ["💰 Розмір позиції:", "WATCHLIST ONLY — точний вхід і кількість монет будуть розраховані після score >= 85"] : []),
     `🛑 SL: ${fmt(levels.stopLoss)}`,
     `🎯 TP1: ${fmt(levels.takeProfit[0])}`,
     `🎯 TP2: ${fmt(levels.takeProfit[1])}`,
     `🎯 TP3: ${fmt(levels.takeProfit[2])}`,
-    `⚡ Плече: ${qualified ? leverage : "AUTO (MAX x5)"}`,
+    `⚡ Плече: ${positionSizing ? leverage : qualified ? leverage : "AUTO (MAX x5)"}`,
     "",
     "Ймовірність:",
     `${probability}%`,
@@ -169,7 +174,7 @@ async function analyzeAndSend(sendWatchlist: boolean, priorityMode: boolean, can
 
   if (qualified || invalidated || watchlist && sendWatchlist) await notifier.send(activationMessage);
   console.log(raw);
-  return { qualified, watchlist, invalidated, score: selected.score, analysis: { symbol, side, levels, leverage, btcOk, direction, score: selected.score } };
+  return { qualified, watchlist, invalidated, score: selected.score, analysis: { symbol, side, levels, leverage, btcOk, direction, score: selected.score, positionSizing } };
 }
 
 async function monitorActivatedTrade(analysis: ActiveAnalysis) {
@@ -188,7 +193,7 @@ async function monitorActivatedTrade(analysis: ActiveAnalysis) {
     const action = hitSl || hitTp3 || !btcOk ? "🔴 EXIT TRADE NOW" : hitTp2 ? "🟠 MOVE STOP LOSS TO BREAKEVEN" : hitTp1 ? "🟠 TAKE PARTIAL PROFIT" : "🟡 HOLD POSITION";
     if (sent.has(action)) continue;
     sent.add(action);
-    await notifier.send([action, "", `${analysis.side} — ${analysis.symbol}`, "", `Поточна ціна: ${fmt(current)}`, `SL: ${fmt(analysis.levels.stopLoss)}`, `TP1: ${fmt(analysis.levels.takeProfit[0])}`, `TP2: ${fmt(analysis.levels.takeProfit[1])}`, `TP3: ${fmt(analysis.levels.takeProfit[2])}`, `Плече: ${analysis.leverage}`, "", "Причина:", hitSl ? "• stop loss / invalidation reached" : hitTp3 ? "• TP3 reached" : !btcOk ? "• BTC instability" : hitTp2 ? "• TP2 reached; protect profit" : hitTp1 ? "• TP1 reached; partial profit" : "• position conditions remain valid"].join("\n"));
+    await notifier.send([action, "", `${analysis.side} — ${analysis.symbol}`, "", `Поточна ціна: ${fmt(current)}`, ...(analysis.positionSizing ? positionSizingLines(analysis.positionSizing, analysis.side) : []), `SL: ${fmt(analysis.levels.stopLoss)}`, `TP1: ${fmt(analysis.levels.takeProfit[0])}`, `TP2: ${fmt(analysis.levels.takeProfit[1])}`, `TP3: ${fmt(analysis.levels.takeProfit[2])}`, `Плече: ${analysis.leverage}`, "", "Причина:", hitSl ? "• stop loss / invalidation reached" : hitTp3 ? "• TP3 reached" : !btcOk ? "• BTC instability" : hitTp2 ? "• TP2 reached; protect profit" : hitTp1 ? "• TP1 reached; partial profit" : "• position conditions remain valid"].join("\n"));
     if (action === "🔴 EXIT TRADE NOW") return;
   }
 }
@@ -284,6 +289,52 @@ function leverageFor(score: number, volatilityPct: number) {
   return `x${leverage}`;
 }
 
+function positionSizingLines(sizing: PositionSizing, side: "LONG" | "SHORT", active = true) {
+  const action = side === "SHORT" ? "Шортити" : "Купувати";
+  return [
+    active ? "" : "⚠️ Розрахунок позиції:",
+    active ? "" : "НЕ ВХОДИТИ ЗАРАЗ — використовувати тільки якщо сетап отримає всі підтвердження",
+    active ? "" : "",
+    "💰 Баланс:",
+    `${sizing.balanceUsdt} USDT`,
+    "",
+    "⚡ Плече:",
+    sizing.leverage,
+    "",
+    "💵 По скільки входити:",
+    `${sizing.marginUsdt} USDT маржа / ${sizing.positionSizeUsdt} USDT позиція`,
+    "",
+    `📍 ${action} по:`,
+    `${fmt(sizing.entryRange[0])}–${fmt(sizing.entryRange[1])}`,
+    "",
+    "📦 Взяти:",
+    `${formatQuantity(sizing.quantity)} ${sizing.baseAsset}`,
+    "",
+    "📉 Максимальний ризик:",
+    `${sizing.accountRiskPercent}% від балансу (ліміт ${sizing.maxRiskPercent}%)`,
+    "",
+    "💸 Потенційний збиток:",
+    money(sizing.potentialLossUsdt),
+    "",
+    "💰 Потенційний прибуток:",
+    `TP1 ${money(sizing.potentialProfitUsdt[0])} / TP2 ${money(sizing.potentialProfitUsdt[1])} / TP3 ${money(sizing.potentialProfitUsdt[2])}`,
+    "",
+    "🛡 Liquidation safety:",
+    sizing.liquidationSafety,
+    ""
+  ];
+}
+
+function money(value: number) {
+  return `$${value.toFixed(4).replace(/\.0+$/, "")}`;
+}
+
+function formatQuantity(value: number) {
+  if (value >= 1000) return String(Math.floor(value));
+  if (value >= 1) return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+  return value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+}
+
 function mtfDirection(candles: Record<string, Candle[]>, direction: 1 | -1) {
   const aligned = tfs.filter((tf) => {
     const closes = candles[tf].map((c) => c.close);
@@ -321,7 +372,7 @@ function yes(value: boolean) {
 }
 
 function regimeUa(regime: MarketRegime) {
-  const map: Record<MarketRegime, string> = { TRENDING: "трендовий", RANGING: "боковий", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" };
+  const map: Record<MarketRegime, string> = { TRENDING: "трендовий", RANGING: "боковий", EXPANSION: "розширення", COMPRESSION: "стиснення", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" };
   return map[regime];
 }
 
@@ -355,6 +406,7 @@ interface ActiveAnalysis {
   direction: 1 | -1;
   score: number;
   leverage: string;
+  positionSizing?: PositionSizing;
   btcOk: boolean;
   levels: ReturnType<typeof tradeLevels>;
 }

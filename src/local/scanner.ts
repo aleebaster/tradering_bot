@@ -6,6 +6,7 @@ import { recordSignal, state } from "./state";
 import type { Candle, MarketSnapshot, Signal } from "./types";
 import { logger } from "./logger";
 import { TelegramNotifier } from "./telegram";
+import { recordLearningOutcome } from "./learning";
 
 type Broadcast = (payload: unknown) => void;
 
@@ -117,7 +118,7 @@ export class Scanner {
         this.cursor += 1;
         try {
           const candles = symbol === "BTCUSDT" && mode === "futures" ? btcCandles : await this.loadCandles(symbol, mode);
-          const snapshot = await this.snapshot(symbol, mode, candles, btcOk);
+          const snapshot = await this.snapshot(symbol, mode, candles, btcOk, btcCandles);
           const signal = buildSignal(snapshot);
           logger.info({ symbol, mode, side: signal.side, score: signal.score, winProbability: signal.winProbability, rejectionReason: signal.rejectionReason, scoreBreakdown: signal.scoreBreakdown }, "рішення сканера");
           recordSignal(signal);
@@ -251,16 +252,20 @@ export class Scanner {
     return Object.fromEntries(entries);
   }
 
-  private async snapshot(symbol: string, mode: "spot" | "futures", candles: Record<string, Candle[]>, btcOk: boolean): Promise<MarketSnapshot> {
+  private async snapshot(symbol: string, mode: "spot" | "futures", candles: Record<string, Candle[]>, btcOk: boolean, btcCandles: Record<string, Candle[]>): Promise<MarketSnapshot> {
     const tfs = mode === "futures" ? config.futuresTimeframes : config.spotTimeframes;
-    const [okxEntries, kucoinEntries, krakenEntries, binanceEntries, imbalance, funding, oi] = await Promise.all([
+    const [okxEntries, kucoinEntries, krakenEntries, binanceEntries, imbalance, funding, oi, correlation] = await Promise.all([
       Promise.all(tfs.map(async (tf) => [tf, await this.client.okxKlines(symbol, tf).catch(() => [])] as const)),
       Promise.all(tfs.map(async (tf) => [tf, await this.client.kucoinKlines(symbol, tf).catch(() => [])] as const)),
       Promise.all(tfs.map(async (tf) => [tf, await this.client.krakenSpotKlines(symbol, tf).catch(() => [])] as const)),
       Promise.all(tfs.map(async (tf) => [tf, await this.client.binanceKlines(symbol, tf).catch(() => [])] as const)),
       mode === "futures" ? this.client.orderBookImbalance(symbol).catch(() => 0) : Promise.resolve(0),
       mode === "futures" ? this.client.fundingRate(symbol).catch(() => 0) : Promise.resolve(0),
-      mode === "futures" ? this.client.openInterestChange(symbol).catch(() => 0) : Promise.resolve(0)
+      mode === "futures" ? this.client.openInterestChange(symbol).catch(() => 0) : Promise.resolve(0),
+      this.correlationContext(symbol, mode, candles, btcCandles).catch((err) => {
+        logger.warn({ err, symbol }, "Correlation context unavailable; using defensive neutral context");
+        return neutralCorrelation();
+      })
     ]);
     if (config.partialMode) state.diagnostics.apiStatus.okx = "часткове публічне підтвердження";
     else if (!state.diagnostics.apiStatus.okx.startsWith("помилка автентифікації")) state.diagnostics.apiStatus.okx = "автентифіковано і підключено; ринкове підтвердження активне";
@@ -283,7 +288,30 @@ export class Scanner {
       whaleScore,
       btcStable: btcOk,
       regime: regimeFrom(candles),
-      confirmations: exchangeConfirmations(candles, Object.fromEntries(okxEntries), Object.fromEntries(kucoinEntries), Object.fromEntries(krakenEntries), Object.fromEntries(binanceEntries), mode)
+      confirmations: exchangeConfirmations(candles, Object.fromEntries(okxEntries), Object.fromEntries(kucoinEntries), Object.fromEntries(krakenEntries), Object.fromEntries(binanceEntries), mode),
+      correlation
+    };
+  }
+
+  private async correlationContext(symbol: string, mode: "spot" | "futures", candles: Record<string, Candle[]>, btcCandles: Record<string, Candle[]>) {
+    const category = mode === "spot" ? "spot" : "linear";
+    const ethCandles = symbol === "ETHUSDT" ? candles : { "60": await this.client.bybitKlines("ETHUSDT", "60", category, 80).catch(() => []), "240": await this.client.bybitKlines("ETHUSDT", "240", category, 80).catch(() => []) };
+    const btcDirection = directionOf(btcCandles["60"]);
+    const ethDirection = directionOf(ethCandles["60"]);
+    const btcHtf = directionOf(btcCandles["240"]);
+    const ethHtf = directionOf(ethCandles["240"]);
+    const riskOn = btcDirection >= 0 && ethDirection >= 0 && btcHtf >= 0 && ethHtf >= 0 && (btcDirection > 0 || ethDirection > 0);
+    const riskOff = btcDirection <= 0 && ethDirection <= 0 && btcHtf <= 0 && ethHtf <= 0 && (btcDirection < 0 || ethDirection < 0);
+    return {
+      btcDirection,
+      ethDirection,
+      total3Direction: 0,
+      btcDominanceDirection: 0,
+      dxyDirection: 0,
+      nasdaqDirection: 0,
+      aligned: riskOn,
+      riskOff,
+      details: [`BTC 1H ${dirUa(btcDirection)}`, `BTC 4H ${dirUa(btcHtf)}`, `ETH 1H ${dirUa(ethDirection)}`, `ETH 4H ${dirUa(ethHtf)}`, "TOTAL3/DXY/NASDAQ: live source not configured, нейтрально"]
     };
   }
 
@@ -298,6 +326,8 @@ export class Scanner {
       const key = `${signal.id}-${action.label}`;
       if (this.managementSent.has(key)) continue;
       this.managementSent.add(key);
+      if (action.label === "🔴 ВИЙТИ З УГОДИ ЗАРАЗ" && action.reasons.some((reason) => reason.includes("TP3"))) recordLearningOutcome(signal, "TP");
+      if (action.label === "🔴 ВИЙТИ З УГОДИ ЗАРАЗ" && action.reasons.some((reason) => reason.includes("стоп-лосс"))) recordLearningOutcome(signal, signal.fakeBreakout.risk ? "FAKE_BREAKOUT" : "SL");
       logger.info({ symbol: signal.symbol, action: action.label, currentPrice: current, reasons: action.reasons }, "trade management alert");
       await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Не вдалося надіслати Telegram-сповіщення управління угодою"));
     }
@@ -327,11 +357,11 @@ export class Scanner {
       if (this.activatedWatchlist.has(key) || this.invalidatedWatchlist.has(key)) continue;
       try {
         const candles = item.symbol === "BTCUSDT" ? btcCandles : await this.loadCandles(item.symbol, "futures");
-        const snapshot = await this.snapshot(item.symbol, "futures", candles, btcOk);
+        const snapshot = await this.snapshot(item.symbol, "futures", candles, btcOk, btcCandles);
         const signal = buildSignal(snapshot);
         logger.info({ symbol: item.symbol, score: signal.score, side: signal.side, scoreBreakdown: signal.scoreBreakdown }, "watchlist recheck");
         if (signal.score >= 85 && activationConfirmed(signal)) {
-          const activated = { ...signal, leverage: "3x", entryStatus: "ENTER_NOW" as const };
+          const activated = { ...signal, entryStatus: "ENTER_NOW" as const };
           this.activatedWatchlist.add(key);
           recordSignal(activated);
           await this.notifier.setupActivated(activated, activationReasons(activated));
@@ -353,7 +383,7 @@ export class Scanner {
 }
 
 function activationConfirmed(signal: Signal) {
-  return signal.score >= 85 && momentumConfirmed(signal) && smcConfirmed(signal) && volumeConfirmed(signal) && orderBookConfirmed(signal) && breakoutConfirmed(signal);
+  return !isExpired(signal) && signal.score >= 85 && momentumConfirmed(signal) && smcConfirmed(signal) && volumeConfirmed(signal) && orderBookConfirmed(signal) && breakoutConfirmed(signal);
 }
 
 function activationReasons(signal: Signal) {
@@ -435,6 +465,10 @@ function dirUa(dir: number) {
   return dir > 0 ? "вгору" : dir < 0 ? "вниз" : "немає даних";
 }
 
+function neutralCorrelation() {
+  return { btcDirection: 0, ethDirection: 0, total3Direction: 0, btcDominanceDirection: 0, dxyDirection: 0, nasdaqDirection: 0, aligned: false, riskOff: false, details: ["correlation data unavailable"] };
+}
+
 function tradeManagementAction(signal: Signal, current: number, btcOk: boolean) {
   const long = signal.side === "LONG" || signal.side === "BUY";
   const short = signal.side === "SHORT";
@@ -442,6 +476,7 @@ function tradeManagementAction(signal: Signal, current: number, btcOk: boolean) 
   const entryLow = Math.min(...signal.entry);
   const entryHigh = Math.max(...signal.entry);
   const entered = signal.entryStatus === "ENTER_NOW" || (current >= entryLow && current <= entryHigh);
+  if (!entered && isExpired(signal)) return { label: "⏳ SIGNAL EXPIRED", reasons: ["Сигнал втратив актуальність за часом", "Пізній вхід заборонено системою confidence decay"] };
   if (!entered) return { label: "⏳ ЧЕКАТИ ЗОНУ ВХОДУ", reasons: [`Поточна ціна ${formatPrice(current)} поза зоною входу ${formatPrice(entryLow)}-${formatPrice(entryHigh)}`] };
   if ((long && current <= signal.stopLoss) || (short && current >= signal.stopLoss)) return { label: "🔴 ВИЙТИ З УГОДИ ЗАРАЗ", reasons: ["Досягнуто стоп-лосс або рівень інвалідації", "Спрацювало правило збереження капіталу"] };
   if (!btcOk && signal.symbol !== "BTCUSDT") return { label: "⚠️ ВИЯВЛЕНО РОЗВОРОТ ТРЕНДУ", reasons: ["Виявлено нестабільність BTC", "Ризик позиції по альткоїну зріс"] };
@@ -449,6 +484,10 @@ function tradeManagementAction(signal: Signal, current: number, btcOk: boolean) 
   if ((long && current >= signal.takeProfit[1]) || (short && current <= signal.takeProfit[1])) return { label: "🟠 АКТИВОВАНО ТРЕЙЛІНГ-СТОП", reasons: ["Досягнуто TP2", "Залишок позиції вести по ATR-структурі"] };
   if ((long && current >= signal.takeProfit[0]) || (short && current <= signal.takeProfit[0])) return { label: "🟠 ЗАФІКСУВАТИ ЧАСТИНУ ПРИБУТКУ", reasons: ["Досягнуто TP1", "Перенести stop loss у беззбиток"] };
   return { label: "🟡 ТРИМАТИ ПОЗИЦІЮ", reasons: ["Вхід активний", "Умов для виходу немає"] };
+}
+
+function isExpired(signal: Signal) {
+  return Date.parse(signal.expiresAt) <= Date.now();
 }
 
 function formatPrice(value: number) {
@@ -480,6 +519,6 @@ function sideUa(side: Signal["side"]) {
 }
 
 function regimeUa(regime: Signal["marketRegime"]) {
-  const map: Record<Signal["marketRegime"], string> = { TRENDING: "трендовий", RANGING: "боковий", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" };
+  const map: Record<Signal["marketRegime"], string> = { TRENDING: "трендовий", RANGING: "боковий", EXPANSION: "розширення", COMPRESSION: "стиснення", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" };
   return map[regime];
 }
