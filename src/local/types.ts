@@ -75,6 +75,7 @@ export interface Signal {
   orderFlow: OrderFlowAnalysis;
   openInterestAnalysis: OpenInterestAnalysis;
   fakeBreakout: FakeBreakoutAnalysis;
+  fastMoveQuality: FastMoveQuality;
   correlation: CorrelationContext;
   currentPrice: number;
   entryStatus: "ENTER_NOW" | "WAIT_FOR_ENTRY" | "NO_TRADE";
@@ -149,6 +150,13 @@ export interface FakeBreakoutAnalysis {
   score: number;
   reasons: string[];
   message: string;
+}
+
+export interface FastMoveQuality {
+  clean: boolean;
+  score: number;
+  message: string;
+  reasons: string[];
 }
 
 export interface PositionSizing {

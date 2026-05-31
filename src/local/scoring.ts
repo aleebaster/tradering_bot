@@ -3,7 +3,7 @@ import { atr, clamp, ema, macd, rsi, supportResistance, volumeProfileScore, vwap
 import { calculatePositionSizing } from "./positionSizing";
 import { config } from "./config";
 import { adaptiveWeights } from "./learning";
-import type { AccuracyRisk, AccuracySession, Candle, CorrelationContext, FakeBreakoutAnalysis, HigherTimeframeBias, LiquidityIntelligence, MarketRegime, MarketSnapshot, OpenInterestAnalysis, OrderFlowAnalysis, Signal, SignalGrade, Side } from "./types";
+import type { AccuracyRisk, AccuracySession, Candle, CorrelationContext, FakeBreakoutAnalysis, FastMoveQuality, HigherTimeframeBias, LiquidityIntelligence, MarketRegime, MarketSnapshot, OpenInterestAnalysis, OrderFlowAnalysis, Signal, SignalGrade, Side } from "./types";
 
 export function regimeFrom(candles: MarketSnapshot["candles"]): MarketRegime {
   const base = candles["60"] ?? candles["15"] ?? [];
@@ -75,16 +75,17 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const orderFlow = orderFlowAnalysis(precisionCandles, direction);
   const oiAnalysis = openInterestAnalysis(snapshot.openInterestChange, last, candles.at(-8), direction);
   const fakeBreakout = fakeBreakoutAnalysis(candles, direction, volume, oiAnalysis, snapshot.btcStable, snapshot.regime);
+  const fastMove = fastMoveQuality(precisionCandles, candles, direction, volume, orderFlow, snapshot.regime);
   const correlation = snapshot.correlation ?? neutralCorrelation();
   const learned = adaptiveWeights();
   const regimePenalty = snapshot.regime === "TRENDING" || snapshot.regime === "EXPANSION" ? 0 : snapshot.regime === "COMPRESSION" ? 12 : snapshot.regime === "RANGING" ? 28 : snapshot.regime === "VOLATILE" ? 22 : 40;
   const btcPenalty = snapshot.symbol === "BTCUSDT" || snapshot.btcStable ? 0 : 24;
   const confirmationPenalty = snapshot.confirmations.alignedCount >= 2 && !snapshot.confirmations.conflict ? 0 : 35;
-  const advancedBonus = htf.score * 0.16 * learned.htf + liquidity.score * 0.08 * learned.liquidity + orderFlow.score * 0.11 * learned.orderFlow + oiAnalysis.score * 0.09 * learned.oi + fakeBreakout.score * 0.12 + (correlation.aligned ? 8 : correlation.riskOff ? -18 : 0) + session.confidenceAdjustment + htf.confidenceAdjustment;
+  const advancedBonus = htf.score * 0.15 * learned.htf + liquidity.score * 0.08 * learned.liquidity + orderFlow.score * 0.1 * learned.orderFlow + oiAnalysis.score * 0.08 * learned.oi + fakeBreakout.score * 0.11 + fastMove.score * 0.08 + (correlation.aligned ? 8 : correlation.riskOff ? -18 : 0) + session.confidenceAdjustment + htf.confidenceAdjustment;
   const weighted = trendStrength * 0.12 + snapshot.liquidityScore * 0.06 + volume * 0.1 * learned.volume + smc.score * 0.13 * learned.smc + mtf * 0.1 + snapshot.whaleScore * 0.05 + funding * 0.05 + oi * 0.04 + momentum * 0.09 * learned.macd + orderbook * 0.06 + advancedBonus - regimePenalty - btcPenalty;
   let score = clamp(weighted - confirmationPenalty);
   const weakMomentum = direction !== 0 && momentum < 55;
-  const hardBlock = accuracyHardBlock(snapshot, { side, direction, session, newsRisk, htf, liquidity, orderFlow, oiAnalysis, fakeBreakout, correlation });
+  const hardBlock = accuracyHardBlock(snapshot, { side, direction, session, newsRisk, htf, liquidity, orderFlow, oiAnalysis, fakeBreakout, fastMove, correlation });
   if (snapshot.regime === "MANIPULATION_RISK" || side === "NO_TRADE") score = Math.min(score, 55);
   if (weakMomentum) score = Math.min(score, 69);
   if (snapshot.confirmations.conflict || snapshot.confirmations.alignedCount < 2) score = Math.min(score, 69);
@@ -132,6 +133,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
     orderFlow,
     openInterestAnalysis: oiAnalysis,
     fakeBreakout,
+    fastMoveQuality: fastMove,
     correlation,
     currentPrice: last.close,
     entryStatus,
@@ -146,7 +148,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
     marketRegime: snapshot.regime,
     btcStable: snapshot.btcStable,
     confirmations: snapshot.confirmations,
-    reasons: reasons(snapshot, { trendStrength, volume, mtf, smc: smc.score, momentum, funding, oi, orderbook, rs }, { session, newsRisk, htf, liquidity, orderFlow, oiAnalysis, fakeBreakout, correlation }),
+    reasons: reasons(snapshot, { trendStrength, volume, mtf, smc: smc.score, momentum, funding, oi, orderbook, rs }, { session, newsRisk, htf, liquidity, orderFlow, oiAnalysis, fakeBreakout, fastMove, correlation }),
     rejectionReason: rejectionReason(qualifiedSide, roundedScore, snapshot, weakMomentum, rrValue, hardBlock.reason),
     scoreBreakdown: {
       trendStrength: Math.round(trendStrength),
@@ -166,6 +168,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
       cvdOrderFlow: Math.round(orderFlow.score),
       smartOpenInterest: Math.round(oiAnalysis.score),
       fakeBreakoutProtection: Math.round(fakeBreakout.score),
+      fastMoveQuality: Math.round(fastMove.score),
       sessionQuality: session.confidenceAdjustment,
       regimePenalty: Math.round(regimePenalty),
       btcPenalty: Math.round(btcPenalty),
@@ -286,7 +289,7 @@ function multiTimeframeScore(snapshot: MarketSnapshot, direction: number) {
   return (aligned / tfs.length) * 100;
 }
 
-function reasons(snapshot: MarketSnapshot, parts: Record<string, number>, advanced: { session: AccuracySession; newsRisk: AccuracyRisk; htf: HigherTimeframeBias; liquidity: LiquidityIntelligence; orderFlow: OrderFlowAnalysis; oiAnalysis: OpenInterestAnalysis; fakeBreakout: FakeBreakoutAnalysis; correlation: CorrelationContext }) {
+function reasons(snapshot: MarketSnapshot, parts: Record<string, number>, advanced: { session: AccuracySession; newsRisk: AccuracyRisk; htf: HigherTimeframeBias; liquidity: LiquidityIntelligence; orderFlow: OrderFlowAnalysis; oiAnalysis: OpenInterestAnalysis; fakeBreakout: FakeBreakoutAnalysis; fastMove: FastMoveQuality; correlation: CorrelationContext }) {
   const out = [`Режим ринку: ${marketRegimeUa(snapshot.regime)}`, `Фільтр BTC: ${snapshot.btcStable ? "стабільний" : "нестабільний"}`];
   out.push(advanced.session.message);
   if (advanced.newsRisk.blocked) out.push(advanced.newsRisk.message);
@@ -294,6 +297,7 @@ function reasons(snapshot: MarketSnapshot, parts: Record<string, number>, advanc
   else if (advanced.htf.counterTrend) out.push("⚠️ Counter-trend trade: 4H/Daily дають контекстний штраф, не hard block");
   else out.push("✅ 1H/15M/5M execution aligned; 4H/Daily context supportive or neutral");
   out.push(advanced.liquidity.message, advanced.orderFlow.message, advanced.oiAnalysis.message);
+  out.push(advanced.fastMove.message);
   if (advanced.fakeBreakout.risk) out.push(advanced.fakeBreakout.message);
   if (!advanced.correlation.aligned) out.push(`Кореляційний фільтр: ${advanced.correlation.details.join("; ")}`);
   if (snapshot.regime === "MANIPULATION_RISK") out.push("⚠️ РИНОК ВИСОКОГО РИЗИКУ — НЕ ВХОДИТИ");
@@ -439,11 +443,30 @@ function fakeBreakoutAnalysis(candles: Candle[], direction: number, volumeScore:
   return { risk, score: risk ? 0 : 85, reasons, message: risk ? "⚠️ FAKE BREAKOUT RISK — WAIT" : "✅ Fake breakout risk low" };
 }
 
-function accuracyHardBlock(snapshot: MarketSnapshot, input: { side: Side; direction: number; session: AccuracySession; newsRisk: AccuracyRisk; htf: HigherTimeframeBias; liquidity: LiquidityIntelligence; orderFlow: OrderFlowAnalysis; oiAnalysis: OpenInterestAnalysis; fakeBreakout: FakeBreakoutAnalysis; correlation: CorrelationContext }) {
+function fastMoveQuality(precision: Candle[], setup: Candle[], direction: number, volumeScore: number, orderFlow: OrderFlowAnalysis, regime: MarketRegime): FastMoveQuality {
+  const data = precision.length >= 25 ? precision.slice(-25) : setup.slice(-25);
+  const reasons: string[] = [];
+  if (direction === 0 || data.length < 10) reasons.push("немає чіткого execution direction");
+  const a = atr(data, 14);
+  const last = data.at(-1);
+  const volatilityPct = last ? a / last.close : 0;
+  const move = data.length ? Math.abs(data.at(-1)!.close - data[0].open) / Math.max(a, 1e-9) : 0;
+  if (regime === "RANGING" || regime === "COMPRESSION") reasons.push("ринок у chop/compression, швидкий чистий рух не підтверджений");
+  if (volatilityPct < 0.0012) reasons.push("занадто низька волатильність для росту малого балансу");
+  if (move < 1.2) reasons.push("немає достатнього короткострокового імпульсу");
+  if (volumeScore < 55) reasons.push("обсяг слабкий для швидкого intraday руху");
+  if (orderFlow.score < 60) reasons.push("order flow/CVD не підтверджує чистий рух");
+  const clean = reasons.length === 0;
+  const score = clean ? 100 : Math.max(0, 80 - reasons.length * 18);
+  return { clean, score, reasons, message: clean ? "✅ Small balance mode: fast clean move confirmed" : `⚠️ SMALL BALANCE MODE — WAIT: ${reasons.join("; ")}` };
+}
+
+function accuracyHardBlock(snapshot: MarketSnapshot, input: { side: Side; direction: number; session: AccuracySession; newsRisk: AccuracyRisk; htf: HigherTimeframeBias; liquidity: LiquidityIntelligence; orderFlow: OrderFlowAnalysis; oiAnalysis: OpenInterestAnalysis; fakeBreakout: FakeBreakoutAnalysis; fastMove: FastMoveQuality; correlation: CorrelationContext }) {
   if (input.newsRisk.blocked) return { blocked: true, maxScore: 55, reason: input.newsRisk.message };
   if (!input.session.active) return { blocked: true, maxScore: 79, reason: input.session.message };
   if (!input.htf.executionAligned && input.direction !== 0) return { blocked: true, maxScore: 79, reason: "1H/15M/5M execution alignment не підтверджений" };
   if (input.fakeBreakout.risk) return { blocked: true, maxScore: 79, reason: input.fakeBreakout.message };
+  if (config.smallBalanceGrowthMode && !input.fastMove.clean) return { blocked: true, maxScore: 79, reason: input.fastMove.message };
   if (input.orderFlow.trapRisk) return { blocked: true, maxScore: 79, reason: "CVD показує trap risk, вхід заблоковано" };
   if (snapshot.symbol !== "BTCUSDT" && input.direction === 1 && (input.correlation.riskOff || !input.correlation.aligned)) return { blocked: true, maxScore: 79, reason: "Кореляційний фільтр не підтвердив altcoin LONG" };
   if (snapshot.symbol !== "BTCUSDT" && input.direction === -1 && input.correlation.aligned && !input.correlation.riskOff) return { blocked: true, maxScore: 79, reason: "Кореляційний фільтр не підтвердив altcoin SHORT" };

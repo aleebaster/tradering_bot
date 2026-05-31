@@ -20,6 +20,7 @@ const schema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
   USER_BALANCE_USDT: z.coerce.number().positive().default(5),
+  SMALL_BALANCE_GROWTH_MODE: z.string().optional(),
   HIGH_IMPACT_NEWS_BLOCK_UNTIL: z.string().optional(),
   LOCAL_API_PORT: z.coerce.number().default(4000),
   SCAN_INTERVAL_SECONDS: z.coerce.number().min(10).max(15).default(12),
@@ -34,9 +35,11 @@ export const config = {
   ...env,
   mode,
   partialMode,
+  smallBalanceGrowthMode: env.SMALL_BALANCE_GROWTH_MODE !== "0",
   warning: partialMode ? "Парольна фраза OKX відсутня — режим часткового підтвердження." : null,
   symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "AIGENSYNUSDT"],
   futuresTimeframes: ["5", "15", "60", "240", "D"],
   spotTimeframes: ["60", "240", "D"],
-  maxSignalsPerDay: 5
+  maxSignalsPerDay: env.SMALL_BALANCE_GROWTH_MODE === "0" ? 5 : 2,
+  minSignalCooldownMinutes: env.SMALL_BALANCE_GROWTH_MODE === "0" ? 20 : 45
 };

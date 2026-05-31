@@ -125,6 +125,10 @@ export class Scanner {
           candidates.push(signal);
           await this.trackWatchlist(signal);
           if (!this.sent.has(signalKey(signal)) && !["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
+            if (smallBalanceCooldownActive()) {
+              logger.info({ symbol, side: signal.side, cooldownMinutes: config.minSignalCooldownMinutes }, "small balance cooldown skipped signal send");
+              break;
+            }
             this.sent.add(signalKey(signal));
             await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Не вдалося надіслати сигнал Telegram"));
           }
@@ -505,6 +509,13 @@ function isRateLimit(err: unknown) {
 
 function signalKey(s: Signal) {
   return `${s.symbol}-${s.mode}-${s.side}-${new Date().toISOString().slice(0, 10)}`;
+}
+
+function smallBalanceCooldownActive() {
+  if (!config.smallBalanceGrowthMode) return false;
+  const last = state.activeSignals[0];
+  if (!last) return false;
+  return Date.now() - Date.parse(last.createdAt) < config.minSignalCooldownMinutes * 60_000;
 }
 
 function summarize(signals: Signal[]) {

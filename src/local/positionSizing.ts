@@ -28,7 +28,7 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
   if (!Number.isFinite(priceRiskPercent) || priceRiskPercent <= 0) return undefined;
 
   const balanceUsdt = config.USER_BALANCE_USDT;
-  const maxRiskPercent = input.score >= 90 ? 4 : 3;
+  const maxRiskPercent = maxRiskPercentFor(input.score);
   const leverage = chooseLeverage(input, priceRiskPercent, maxRiskPercent);
   const maxLossUsdt = balanceUsdt * maxRiskPercent / 100;
   const fullNotional = balanceUsdt * leverage;
@@ -65,7 +65,8 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
 }
 
 function chooseLeverage(input: PositionSizingInput, priceRiskPercent: number, maxRiskPercent: number) {
-  let leverage: typeof ALLOWED_LEVERAGE[number] = input.score >= 90 ? 5 : input.score >= 87 ? 3 : 2;
+  let leverage: typeof ALLOWED_LEVERAGE[number] = input.score >= 92 ? 5 : input.score >= 87 ? 3 : 2;
+  if (config.smallBalanceGrowthMode && input.score < 92) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];
   if (input.score >= 85 && input.score < 90) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];
   if ((input.volatilityPct ?? 0) > 0.018 || input.marketRegime === "VOLATILE" || input.marketRegime === "NEWS_DRIVEN") leverage = 2;
   else if ((input.volatilityPct ?? 0) > 0.012 || (input.momentumScore ?? 100) < 70) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];
@@ -74,6 +75,13 @@ function chooseLeverage(input: PositionSizingInput, priceRiskPercent: number, ma
     if (candidate * priceRiskPercent <= maxRiskPercent) return candidate;
   }
   return 2;
+}
+
+function maxRiskPercentFor(score: number) {
+  if (!config.smallBalanceGrowthMode) return score >= 90 ? 4 : 3;
+  if (score >= 94) return 2;
+  if (score >= 90) return 1.5;
+  return 1.25;
 }
 
 function uniqueLeverage(value: number, index: number, arr: number[]) {
