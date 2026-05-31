@@ -22,13 +22,13 @@ async function main() {
     await analyzeAndSend(true, false);
     return;
   }
-  let watchlistSent = false;
+  let watchlistTracked = false;
   let invalidated = false;
   let activationSent = false;
   while (true) {
-    const result = await analyzeAndSend(!watchlistSent, true, watchlistSent);
-    if (result.watchlist) watchlistSent = true;
-    if (result.invalidated && watchlistSent) {
+    const result = await analyzeAndSend(false, true, watchlistTracked);
+    if (result.watchlist) watchlistTracked = true;
+    if (result.invalidated && watchlistTracked) {
       invalidated = true;
       return;
     }
@@ -92,7 +92,7 @@ async function analyzeAndSend(sendWatchlist: boolean, priorityMode: boolean, can
   const positionSizing = calculatePositionSizing({ symbol, mode: "futures", side, score: selected.score, entry: levels.entry, stopLoss: levels.stopLoss, takeProfit: levels.takeProfit, marketRegime: regime, volatilityPct, momentumScore: selected.parts.momentum });
   const leverage = positionSizing?.leverage ?? leverageFor(selected.score, volatilityPct);
   const activationMessage = qualified
-    ? conciseTradeMessage(symbol, side, levels, leverage, positionSizing)
+    ? [`${side === "SHORT" ? "🔴" : "🟢"} SETUP ACTIVATED — ${symbol}`, "", conciseTradeMessage(symbol, side, levels, leverage, positionSizing)].join("\n")
     : watchlist
       ? [`⚠️ WATCHLIST ONLY — ${symbol}`, "", "Чекаємо кращу точку входу.", "Сигнал ще не готовий."].join("\n")
       : conciseNoTrade(symbol);
@@ -154,11 +154,21 @@ async function monitorActivatedTrade(analysis: ActiveAnalysis) {
     const hitTp1 = short ? current <= analysis.levels.takeProfit[0] : current >= analysis.levels.takeProfit[0];
     const hitTp2 = short ? current <= analysis.levels.takeProfit[1] : current >= analysis.levels.takeProfit[1];
     const hitTp3 = short ? current <= analysis.levels.takeProfit[2] : current >= analysis.levels.takeProfit[2];
-    const action = hitSl || hitTp3 || !btcOk ? "🔴 EXIT TRADE NOW" : hitTp2 ? "🟠 MOVE STOP LOSS TO BREAKEVEN" : hitTp1 ? "🟠 TAKE PARTIAL PROFIT" : "🟡 HOLD POSITION";
+    const action = hitSl
+      ? `🔴 ${analysis.symbol}\n\n❌ Stop loss triggered\nTRADE CLOSED`
+      : hitTp3
+        ? `🟢 ${analysis.symbol}\n\nTP3 HIT\n✅ Trade closed`
+        : !btcOk
+          ? `⚠️ ${analysis.symbol}\n\nBTC risk increased`
+          : hitTp2
+            ? `🟠 ${analysis.symbol}\n\nTP2 HIT\n✅ Trail by ATR`
+            : hitTp1
+              ? `🟠 ${analysis.symbol}\n\nTP1 HIT\n✅ Move SL to breakeven`
+              : `🟢 ${analysis.symbol}\n\nENTRY OPENED`;
     if (sent.has(action)) continue;
     sent.add(action);
-    await notifier.send([action, "", `${analysis.side} — ${analysis.symbol}`, "", `Поточна ціна: ${fmt(current)}`, `TP1: ${fmt(analysis.levels.takeProfit[0])}`, `TP2: ${fmt(analysis.levels.takeProfit[1])}`, `TP3: ${fmt(analysis.levels.takeProfit[2])}`, "", "🟠 Беззбиток:", "Перенести Stop Loss після TP1"].join("\n"));
-    if (action === "🔴 EXIT TRADE NOW") return;
+    await notifier.send([action, "", `Ціна: ${fmt(current)}`].join("\n"));
+    if (hitSl || hitTp3) return;
   }
 }
 
@@ -237,10 +247,12 @@ function conciseTradeMessage(symbol: string, side: "LONG" | "SHORT", levels: Ret
   return [
     `${icon} ${side} — ${symbol}`,
     "",
+    "✅ ЗАХОДИТИ ЗАРАЗ",
+    "",
     "📍 Вхід:",
     `${fmt(levels.entry[0])}–${fmt(levels.entry[1])}`,
     "",
-    "🛑 Stop Loss:",
+    "🛑 SL:",
     fmt(levels.stopLoss),
     "",
     "🎯 TP1:",
@@ -255,11 +267,14 @@ function conciseTradeMessage(symbol: string, side: "LONG" | "SHORT", levels: Ret
     "⚡ Плече:",
     sizing?.leverage ?? leverage,
     "",
-    `💰 Position size for ${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT:`,
+    "💰 Баланс:",
+    `${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT`,
+    "",
+    "📦 Вхід:",
     sizing ? `${sizing.positionSizeUsdt} USDT` : "після підтвердження входу",
     "",
     "🟠 Беззбиток:",
-    "Перенести Stop Loss після TP1"
+    "Після TP1"
   ].join("\n");
 }
 

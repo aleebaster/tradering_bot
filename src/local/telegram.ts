@@ -16,7 +16,8 @@ export class TelegramNotifier {
   }
 
   async setupActivated(signal: Signal, reasons: string[]) {
-    await this.send(formatSignal({ ...signal, entryStatus: "ENTER_NOW" }));
+    const side = signal.side === "SHORT" ? "🔴 SETUP ACTIVATED" : "🟢 SETUP ACTIVATED";
+    await this.send([`${side} — ${signal.symbol}`, "", formatSignal({ ...signal, entryStatus: "ENTER_NOW" })].join("\n"));
   }
 
   async setupInvalidated(signal: Signal, reasons: string[]) {
@@ -33,15 +34,11 @@ export class TelegramNotifier {
 
   async tradeManagementAlert(signal: Signal, action: string, currentPrice: number, reasons: string[]) {
     await this.send([
-      `${action} — ${signal.symbol}`,
+      action,
+      reasons.length ? "" : null,
+      ...reasons,
       "",
-      `Поточна ціна: ${fmt(currentPrice)}`,
-      `TP1: ${fmt(signal.takeProfit[0])}`,
-      `TP2: ${fmt(signal.takeProfit[1])}`,
-      `TP3: ${fmt(signal.takeProfit[2])}`,
-      "",
-      "🟠 Беззбиток:",
-      "Перенести Stop Loss після TP1"
+      `Ціна: ${fmt(currentPrice)}`
     ].filter(Boolean).join("\n"));
   }
 
@@ -72,10 +69,12 @@ function formatSignal(signal: Signal) {
   return [
     `${icon} ${direction} — ${signal.symbol}`,
     "",
+    signal.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : "⏳ ЧЕКАТИ ЗОНУ ВХОДУ",
+    "",
     "📍 Вхід:",
     `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
     "",
-    "🛑 Stop Loss:",
+    "🛑 SL:",
     fmt(signal.stopLoss),
     "",
     "🎯 TP1:",
@@ -90,11 +89,14 @@ function formatSignal(signal: Signal) {
     "⚡ Плече:",
     leverageText(signal),
     "",
-    `💰 Position size for ${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT:`,
+    "💰 Баланс:",
+    `${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT`,
+    "",
+    "📦 Вхід:",
     sizing ? `${sizing.positionSizeUsdt} USDT` : "після підтвердження входу",
     "",
     "🟠 Беззбиток:",
-    "Перенести Stop Loss після TP1"
+    smartBreakevenText(signal)
   ].filter(Boolean).join("\n");
 }
 
@@ -120,6 +122,13 @@ function leverageText(signal: Signal) {
   else if (volatility === "medium") leverage = Math.min(leverage, 3);
   if (signal.confidence < 85) leverage = 2;
   return `x${leverage}`;
+}
+
+function smartBreakevenText(signal: Signal) {
+  const momentum = signal.scoreBreakdown.momentumQuality ?? 0;
+  const structure = signal.scoreBreakdown.smcConfirmation ?? 0;
+  if (momentum >= 82 && structure >= 45 && signal.marketRegime !== "VOLATILE") return "Після TP1, якщо імпульс слабшає";
+  return "Після TP1";
 }
 
 function volatilityFromSignal(signal: Signal) {

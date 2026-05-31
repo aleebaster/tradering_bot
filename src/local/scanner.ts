@@ -8,6 +8,7 @@ import { logger } from "./logger";
 import { TelegramNotifier } from "./telegram";
 import { recordLearningOutcome } from "./learning";
 import { loadPriorityWatchlist } from "./watchlistStore";
+import { recordPaperClose, recordPaperOpen } from "./paperTrading";
 
 type Broadcast = (payload: unknown) => void;
 
@@ -16,7 +17,7 @@ export class Scanner {
   private notifier = new TelegramNotifier();
   private timer: NodeJS.Timeout | null = null;
   private watchlistTimer: NodeJS.Timeout | null = null;
-  private sent = new Set<string>();
+  private signalCooldown = new Map<string, { score: number; sentAt: number }>();
   private watchlistSent = new Set<string>();
   private activatedWatchlist = new Set<string>();
   private invalidatedWatchlist = new Set<string>();
@@ -126,13 +127,14 @@ export class Scanner {
           recordSignal(signal);
           candidates.push(signal);
           await this.trackWatchlist(signal);
-          if (!this.sent.has(signalKey(signal)) && !["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
+          if (!["NO_TRADE", "WATCHLIST"].includes(signal.side) && this.canSendSignal(signal)) {
             if (smallBalanceCooldownActive()) {
               logger.info({ symbol, side: signal.side, cooldownMinutes: config.minSignalCooldownMinutes }, "small balance cooldown skipped signal send");
               break;
             }
-            this.sent.add(signalKey(signal));
+            this.markSignalSent(signal);
             await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Не вдалося надіслати сигнал Telegram"));
+            recordPaperOpen(signal);
           }
           break;
         } catch (symbolError) {
@@ -160,6 +162,19 @@ export class Scanner {
     } finally {
       this.scanning = false;
     }
+  }
+
+  private canSendSignal(signal: Signal) {
+    const key = signalCooldownKey(signal);
+    const prev = this.signalCooldown.get(key);
+    if (!prev) return true;
+    const cooldownMs = 25 * 60_000;
+    const improved = signal.score >= prev.score + 8 || signal.score >= 90 && prev.score < 90;
+    return Date.now() - prev.sentAt >= cooldownMs || improved;
+  }
+
+  private markSignalSent(signal: Signal) {
+    this.signalCooldown.set(signalCooldownKey(signal), { score: signal.score, sentAt: Date.now() });
   }
 
   private syncPriorityWatchlistSymbols() {
@@ -338,13 +353,13 @@ export class Scanner {
       const tf = signal.mode === "spot" ? "60" : "5";
       const candles = await this.client.bybitKlines(signal.symbol, tf, category, 3).catch(() => []);
       const current = candles.at(-1)?.close ?? signal.currentPrice;
-      const action = tradeManagementAction(signal, current, btcOk);
+      const action = tradeManagementAction(signal, current, btcOk, this.managementSent);
       if (!action) continue;
-      const key = `${signal.id}-${action.label}`;
+      const key = `${signal.id}-${action.stage}`;
       if (this.managementSent.has(key)) continue;
       this.managementSent.add(key);
-      if (action.label === "🔴 ВИЙТИ З УГОДИ ЗАРАЗ" && action.reasons.some((reason) => reason.includes("TP3"))) recordLearningOutcome(signal, "TP");
-      if (action.label === "🔴 ВИЙТИ З УГОДИ ЗАРАЗ" && action.reasons.some((reason) => reason.includes("стоп-лосс"))) recordLearningOutcome(signal, signal.fakeBreakout.risk ? "FAKE_BREAKOUT" : "SL");
+      if (action.stage === "TP3") { recordLearningOutcome(signal, "TP"); recordPaperClose(signal, "WIN", 3); }
+      if (action.stage === "SL") { recordLearningOutcome(signal, signal.fakeBreakout.risk ? "FAKE_BREAKOUT" : "SL"); recordPaperClose(signal, "LOSS", -1); }
       logger.info({ symbol: signal.symbol, action: action.label, currentPrice: current, reasons: action.reasons }, "trade management alert");
       await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Не вдалося надіслати Telegram-сповіщення управління угодою"));
     }
@@ -355,7 +370,7 @@ export class Scanner {
     const key = watchKey(signal.symbol, signal.mode);
     if (this.watchlistSent.has(key)) return;
     this.watchlistSent.add(key);
-    await this.notifier.signal(signal).catch((err) => logger.warn({ err, symbol: signal.symbol }, "Не вдалося надіслати WATCHLIST Telegram"));
+    logger.info({ symbol: signal.symbol, score: signal.score }, "watchlist setup tracked silently");
   }
 
   private async monitorWatchlist() {
@@ -381,13 +396,15 @@ export class Scanner {
           const activated = { ...signal, entryStatus: "ENTER_NOW" as const };
           this.activatedWatchlist.add(key);
           recordSignal(activated);
+          this.markSignalSent(activated);
           await this.notifier.setupActivated(activated, activationReasons(activated));
+          recordPaperOpen(activated);
           continue;
         }
         if (signal.score < 80) {
           this.invalidatedWatchlist.add(key);
           state.watchlist = state.watchlist.filter((x) => watchKey(x.symbol, x.mode) !== key);
-          await this.notifier.setupInvalidated(signal, invalidationReasons(signal));
+          logger.info({ symbol: signal.symbol, reasons: invalidationReasons(signal) }, "watchlist setup invalidated silently");
         } else {
           state.watchlist = [signal, ...state.watchlist.filter((x) => watchKey(x.symbol, x.mode) !== key)].slice(0, 30);
         }
@@ -486,21 +503,35 @@ function neutralCorrelation() {
   return { btcDirection: 0, ethDirection: 0, total3Direction: 0, btcDominanceDirection: 0, dxyDirection: 0, nasdaqDirection: 0, aligned: false, riskOff: false, details: ["correlation data unavailable"] };
 }
 
-function tradeManagementAction(signal: Signal, current: number, btcOk: boolean) {
+function tradeManagementAction(signal: Signal, current: number, btcOk: boolean, sent: Set<string>) {
   const long = signal.side === "LONG" || signal.side === "BUY";
   const short = signal.side === "SHORT";
   if (!long && !short) return null;
   const entryLow = Math.min(...signal.entry);
   const entryHigh = Math.max(...signal.entry);
   const entered = signal.entryStatus === "ENTER_NOW" || (current >= entryLow && current <= entryHigh);
-  if (!entered && isExpired(signal)) return { label: "⏳ SIGNAL EXPIRED", reasons: ["Сигнал втратив актуальність за часом", "Пізній вхід заборонено системою confidence decay"] };
-  if (!entered) return { label: "⏳ ЧЕКАТИ ЗОНУ ВХОДУ", reasons: [`Поточна ціна ${formatPrice(current)} поза зоною входу ${formatPrice(entryLow)}-${formatPrice(entryHigh)}`] };
-  if ((long && current <= signal.stopLoss) || (short && current >= signal.stopLoss)) return { label: "🔴 ВИЙТИ З УГОДИ ЗАРАЗ", reasons: ["Досягнуто стоп-лосс або рівень інвалідації", "Спрацювало правило збереження капіталу"] };
-  if (!btcOk && signal.symbol !== "BTCUSDT") return { label: "⚠️ ВИЯВЛЕНО РОЗВОРОТ ТРЕНДУ", reasons: ["Виявлено нестабільність BTC", "Ризик позиції по альткоїну зріс"] };
-  if ((long && current >= signal.takeProfit[2]) || (short && current <= signal.takeProfit[2])) return { label: "🔴 ВИЙТИ З УГОДИ ЗАРАЗ", reasons: ["Досягнуто TP3", "Запланований прибуток повністю зафіксовано"] };
-  if ((long && current >= signal.takeProfit[1]) || (short && current <= signal.takeProfit[1])) return { label: "🟠 АКТИВОВАНО ТРЕЙЛІНГ-СТОП", reasons: ["Досягнуто TP2", "Залишок позиції вести по ATR-структурі"] };
-  if ((long && current >= signal.takeProfit[0]) || (short && current <= signal.takeProfit[0])) return { label: "🟠 ЗАФІКСУВАТИ ЧАСТИНУ ПРИБУТКУ", reasons: ["Досягнуто TP1", "Перенести stop loss у беззбиток"] };
-  return { label: "🟡 ТРИМАТИ ПОЗИЦІЮ", reasons: ["Вхід активний", "Умов для виходу немає"] };
+  if (!entered && isExpired(signal)) return { stage: "EXPIRED", label: `⏳ ${signal.symbol}\n\nSIGNAL EXPIRED`, reasons: ["Пізній вхід заборонено"] };
+  if (!entered) return null;
+  if (!sent.has(`${signal.id}-ENTRY`)) return { stage: "ENTRY", label: `🟢 ${signal.symbol}\n\nENTRY OPENED`, reasons: [`Поточна ціна: ${formatPrice(current)}`] };
+  if ((long && current <= signal.stopLoss) || (short && current >= signal.stopLoss)) return { stage: "SL", label: `🔴 ${signal.symbol}\n\n❌ Stop loss triggered`, reasons: ["TRADE CLOSED"] };
+  if (!btcOk && signal.symbol !== "BTCUSDT") return { stage: "BTC_RISK", label: `⚠️ ${signal.symbol}\n\nBTC risk increased`, reasons: ["Зменшити ризик або закрити частину"] };
+  if ((long && current >= signal.takeProfit[2]) || (short && current <= signal.takeProfit[2])) return { stage: "TP3", label: `🟢 ${signal.symbol}\n\nTP3 HIT\n✅ Trade closed`, reasons: ["TRADE CLOSED"] };
+  if ((long && current >= signal.takeProfit[1]) || (short && current <= signal.takeProfit[1])) return { stage: "TP2", label: `🟠 ${signal.symbol}\n\nTP2 HIT\n✅ Trail by ATR`, reasons: ["Вести залишок по структурі"] };
+  if ((long && current >= signal.takeProfit[0]) || (short && current <= signal.takeProfit[0])) {
+    const move = shouldMoveToBreakeven(signal);
+    return { stage: "TP1", label: `🟠 ${signal.symbol}\n\nTP1 HIT\n${move ? "✅ Move SL to breakeven" : "✅ Strong momentum — let it breathe"}`, reasons: [move ? "Імпульс слабшає, захищаємо угоду" : "Імпульс сильний, не душимо позицію"] };
+  }
+  return null;
+}
+
+function shouldMoveToBreakeven(signal: Signal) {
+  const momentum = signal.scoreBreakdown.momentumQuality ?? 0;
+  const fast = signal.fastMoveQuality.score ?? 0;
+  const volatile = signal.marketRegime === "VOLATILE" || signal.marketRegime === "NEWS_DRIVEN";
+  const structure = signal.scoreBreakdown.smcConfirmation ?? 0;
+  if (volatile || momentum < 70 || structure < 35) return true;
+  if (momentum >= 82 && fast >= 65 && structure >= 45) return false;
+  return true;
 }
 
 function isExpired(signal: Signal) {
@@ -520,8 +551,8 @@ function isRateLimit(err: unknown) {
   return message.includes("Access too frequent") || message.includes("403 Forbidden") || message.includes("429");
 }
 
-function signalKey(s: Signal) {
-  return `${s.symbol}-${s.mode}-${s.side}-${new Date().toISOString().slice(0, 10)}`;
+function signalCooldownKey(s: Signal) {
+  return `${s.symbol}-${s.mode}-${s.side}`;
 }
 
 function smallBalanceCooldownActive() {

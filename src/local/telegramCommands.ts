@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { config } from "./config";
 import { state } from "./state";
 import { TelegramNotifier } from "./telegram";
+import { paperStatsText, setPaperMode } from "./paperTrading";
 import { addPriorityPair, loadPriorityWatchlist, normalizePriorityPair, removePriorityPair } from "./watchlistStore";
 import type { Signal } from "./types";
 
@@ -59,6 +60,12 @@ export class TelegramCommandCenter {
     if (command === "/positions") return this.notifier.send(positionsText());
     if (command === "/top") return this.notifier.send(topText());
     if (command === "/watchlist") return this.notifier.send(watchlistText());
+    if (command === "/paper") {
+      const action = rawPair?.toLowerCase();
+      if (action === "on") return this.notifier.send(paperModeText(true));
+      if (action === "off") return this.notifier.send(paperModeText(false));
+      return this.notifier.send(paperStatsText());
+    }
 
     if (command === "/watch") {
       if (!pair) return this.notifier.send("Вкажи пару: /watch AIGENSYNUSDT");
@@ -107,9 +114,17 @@ function helpText() {
     "/btc — BTC фільтр",
     "/status — статус сканера",
     "/positions — активні угоди",
+    "/paper on — увімкнути paper trading",
+    "/paper off — вимкнути paper trading",
+    "/paper — статистика paper trading",
     "/diagnostics — API і біржі",
     "/help — список команд"
   ].join("\n");
+}
+
+function paperModeText(enabled: boolean) {
+  setPaperMode(enabled);
+  return [enabled ? "✅ Paper trading ON" : "⏸ Paper trading OFF", "", paperStatsText()].join("\n");
 }
 
 function statusText() {
