@@ -2,14 +2,12 @@ import { ExchangeClient } from "../src/local/exchanges";
 import { atr, ema, macd, rsi, supportResistance, volumeProfileScore, vwap } from "../src/local/indicators";
 import { analyzeSmc } from "../src/local/smc";
 import { btcStable, regimeFrom } from "../src/local/scoring";
-import { TelegramNotifier } from "../src/local/telegram";
 import { calculatePositionSizing } from "../src/local/positionSizing";
 import { addPriorityPair } from "../src/local/watchlistStore";
 import { config } from "../src/local/config";
 import type { Candle, MarketRegime, PositionSizing } from "../src/local/types";
 
 const client = new ExchangeClient();
-const notifier = new TelegramNotifier();
 const symbol = (process.env.PAIR ?? process.argv[2] ?? "AIGENSYNUSDT").toUpperCase();
 const tfs = ["5", "15", "60"];
 const watchMode = process.env.WATCH_AIGENSYN === "1" || process.env.PRIORITY_WATCH === "1";
@@ -46,7 +44,6 @@ async function analyzeAndSend(sendWatchlist: boolean, priorityMode: boolean, can
   const valid = await client.bybitInstrumentSymbols("linear");
   if (!valid.has(symbol)) {
     const message = `❌ НЕ ВХОДИТИ — ${symbol}\n\nПричина:\n• Bybit Futures не має активного linear perpetual для ${symbol}`;
-    await notifier.send(message);
     console.log(message);
     return { qualified: false, watchlist: false, invalidated: true, score: 0 };
   }
@@ -91,11 +88,7 @@ async function analyzeAndSend(sendWatchlist: boolean, priorityMode: boolean, can
   const invalidated = priorityMode && canInvalidate && selected.score < 80 && (!confirmations.momentum || !confirmations.volume || !confirmations.btc || !confirmations.breakout);
   const positionSizing = calculatePositionSizing({ symbol, mode: "futures", side, score: selected.score, entry: levels.entry, stopLoss: levels.stopLoss, takeProfit: levels.takeProfit, marketRegime: regime, volatilityPct, momentumScore: selected.parts.momentum });
   const leverage = positionSizing?.leverage ?? leverageFor(selected.score, volatilityPct);
-  const activationMessage = qualified
-    ? [`${side === "SHORT" ? "🔴" : "🟢"} SETUP ACTIVATED — ${symbol}`, "", conciseTradeMessage(symbol, side, levels, leverage, positionSizing)].join("\n")
-    : watchlist
-      ? [`⚠️ WATCHLIST ONLY — ${symbol}`, "", "Чекаємо кращу точку входу.", "Сигнал ще не готовий."].join("\n")
-      : conciseNoTrade(symbol);
+  const activationMessage = qualified ? conciseTradeMessage(symbol, side, levels, leverage, positionSizing) : `INTERNAL ANALYSIS — ${symbol}`;
   const raw = [
     activationMessage,
     "",
@@ -136,7 +129,6 @@ async function analyzeAndSend(sendWatchlist: boolean, priorityMode: boolean, can
     `• Fake breakout risk: ${fakeBreakoutRisk.high ? "високий" : "низький"}`
   ].join("\n");
 
-  if (qualified || invalidated || watchlist && sendWatchlist) await notifier.send(activationMessage);
   console.log(raw);
   return { qualified, watchlist, invalidated, score: selected.score, analysis: { symbol, side, levels, leverage, btcOk, direction, score: selected.score, positionSizing } };
 }
@@ -167,7 +159,7 @@ async function monitorActivatedTrade(analysis: ActiveAnalysis) {
               : `🟢 ${analysis.symbol}\n\nENTRY OPENED`;
     if (sent.has(action)) continue;
     sent.add(action);
-    await notifier.send([action, "", `Ціна: ${fmt(current)}`].join("\n"));
+    console.log([action, "", `Ціна: ${fmt(current)}`].join("\n"));
     if (hitSl || hitTp3) return;
   }
 }
@@ -278,10 +270,6 @@ function conciseTradeMessage(symbol: string, side: "LONG" | "SHORT", levels: Ret
   ].join("\n");
 }
 
-function conciseNoTrade(symbol: string) {
-  return [`❌ NO TRADE — ${symbol}`, "", "Причина:", "", "Слабкий сигнал.", "", "Чекаємо кращу точку входу."].join("\n");
-}
-
 function mtfDirection(candles: Record<string, Candle[]>, direction: 1 | -1) {
   const aligned = tfs.filter((tf) => {
     const closes = candles[tf].map((c) => c.close);
@@ -360,7 +348,6 @@ interface ActiveAnalysis {
 
 main().catch(async (error) => {
   const message = [`❌ НЕ ВХОДИТИ — ${symbol}`, "", "Причина:", `• Помилка live Bybit Futures аналізу: ${error instanceof Error ? error.message : String(error)}`, "• Жоден інший символ не аналізувався"].join("\n");
-  await notifier.send(message).catch(() => undefined);
   console.error(message);
   process.exit(1);
 });

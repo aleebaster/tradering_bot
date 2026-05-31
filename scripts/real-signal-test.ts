@@ -1,7 +1,6 @@
 import { ExchangeClient } from "../src/local/exchanges";
 import { btcStable, buildSignal, regimeFrom } from "../src/local/scoring";
-import { TelegramNotifier } from "../src/local/telegram";
-import { config } from "../src/local/config";
+import { isRealEntrySignal, TelegramNotifier } from "../src/local/telegram";
 import type { Candle, ExchangeConfirmations, MarketSnapshot, Signal } from "../src/local/types";
 
 const client = new ExchangeClient();
@@ -15,9 +14,7 @@ async function main() {
   try {
     btcCandles = await loadBybit("BTCUSDT");
   } catch {
-    const message = conciseNoTrade("BTCUSDT");
-    await notifier.send(message);
-    console.log(message);
+    console.log("INTERNAL TEST: Bybit BTCUSDT unavailable; no Telegram message sent.");
     return;
   }
   const btcOk = btcStable(btcCandles);
@@ -60,15 +57,12 @@ async function main() {
     signals.push(buildSignal(snapshot));
   }
   if (!signals.length) {
-    const message = conciseNoTrade("BTCUSDT");
-    await notifier.send(message);
-    console.log(message);
+    console.log("INTERNAL TEST: no signals built; no Telegram message sent.");
     return;
   }
-  const accepted = signals.filter((s) => s.side !== "NO_TRADE").sort((a, b) => b.score - a.score);
-  const message = accepted[0] ? formatSignal(accepted[0]) : formatNoTrade(signals);
-  await notifier.send(message);
-  console.log(message);
+  const accepted = signals.filter(isRealEntrySignal).sort((a, b) => b.score - a.score);
+  if (accepted[0]) await notifier.signal(accepted[0]);
+  console.log(accepted[0] ? formatSignal(accepted[0]) : "INTERNAL TEST: no real executable entry; no Telegram message sent.");
 }
 
 async function loadBybit(symbol: string) {
@@ -132,62 +126,36 @@ function direction(candles?: Candle[]) {
 
 function formatSignal(signal: Signal) {
   const direction = signal.side === "SHORT" ? "SHORT" : "LONG";
-  const icon = direction === "SHORT" ? "🔴" : "🟢";
-  const sizing = signal.positionSizing;
   return [
-    `${icon} ${direction} — ${signal.symbol}`,
+    `🚨 SIGNAL: ${direction}`,
     "",
-    signal.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : "⏳ ЧЕКАТИ ЗОНУ ВХОДУ",
+    "📍 Pair:",
+    signal.symbol,
     "",
-    "📍 Вхід:",
+    "🎯 Entry:",
     `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
     "",
-    "🛑 Stop Loss:",
+    "🛡 Stop Loss:",
     fmt(signal.stopLoss),
     "",
-    "🎯 TP1:",
-    fmt(signal.takeProfit[0]),
+    "💰 Take Profit:",
+    `TP1 ${fmt(signal.takeProfit[0])} / TP2 ${fmt(signal.takeProfit[1])} / TP3 ${fmt(signal.takeProfit[2])}`,
     "",
-    "🎯 TP2:",
-    fmt(signal.takeProfit[1]),
+    "⚡ Leverage:",
+    signal.score >= 96 ? "x3" : "x2",
     "",
-    "🎯 TP3:",
-    fmt(signal.takeProfit[2]),
+    "📈 Confidence:",
+    `${signal.confidence}%`,
     "",
-    "⚡ Плече:",
-    sizing?.leverage ?? signal.leverage ?? "x2",
-    "",
-    "💰 Баланс:",
-    `${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT`,
-    "",
-    "📦 Розмір позиції:",
-    sizing ? `${sizing.positionSizeUsdt} USDT` : "тільки після підтвердження входу",
-    "",
-    `📌 Скільки ${direction === "SHORT" ? "шортити" : "купити"}:`,
-    sizing ? `${formatQuantity(sizing.quantity)} ${sizing.baseAsset}` : "очікуємо підтвердження",
-    "",
-    "🟠 Беззбиток:",
-    "Перенести Stop Loss після TP1"
+    "📊 Reason:",
+    "RSI, MACD, SMA trend and confirmations aligned."
   ].join("\n");
-}
-
-function formatNoTrade(signals: Signal[]) {
-  return conciseNoTrade(signals[0]?.symbol ?? "BTCUSDT");
 }
 
 function fmt(value: number) {
   return value >= 100 ? value.toFixed(2) : value.toFixed(5);
 }
 
-function formatQuantity(value: number) {
-  if (value >= 1000) return String(Math.floor(value));
-  if (value >= 1) return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
-  return value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
-}
-
-function conciseNoTrade(symbol: string) {
-  return [`❌ NO TRADE — ${symbol}`, "", "Причина:", "", "Слабкий сигнал.", "", "Чекаємо кращу точку входу."].join("\n");
-}
 
 main().catch((err) => {
   console.error("Помилка реального тесту сигналу", err instanceof Error ? err.message : err);

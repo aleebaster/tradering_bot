@@ -290,12 +290,41 @@ export class TelegramCommandCenter {
   private async handleCallback(id: string, data: string, answer = true): Promise<void> {
     if (answer) await answerCallback(id);
     const [action, rawSymbol] = data.split(":", 2);
+    if (action === "ui") return this.handleUiCallback(rawSymbol ?? "");
     const pair = normalizePriorityPair(rawSymbol ?? "");
     if (!pair) return this.notifier.send("Пара не розпізнана", mainMenuKeyboard());
     if (action === "watch") return this.handle(`/watch ${pair}`);
     if (action === "refresh") return this.handle(`/signal ${pair}`);
     if (action === "remove") return this.handle(`/unwatch ${pair}`);
     if (action === "full") return this.notifier.send(fullAnalysisText(pair), signalQuickActions(pair));
+  }
+
+  private async handleUiCallback(action: string): Promise<void> {
+    const button = buttonAction(action);
+    if (!button) return this.notifier.send(mainMenuText(), mainMenuKeyboard());
+    if (button === "menu" || button === "back") return this.notifier.send(mainMenuText(), mainMenuKeyboard());
+    if (button === "signals") return this.sendTopSetups();
+    if (button === "watchlist") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
+    if (button === "settings") return this.notifier.send(settingsText(), settingsKeyboard());
+    if (button === "signal_pair") return this.askPair("signal");
+    if (button === "watch_add") return this.askPair("watch");
+    if (button === "watch_remove") return this.askPair("unwatch");
+    if (button === "top" || button === "signals_refresh") return this.sendTopSetups();
+    if (button === "positions") return this.sendPositions();
+    if (button === "stats") return this.notifier.send(tradeStatsText(), mainMenuKeyboard());
+    if (button === "new_tokens") return this.sendNewTokens();
+    if (button === "watch_status") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
+    if (button === "monitoring") return this.sendMonitoring();
+    if (button === "market") return this.notifier.send(marketText(), marketActionsKeyboard());
+    if (button === "btc") return this.notifier.send(btcText(), marketActionsKeyboard());
+    if (button === "diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
+    if (button === "balance") return this.askPair("balance");
+    if (button === "leverage") return this.notifier.send(leverageText(), leverageKeyboard());
+    if (button === "x2" || button === "x3") return this.setLeverage(button);
+    if (button === "notifications") return this.toggleNotifications();
+    if (button === "telegram_ux") return this.notifier.send(settingsDetailText(action), settingsKeyboard());
+    if (button === "risk_mode") return this.notifier.send(riskModeText(), riskModeKeyboard());
+    if (button === "conservative" || button === "balanced" || button === "aggressive") return this.setRiskMode(riskModeFromButton(button));
   }
 }
 
@@ -322,141 +351,124 @@ function startOneShotAnalysis(pair: string) {
 
 function mainMenuKeyboard(): TelegramReplyMarkup {
   return {
-    keyboard: [
-      [{ text: "📊 Сигнали" }, { text: "👀 Watchlist" }],
-      [{ text: "📈 Ринок" }, { text: "₿ BTC Фільтр" }],
-      [{ text: "🔥 Топ Сетапи" }, { text: "📂 Позиції" }],
-      [{ text: "🪙 New Tokens" }, { text: "📊 Статистика" }],
-      [{ text: "🧪 Діагностика" }, { text: "⚙️ Налаштування" }],
-      [{ text: "📋 Меню" }]
-    ],
-    resize_keyboard: true,
-    is_persistent: true
+    inline_keyboard: [
+      [uiButton("📊 Сигнали", "signals"), uiButton("👀 Watchlist", "watchlist")],
+      [uiButton("📈 Ринок", "market"), uiButton("₿ BTC Фільтр", "btc")],
+      [uiButton("🔥 Топ Сетапи", "top"), uiButton("📂 Позиції", "positions")],
+      [uiButton("🪙 New Tokens", "new_tokens"), uiButton("📊 Статистика", "stats")],
+      [uiButton("🧪 Діагностика", "diagnostics"), uiButton("⚙️ Налаштування", "settings")]
+    ]
   };
 }
 
 function signalMenuKeyboard(): TelegramReplyMarkup {
   return {
-    keyboard: [
-      [{ text: "🔍 Аналіз пари" }],
-      [{ text: "🪙 New Tokens" }],
-      [{ text: "🔥 Найкращі сигнали" }, { text: "🟢 Активні угоди" }],
-      [{ text: "🔙 Назад" }]
-    ],
-    resize_keyboard: true,
-    is_persistent: true
+    inline_keyboard: [
+      [uiButton("🔍 Аналіз пари", "signal_pair")],
+      [uiButton("🪙 New Tokens", "new_tokens")],
+      [uiButton("🔥 Найкращі сигнали", "top"), uiButton("🟢 Активні угоди", "positions")],
+      [uiButton("🔙 Назад", "back")]
+    ]
   };
 }
 
 function watchlistMenuKeyboard(): TelegramReplyMarkup {
   return {
-    keyboard: [
-      [{ text: "➕ Додати пару" }, { text: "📄 Мій список" }],
-      [{ text: "👀 Watch status" }],
-      [{ text: "❌ Видалити пару" }, { text: "🔴 Моніторинг" }],
-      [{ text: "🔙 Назад" }]
-    ],
-    resize_keyboard: true,
-    is_persistent: true
+    inline_keyboard: [
+      [uiButton("➕ Додати пару", "watch_add"), uiButton("📄 Мій список", "watchlist")],
+      [uiButton("👀 Watch status", "watch_status")],
+      [uiButton("❌ Видалити пару", "watch_remove"), uiButton("🔴 Моніторинг", "monitoring")],
+      [uiButton("🔙 Назад", "back")]
+    ]
   };
 }
 
 function signalActionsKeyboard(): TelegramReplyMarkup {
   return {
-    keyboard: [
-      [{ text: "🔄 Оновити Сигнали" }, { text: "🔍 Аналіз пари" }],
-      [{ text: "🔥 Топ Сетапи" }, { text: "📂 Позиції" }],
-      [{ text: "🔙 Назад" }]
-    ],
-    resize_keyboard: true,
-    is_persistent: true
+    inline_keyboard: [
+      [uiButton("🔄 Оновити Сигнали", "signals_refresh"), uiButton("🔍 Аналіз пари", "signal_pair")],
+      [uiButton("🔥 Топ Сетапи", "top"), uiButton("📂 Позиції", "positions")],
+      [uiButton("🔙 Назад", "back")]
+    ]
   };
 }
 
 function marketActionsKeyboard(): TelegramReplyMarkup {
   return {
-    keyboard: [
-      [{ text: "🔄 Оновити Ринок" }],
-      [{ text: "📊 Сигнали" }, { text: "🔥 Топ Сетапи" }],
-      [{ text: "₿ BTC Фільтр" }, { text: "🔙 Назад" }]
-    ],
-    resize_keyboard: true,
-    is_persistent: true
+    inline_keyboard: [
+      [uiButton("🔄 Оновити Ринок", "market")],
+      [uiButton("📊 Сигнали", "signals"), uiButton("🔥 Топ Сетапи", "top")],
+      [uiButton("₿ BTC Фільтр", "btc"), uiButton("🔙 Назад", "back")]
+    ]
   };
 }
 
 function watchlistActionsKeyboard(): TelegramReplyMarkup {
   return {
-    keyboard: [
-      [{ text: "📄 Мій список" }, { text: "👀 Watch status" }],
-      [{ text: "🔴 Моніторинг" }],
-      [{ text: "➕ Додати пару" }, { text: "❌ Видалити пару" }],
-      [{ text: "📊 Аналіз" }, { text: "🔙 Назад" }]
-    ],
-    resize_keyboard: true,
-    is_persistent: true
+    inline_keyboard: [
+      [uiButton("📄 Мій список", "watchlist"), uiButton("👀 Watch status", "watch_status")],
+      [uiButton("🔴 Моніторинг", "monitoring")],
+      [uiButton("➕ Додати пару", "watch_add"), uiButton("❌ Видалити пару", "watch_remove")],
+      [uiButton("📊 Аналіз", "signal_pair"), uiButton("🔙 Назад", "back")]
+    ]
   };
 }
 
 function positionsActionsKeyboard(): TelegramReplyMarkup {
   return {
-    keyboard: [
-      [{ text: "🔄 Оновити Позиції" }, { text: "🔥 Топ Сетапи" }],
-      [{ text: "📊 Сигнали" }, { text: "🔙 Назад" }]
-    ],
-    resize_keyboard: true,
-    is_persistent: true
+    inline_keyboard: [
+      [uiButton("🔄 Оновити Позиції", "positions"), uiButton("🔥 Топ Сетапи", "top")],
+      [uiButton("📊 Сигнали", "signals"), uiButton("🔙 Назад", "back")]
+    ]
   };
 }
 
 function diagnosticsActionsKeyboard(): TelegramReplyMarkup {
   return {
-    keyboard: [
-      [{ text: "🔄 Оновити Статус" }],
-      [{ text: "📈 Ринок" }, { text: "📊 Сигнали" }],
-      [{ text: "🔙 Назад" }]
-    ],
-    resize_keyboard: true,
-    is_persistent: true
+    inline_keyboard: [
+      [uiButton("🔄 Оновити Статус", "diagnostics")],
+      [uiButton("📈 Ринок", "market"), uiButton("📊 Сигнали", "signals")],
+      [uiButton("🔙 Назад", "back")]
+    ]
   };
 }
 
 function watchlistQuickKeyboard(_pair: string): TelegramReplyMarkup {
   return {
-    keyboard: [
-      [{ text: "📄 Мій список" }, { text: "👀 Watch status" }],
-      [{ text: "❌ Видалити пару" }],
-      [{ text: "📊 Аналіз" }, { text: "🔴 Моніторинг" }],
-      [{ text: "🔙 Назад" }]
-    ],
-    resize_keyboard: true,
-    is_persistent: true
+    inline_keyboard: [
+      [uiButton("📄 Мій список", "watchlist"), uiButton("👀 Watch status", "watch_status")],
+      [uiButton("❌ Видалити пару", "watch_remove")],
+      [uiButton("📊 Аналіз", "signal_pair"), uiButton("🔴 Моніторинг", "monitoring")],
+      [uiButton("🔙 Назад", "back")]
+    ]
   };
 }
 
 function settingsKeyboard(): TelegramReplyMarkup {
   return {
-    keyboard: [
-      [{ text: "💰 Баланс" }, { text: "⚡ Плече" }],
-      [{ text: "🔔 Сповіщення" }, { text: "📱 Telegram UX" }],
-      [{ text: "🎯 Risk mode" }],
-      [{ text: "🔙 Назад" }]
-    ],
-    resize_keyboard: true,
-    is_persistent: true
+    inline_keyboard: [
+      [uiButton("💰 Баланс", "balance"), uiButton("⚡ Плече", "leverage")],
+      [uiButton("🔔 Сповіщення", "notifications"), uiButton("📱 Telegram UX", "telegram_ux")],
+      [uiButton("🎯 Risk mode", "risk_mode")],
+      [uiButton("🔙 Назад", "back")]
+    ]
   };
 }
 
 function leverageKeyboard(): TelegramReplyMarkup {
-  return { keyboard: [[{ text: "x2" }, { text: "x3" }], [{ text: "🔙 Назад" }]], resize_keyboard: true, one_time_keyboard: true };
+  return { inline_keyboard: [[uiButton("x2", "x2"), uiButton("x3", "x3")], [uiButton("🔙 Назад", "back")]] };
 }
 
 function riskModeKeyboard(): TelegramReplyMarkup {
-  return { keyboard: [[{ text: "Conservative" }, { text: "Balanced" }], [{ text: "Aggressive" }], [{ text: "🔙 Назад" }]], resize_keyboard: true, one_time_keyboard: true };
+  return { inline_keyboard: [[uiButton("Conservative", "conservative"), uiButton("Balanced", "balanced")], [uiButton("Aggressive", "aggressive")], [uiButton("🔙 Назад", "back")]] };
 }
 
 function backKeyboard(): TelegramReplyMarkup {
-  return { keyboard: [[{ text: "🔙 Назад" }]], resize_keyboard: true, one_time_keyboard: true };
+  return { inline_keyboard: [[uiButton("🔙 Назад", "back")]] };
+}
+
+function uiButton(text: string, action: string) {
+  return { text, callback_data: `ui:${action}` };
 }
 
 function mainMenuText() {
@@ -842,18 +854,18 @@ function buttonAction(text: string): ButtonAction | null {
     ["signals", ["сигнали", "signals"]],
     ["watchlist", ["watchlist", "мій список"]],
     ["settings", ["налаштування", "settings"]],
-    ["signal_pair", ["аналіз пари", "аналіз", "analyze pair"]],
-    ["watch_add", ["додати пару", "add pair"]],
-    ["watch_remove", ["видалити пару", "remove pair"]],
+    ["signal_pair", ["аналіз пари", "аналіз", "analyze pair", "signal pair"]],
+    ["watch_add", ["додати пару", "add pair", "watch add"]],
+    ["watch_remove", ["видалити пару", "remove pair", "watch remove"]],
     ["top", ["найкращі сигнали", "топ сетапи", "top setups"]],
-    ["signals_refresh", ["оновити сигнали", "refresh signals"]],
+    ["signals_refresh", ["оновити сигнали", "refresh signals", "signals refresh"]],
     ["positions", ["активні угоди", "позиції", "оновити позиції", "positions"]],
     ["stats", ["статистика", "stats"]],
     ["new_tokens", ["new tokens"]],
     ["watch_status", ["watch status"]],
     ["monitoring", ["моніторинг", "monitoring"]],
     ["market", ["ринок", "оновити ринок", "market"]],
-    ["btc", ["btc фільтр", "₿ btc фільтр", "btc filter"]],
+    ["btc", ["btc", "btc фільтр", "₿ btc фільтр", "btc filter"]],
     ["diagnostics", ["діагностика", "оновити статус", "diagnostics"]],
     ["balance", ["баланс", "balance"]],
     ["leverage", ["плече", "leverage"]],

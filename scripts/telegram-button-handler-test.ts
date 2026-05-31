@@ -54,6 +54,18 @@ async function main() {
   checks["inline_full"] = last(notifier).includes("Повний аналіз");
   await center.handleCallbackForTest("remove:BTCUSDT");
   checks["inline_remove"] = last(notifier).includes("Видалено");
+  await center.handleCallbackForTest("ui:settings");
+  checks["inline_ui_settings"] = last(notifier).includes("Налаштування");
+  await center.handleCallbackForTest("ui:risk_mode");
+  checks["inline_ui_risk_mode"] = last(notifier).includes("Risk mode");
+  await center.handleCallbackForTest("ui:aggressive");
+  checks["inline_ui_aggressive"] = last(notifier).includes("Risk mode оновлено") && last(notifier).includes("Aggressive");
+  await center.handleCallbackForTest("ui:balanced");
+  checks["inline_ui_balanced"] = last(notifier).includes("Risk mode оновлено") && last(notifier).includes("Balanced");
+  await center.handleCallbackForTest("ui:conservative");
+  checks["inline_ui_conservative"] = last(notifier).includes("Risk mode оновлено") && last(notifier).includes("Conservative");
+  await center.handleCallbackForTest("ui:back");
+  checks["inline_ui_back"] = last(notifier).includes("Головне меню");
 
   updateTelegramSettings(originalSettings);
 

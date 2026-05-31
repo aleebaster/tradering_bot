@@ -3,19 +3,17 @@ import { state } from "../src/local/state";
 import { loadTelegramSettings } from "../src/local/telegramSettings";
 import { loadPriorityWatchlist } from "../src/local/watchlistStore";
 
-const notifier = new TelegramNotifier();
+class CaptureNotifier extends TelegramNotifier {
+  messages: { text: string; replyMarkup?: TelegramReplyMarkup }[] = [];
 
-const mainMenu: TelegramReplyMarkup = {
-  keyboard: [
-    [{ text: "📊 Сигнали" }, { text: "👀 Watchlist" }],
-    [{ text: "📈 Ринок" }, { text: "₿ BTC Фільтр" }],
-    [{ text: "🔥 Топ Сетапи" }, { text: "📂 Позиції" }],
-    [{ text: "🧪 Діагностика" }, { text: "⚙️ Налаштування" }],
-    [{ text: "📋 Меню" }]
-  ],
-  resize_keyboard: true,
-  is_persistent: true
-};
+  override async send(text: string, replyMarkup?: TelegramReplyMarkup) {
+    this.messages.push({ text, replyMarkup });
+  }
+}
+
+const notifier = new CaptureNotifier();
+
+const mainMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("📊 Сигнали", "signals"), btn("👀 Watchlist", "watchlist")], [btn("📈 Ринок", "market"), btn("₿ BTC Фільтр", "btc")], [btn("🔥 Топ Сетапи", "top"), btn("📂 Позиції", "positions")], [btn("🧪 Діагностика", "diagnostics"), btn("⚙️ Налаштування", "settings")]] };
 
 const signalActions: TelegramReplyMarkup = {
   inline_keyboard: [
@@ -24,13 +22,13 @@ const signalActions: TelegramReplyMarkup = {
   ]
 };
 
-const signalMenu: TelegramReplyMarkup = { keyboard: [[{ text: "🔍 Аналіз пари" }], [{ text: "🔥 Найкращі сигнали" }, { text: "🟢 Активні угоди" }], [{ text: "🔙 Назад" }]], resize_keyboard: true, is_persistent: true };
-const watchlistMenu: TelegramReplyMarkup = { keyboard: [[{ text: "➕ Додати пару" }, { text: "📄 Мій список" }], [{ text: "❌ Видалити пару" }, { text: "🔴 Моніторинг" }], [{ text: "🔙 Назад" }]], resize_keyboard: true, is_persistent: true };
-const settingsMenu: TelegramReplyMarkup = { keyboard: [[{ text: "💰 Баланс" }, { text: "⚡ Плече" }], [{ text: "🔔 Сповіщення" }, { text: "📱 Telegram UX" }], [{ text: "🎯 Risk mode" }], [{ text: "🔙 Назад" }]], resize_keyboard: true, is_persistent: true };
-const leverageMenu: TelegramReplyMarkup = { keyboard: [[{ text: "x2" }, { text: "x3" }], [{ text: "🔙 Назад" }]], resize_keyboard: true };
-const riskMenu: TelegramReplyMarkup = { keyboard: [[{ text: "Conservative" }, { text: "Balanced" }], [{ text: "Aggressive" }], [{ text: "🔙 Назад" }]], resize_keyboard: true };
-const marketActions: TelegramReplyMarkup = { keyboard: [[{ text: "🔄 Оновити Ринок" }], [{ text: "📊 Сигнали" }, { text: "🔥 Топ Сетапи" }], [{ text: "₿ BTC Фільтр" }, { text: "🔙 Назад" }]], resize_keyboard: true };
-const watchlistActions: TelegramReplyMarkup = { keyboard: [[{ text: "📄 Мій список" }, { text: "❌ Видалити пару" }], [{ text: "📊 Аналіз" }, { text: "🔴 Моніторинг" }], [{ text: "🔙 Назад" }]], resize_keyboard: true };
+const signalMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("🔍 Аналіз пари", "signal_pair")], [btn("🔥 Найкращі сигнали", "top"), btn("🟢 Активні угоди", "positions")], [btn("🔙 Назад", "back")]] };
+const watchlistMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("➕ Додати пару", "watch_add"), btn("📄 Мій список", "watchlist")], [btn("❌ Видалити пару", "watch_remove"), btn("🔴 Моніторинг", "monitoring")], [btn("🔙 Назад", "back")]] };
+const settingsMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("💰 Баланс", "balance"), btn("⚡ Плече", "leverage")], [btn("🔔 Сповіщення", "notifications"), btn("📱 Telegram UX", "telegram_ux")], [btn("🎯 Risk mode", "risk_mode")], [btn("🔙 Назад", "back")]] };
+const leverageMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("x2", "x2"), btn("x3", "x3")], [btn("🔙 Назад", "back")]] };
+const riskMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("Conservative", "conservative"), btn("Balanced", "balanced")], [btn("Aggressive", "aggressive")], [btn("🔙 Назад", "back")]] };
+const marketActions: TelegramReplyMarkup = { inline_keyboard: [[btn("🔄 Оновити Ринок", "market")], [btn("📊 Сигнали", "signals"), btn("🔥 Топ Сетапи", "top")], [btn("₿ BTC Фільтр", "btc"), btn("🔙 Назад", "back")]] };
+const watchlistActions: TelegramReplyMarkup = { inline_keyboard: [[btn("📄 Мій список", "watchlist"), btn("❌ Видалити пару", "watch_remove")], [btn("📊 Аналіз", "signal_pair"), btn("🔴 Моніторинг", "monitoring")], [btn("🔙 Назад", "back")]] };
 
 async function main() {
   await notifier.send(["📋 Головне меню", "", "Тест кнопкового Telegram UI.", "Натискай кнопки нижче без введення команд."].join("\n"), mainMenu);
@@ -45,16 +43,21 @@ async function main() {
   await notifier.send(realSettingsText(), settingsMenu);
   await notifier.send("⚡ Плече\n\nОберіть x2 або x3", leverageMenu);
   await notifier.send("🎯 Risk mode\n\nОберіть режим ризику", riskMenu);
-  await notifier.send(["🚨 SIGNAL: SHORT", "", "📊 Reason:", "RSI momentum aligned; MACD confirms direction; SMA trend aligned; sniper + volume + BTC stable.", "", "🎯 Entry:", "BTCUSDT 104250-104400", "", "🛡 Stop Loss:", "104900", "", "💰 Take Profit:", "TP1 103800 / TP2 103100 / TP3 102400", "", "⚡ Leverage:", "x3", "", "📈 Confidence:", "97%", "", "💵 Estimated profit/risk:", "risk 0.07 USDT; TP 0.11 / 0.22 / 0.36 USDT; RR 1:3.4"].join("\n"), signalActions);
+  await notifier.send(["🚨 SIGNAL: SHORT", "", "📍 Pair:", "BTCUSDT", "", "🎯 Entry:", "104250-104400", "", "🛡 Stop Loss:", "104900", "", "💰 Take Profit:", "TP1 103800 / TP2 103100 / TP3 102400", "", "⚡ Leverage:", "x3", "", "📈 Confidence:", "97%", "", "📊 Reason:", "RSI momentum aligned; MACD confirms direction; SMA trend aligned."].join("\n"), signalActions);
   console.log(JSON.stringify({
     ok: true,
     sent: ["main_menu", "signal_menu", "watchlist_menu", "market_actions", "settings_menu", "leverage_menu", "risk_menu", "inline_signal_quick_actions", "real_status_outputs"],
     proof: {
-      replyKeyboardRows: mainMenu.keyboard?.length,
+      inlineMenuRows: mainMenu.inline_keyboard?.length,
       inlineKeyboardRows: signalActions.inline_keyboard?.length,
+      noLiveTelegramSpam: notifier.messages.length === 13,
       buttons: ["📊 Сигнали", "🔍 Аналіз пари", "🔥 Найкращі сигнали", "🟢 Активні угоди", "👀 Watchlist", "➕ Додати пару", "📄 Мій список", "❌ Видалити пару", "🔴 Моніторинг", "📈 Ринок", "🔄 Оновити Ринок", "₿ BTC Фільтр", "📂 Позиції", "🧪 Діагностика", "⚙️ Налаштування", "💰 Баланс", "⚡ Плече", "x2", "x3", "🔔 Сповіщення", "🎯 Risk mode", "Conservative", "Balanced", "Aggressive", "🟢 Моніторити", "🔄 Оновити Аналіз", "❌ Видалити", "📊 Повний Аналіз"]
     }
   }, null, 2));
+}
+
+function btn(text: string, action: string) {
+  return { text, callback_data: `ui:${action}` };
 }
 
 function realTopText() {

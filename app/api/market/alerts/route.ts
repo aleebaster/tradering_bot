@@ -276,35 +276,7 @@ function clamp(value: number) {
 }
 
 async function notifyTelegram(alert: Alert) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) return;
-  const key = `${alert.symbol}-${alert.side}`;
-  const last = notified.get(key) ?? 0;
-  if (Date.now() - last < 60 * 60 * 1000) return;
-  notified.set(key, Date.now());
-  const text = [
-    "🤖 OPENCODE BOT",
-    "",
-    "🔥 УГОДА, В ЯКУ ВАРТО ЗАЙТИ",
-    "",
-    `${alert.side} — ${alert.symbol}`,
-    `Score: ${alert.score}/100 · Ймовірність: ${alert.probability}%`,
-    `Ціна: ${formatPrice(alert.price)}`,
-    `Вхід: ${formatPrice(alert.entry[0])}–${formatPrice(alert.entry[1])}`,
-    `SL: ${formatPrice(alert.stopLoss)}`,
-    `TP: ${alert.takeProfit.map(formatPrice).join(" / ")}`,
-    `Плече: ${alert.leverage}`,
-    "",
-    alert.reasons.map((reason) => `• ${reason}`).join("\n"),
-    "",
-    "Не фінансова порада. Ризик контролювати обов'язково."
-  ].join("\n");
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text })
-  });
+  return;
 }
 
 function formatPrice(value: number) {

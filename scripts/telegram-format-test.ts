@@ -1,12 +1,20 @@
-import { TelegramNotifier } from "../src/local/telegram";
+import { TelegramNotifier, type TelegramReplyMarkup } from "../src/local/telegram";
 
-const notifier = new TelegramNotifier();
+class CaptureNotifier extends TelegramNotifier {
+  messages: string[] = [];
+
+  override async send(text: string, _replyMarkup?: TelegramReplyMarkup) {
+    this.messages.push(text);
+  }
+}
+
+const notifier = new CaptureNotifier();
 
 const longMessage = [
   "🚨 SIGNAL: LONG",
   "",
-  "📊 Reason:",
-  "RSI momentum aligned; MACD impulse confirmed; SMA trend aligned; sniper + volume + BTC stable.",
+  "📍 Pair:",
+  "BTCUSDT",
   "",
   "🎯 Entry:",
   "104250–104400",
@@ -23,15 +31,15 @@ const longMessage = [
   "📈 Confidence:",
   "94%",
   "",
-  "💵 Estimated profit/risk:",
-  "risk 0.08 USDT; TP 0.12 / 0.20 / 0.34 USDT; RR 1:3.1"
+  "📊 Reason:",
+  "RSI momentum aligned; MACD impulse confirmed; SMA trend aligned."
 ].join("\n");
 
 const shortMessage = [
   "🚨 SIGNAL: SHORT",
   "",
-  "📊 Reason:",
-  "RSI momentum aligned; MACD confirms direction; SMA trend aligned; sniper + volume + BTC stable.",
+  "📍 Pair:",
+  "BTCUSDT",
   "",
   "🎯 Entry:",
   "104250–104400",
@@ -48,8 +56,8 @@ const shortMessage = [
   "📈 Confidence:",
   "97%",
   "",
-  "💵 Estimated profit/risk:",
-  "risk 0.07 USDT; TP 0.11 / 0.22 / 0.36 USDT; RR 1:3.4"
+  "📊 Reason:",
+  "RSI momentum aligned; MACD confirms direction; SMA trend aligned."
 ].join("\n");
 
 async function main() {
@@ -62,8 +70,8 @@ async function main() {
       { type: "SHORT", header: "🚨 SIGNAL: SHORT", symbol: "BTCUSDT" }
     ],
     checks: {
-      telegramDelivery: true,
-      requiredFields: "Reason / Entry / Stop Loss / TP1-TP3 / Leverage / Confidence / Estimated profit-risk",
+      noLiveTelegramSpam: notifier.messages.length === 2,
+      requiredFields: "Signal / Pair / Entry / Stop Loss / TP1-TP3 / Leverage / Confidence / Reason",
       readableInSeconds: "3-5"
     }
   }, null, 2));

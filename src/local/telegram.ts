@@ -18,7 +18,7 @@ export class TelegramNotifier {
 
   async signal(signal: Signal) {
     if (!isRealEntrySignal(signal)) return;
-    await this.send(formatSignal(signal), signalQuickActions(signal.symbol));
+    await this.send(formatSignal(signal));
   }
 
   async setupActivated(signal: Signal, reasons: string[]) {
@@ -42,15 +42,11 @@ export class TelegramNotifier {
   }
 
   async exitAlert(signal: Signal, action: string, reasons: string[]) {
-    await this.tradeManagementAlert(signal, action, signal.currentPrice, reasons);
+    return;
   }
 
   async tradeManagementAlert(signal: Signal, action: string, currentPrice: number, reasons: string[]) {
-    await this.send([
-      action,
-      "",
-      `Price: ${fmt(currentPrice)}`
-    ].filter(Boolean).join("\n"));
+    return;
   }
 
   async diagnostics(message: string) {
@@ -86,16 +82,15 @@ function modeUa(mode: string) {
 
 function formatSignal(signal: Signal) {
   const direction = signal.side === "SHORT" ? "SHORT" : signal.side === "BUY" ? "LONG" : "LONG";
-  const sizing = signal.positionSizing;
   const leverage = strongestSetup(signal) ? "x3" : "x2";
   return [
     `🚨 SIGNAL: ${direction}`,
     "",
-    "📊 Reason:",
-    signalReason(signal),
+    "📍 Pair:",
+    signal.symbol,
     "",
     "🎯 Entry:",
-    `${signal.symbol} ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+    `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
     "",
     "🛡 Stop Loss:",
     fmt(signal.stopLoss),
@@ -109,8 +104,8 @@ function formatSignal(signal: Signal) {
     "📈 Confidence:",
     `${signal.confidence}%`,
     "",
-    "💵 Estimated profit/risk:",
-    estimatedProfitRisk(signal, sizing)
+    "📊 Reason:",
+    signalReason(signal)
   ].filter(Boolean).join("\n");
 }
 
@@ -158,22 +153,11 @@ function strongestSetup(signal: Signal) {
   return signal.score >= 96 && signal.confidence >= 94 && (signal.scoreBreakdown.entrySniper ?? 0) >= 90 && (signal.scoreBreakdown.volumeConfirmation ?? 0) >= 75;
 }
 
-function estimatedProfitRisk(signal: Signal, sizing?: Signal["positionSizing"]) {
-  if (!sizing) return `RR ${signal.riskReward}`;
-  const loss = fmtUsdt(sizing.potentialLossUsdt);
-  const profit = sizing.potentialProfitUsdt.map(fmtUsdt).join(" / ");
-  return `risk ${loss} USDT; TP ${profit} USDT; RR ${signal.riskReward}`;
-}
-
 function rrNumber(value: string) {
   const colon = value.match(/:\s*([0-9]+(?:\.[0-9]+)?)/);
   if (colon) return Number(colon[1]);
   const match = value.match(/([0-9]+(?:\.[0-9]+)?)/);
   return match ? Number(match[1]) : 0;
-}
-
-function fmtUsdt(n: number) {
-  return Number.isFinite(n) ? n.toFixed(2) : "0.00";
 }
 
 function fmt(n: number) {
