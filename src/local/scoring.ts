@@ -120,10 +120,13 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   if (rrValue < 2) score = Math.min(score, 69);
   score = Math.max(score, earlySetupFloor(snapshot, { side, executionAligned: execution.aligned, htfScore: htf.score, trendStrength, mtf, volume, orderFlowScore: orderFlow.score, liquidityScore: liquidity.score, funding, fakeBreakoutRisk: fakeBreakout.risk, newsBlocked: newsRisk.blocked, rrValue }));
   const roundedScore = Math.round(score);
-  const entryThreshold = 90;
+  const entryThreshold = 92;
   const watchThreshold = coinQuality.watchThreshold;
-  const qualifiedSide: Side = roundedScore >= entryThreshold ? side : roundedScore >= watchThreshold && snapshot.mode === "futures" && side !== "NO_TRADE" ? "WATCHLIST" : "NO_TRADE";
-  const entryStatus = qualifiedSide === "NO_TRADE" || qualifiedSide === "WATCHLIST" ? "NO_TRADE" : last.close >= Math.min(...entry) && last.close <= Math.max(...entry) && sniper.ready ? "ENTER_NOW" : "WAIT_FOR_ENTRY";
+  const earlyThreshold = 72;
+  const inEntryZone = last.close >= Math.min(...entry) && last.close <= Math.max(...entry);
+  const strongEntryReady = roundedScore >= entryThreshold && side !== "NO_TRADE" && inEntryZone && sniper.ready && snapshot.btcStable && volume >= 65 && momentum >= 70 && liquidity.score >= 65 && !fakeBreakout.risk && !hardBlock.blocked;
+  const qualifiedSide: Side = strongEntryReady ? side : roundedScore >= earlyThreshold && snapshot.mode === "futures" && side !== "NO_TRADE" ? "WATCHLIST" : "NO_TRADE";
+  const entryStatus = qualifiedSide === "NO_TRADE" || qualifiedSide === "WATCHLIST" ? "NO_TRADE" : "ENTER_NOW";
   const riskReward = riskRewardRatio(rrValue);
   const grade = gradeFrom(roundedScore, hardBlock.blocked, qualifiedSide);
   const leverage = snapshot.mode === "futures" && !["NO_TRADE", "WATCHLIST"].includes(qualifiedSide) ? leverageRecommendation(score, a / last.close, momentum, snapshot.regime) : undefined;
@@ -202,6 +205,8 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
       btcPenalty: Math.round(btcPenalty),
       exchangeConfirmationPenalty: Math.round(confirmationPenalty),
       adaptiveConfirmationRequired: entryThreshold,
+      watchlistThreshold: watchThreshold,
+      earlySetupThreshold: earlyThreshold,
       smallAltStrictConfirmation: confirmationProfile.smallAltStrict ? 100 : 0,
       realTradeMemoryAdjustment: 0
     },
@@ -210,7 +215,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   };
   const realAdjustment = realTradeQualityAdjustment(signal);
   signal.scoreBreakdown.realTradeMemoryAdjustment = Math.round(realAdjustment * 100) / 100;
-  if (realAdjustment === 0 || signal.score < 80) return signal;
+  if (realAdjustment === 0 || signal.score < 72) return signal;
   const adjustedScore = Math.round(clamp(signal.score + realAdjustment, 0, 100));
   signal.score = adjustedScore;
   signal.confidence = adjustedScore;
@@ -219,9 +224,11 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
 }
 
 function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, weakMomentum: boolean, rrValue: number, entryThreshold: number, hardBlockReason?: string) {
+  if (side === "WATCHLIST") return score >= 82 ? "WATCHLIST ONLY: сетап близько до порогу, потрібне покращення підтверджень" : "EARLY SETUP: цікава структура, моніторинг без входу до retest/sniper підтвердження";
   if (side !== "NO_TRADE") return "Прийнятий сетап з високою ймовірністю";
   if (hardBlockReason) return hardBlockReason;
-  if (score >= 80 && score < entryThreshold && snapshot.mode === "futures") return "WATCHLIST ONLY: сетап близько до порогу, потрібне покращення підтверджень";
+  if (score >= 82 && score < entryThreshold && snapshot.mode === "futures") return "WATCHLIST ONLY: сетап близько до порогу, потрібне покращення підтверджень";
+  if (score >= 72 && score < 82 && snapshot.mode === "futures") return "EARLY SETUP: цікава структура, моніторинг без входу до retest/sniper підтвердження";
   if (snapshot.regime === "MANIPULATION_RISK" || snapshot.regime === "CHOPPY") return "CHOPPY / noise market: немає чистого retest або якісного імпульсу";
   if (!snapshot.btcStable && snapshot.symbol !== "BTCUSDT") return "BTC нестабільний, агресивні угоди по альткоїнах заблоковані";
   if (snapshot.confirmations.conflict) return "Біржові підтвердження конфліктують, угоду пропущено";
@@ -281,9 +288,9 @@ function coinQualityProfile(snapshot: MarketSnapshot, quality: { volume: number;
   const stableVolume = quality.volume >= 55;
   const orderbookOk = quality.orderbook >= 50;
   const volatilityQuality = quality.volatilityPct >= 0.0025 && quality.volatilityPct <= 0.018;
-  if (major && liquidity >= 55 && availability >= 2) return { tier: "A-TIER" as const, penalty: 0, watchThreshold: 80 };
-  if (liquidity >= 50 && availability >= 2 && stableVolume && orderbookOk && volatilityQuality && !quality.fakeBreakoutRisk) return { tier: "B-TIER" as const, penalty: 4, watchThreshold: 80 };
-  return { tier: "C-TIER" as const, penalty: 8, watchThreshold: 80 };
+  if (major && liquidity >= 55 && availability >= 2) return { tier: "A-TIER" as const, penalty: 0, watchThreshold: 82 };
+  if (liquidity >= 50 && availability >= 2 && stableVolume && orderbookOk && volatilityQuality && !quality.fakeBreakoutRisk) return { tier: "B-TIER" as const, penalty: 4, watchThreshold: 82 };
+  return { tier: "C-TIER" as const, penalty: 8, watchThreshold: 82 };
 }
 
 function btcAltRiskPenalty(snapshot: MarketSnapshot, direction: number, correlation: CorrelationContext) {
@@ -297,13 +304,15 @@ function btcAltRiskPenalty(snapshot: MarketSnapshot, direction: number, correlat
 }
 
 function earlySetupFloor(snapshot: MarketSnapshot, quality: { side: Side; executionAligned: boolean; htfScore: number; trendStrength: number; mtf: number; volume: number; orderFlowScore: number; liquidityScore: number; funding: number; fakeBreakoutRisk: boolean; newsBlocked: boolean; rrValue: number }) {
-  if (snapshot.mode !== "futures" || quality.side === "NO_TRADE" || quality.newsBlocked || quality.fakeBreakoutRisk || quality.rrValue < 2) return 0;
+  if (snapshot.mode !== "futures" || quality.side === "NO_TRADE" || quality.newsBlocked || quality.rrValue < 2) return 0;
   if (quality.funding < 70 || !snapshot.btcStable) return 0;
   const structureReady = quality.executionAligned || quality.htfScore >= 55 || quality.mtf >= 67;
   if (!structureReady || quality.trendStrength < 8 && quality.mtf < 67 && quality.htfScore < 55) return 0;
   const confirmations = [quality.executionAligned, quality.htfScore >= 55, quality.mtf >= 67, quality.volume >= 50, quality.orderFlowScore >= 80, quality.liquidityScore >= 70, snapshot.btcStable].filter(Boolean).length;
+  if (quality.fakeBreakoutRisk) return confirmations >= 4 ? 72 : 0;
   if (confirmations >= 5) return 85;
-  if (confirmations >= 4) return 80;
+  if (confirmations >= 4) return 82;
+  if (confirmations >= 3 && quality.volume >= 45 && quality.orderFlowScore >= 60) return 72;
   return 0;
 }
 
@@ -311,7 +320,7 @@ function leverageRecommendation(score: number, volatility: number, momentum: num
   let leverage = score >= 95 ? 3 : 2;
   if (volatility > 0.018 || regime === "VOLATILE" || regime === "HIGH_VOLATILITY" || regime === "NEWS_DRIVEN" || regime === "CHOPPY") leverage = Math.min(leverage, 2);
   else if (volatility > 0.012 || momentum < 70) leverage = Math.min(leverage, 3);
-  if (score < 90) leverage = Math.min(leverage, 3);
+  if (score < 92) leverage = Math.min(leverage, 3);
   if (score < 85) leverage = 2;
   return `x${leverage}`;
 }
@@ -622,16 +631,16 @@ function accuracyHardBlock(snapshot: MarketSnapshot, input: { side: Side; direct
 
 function gradeFrom(score: number, blocked: boolean, side: Side): SignalGrade {
   if (side === "NO_TRADE") return "D";
-  if (side === "WATCHLIST") return score >= 85 ? "B" : "C";
-  if (blocked && score < 90) return "D";
+  if (side === "WATCHLIST") return score >= 82 ? "B" : "C";
+  if (blocked && score < 92) return "D";
   if (score >= 92) return "A+";
   if (score >= 85) return "A";
-  if (score >= 80) return "B";
+  if (score >= 82) return "B";
   return "D";
 }
 
 function signalTtlMs(score: number) {
-  if (score >= 90) return 30 * 60 * 1000;
+  if (score >= 92) return 30 * 60 * 1000;
   if (score >= 85) return 20 * 60 * 1000;
   return 15 * 60 * 1000;
 }

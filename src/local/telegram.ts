@@ -163,7 +163,7 @@ function formatSignal(signal: Signal) {
 }
 
 function formatWatchlist(signal: Signal) {
-  return formatWaitingSignal(signal, signal.score >= 85 ? "🟡 WATCHLIST" : "⚡ EARLY SETUP");
+  return formatWaitingSignal(signal, signal.score >= 82 ? "👀 WATCHLIST" : "⏳ EARLY SETUP");
 }
 
 function formatNoTrade(signal: Signal) {
@@ -213,7 +213,7 @@ function formatWaitingSignal(signal: Signal, label: string) {
     "💰 Risk/Reward:",
     signal.riskReward,
     "",
-    "Наступна перевірка: 5 хв"
+    signal.score >= 82 ? "Наступна перевірка: 2-3 хв" : "Наступна перевірка: 5-10 хв"
   ].join("\n");
 }
 

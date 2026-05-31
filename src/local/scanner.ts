@@ -175,7 +175,7 @@ export class Scanner {
     const prev = this.signalCooldown.get(key);
     if (!prev) return true;
     const cooldownMs = 25 * 60_000;
-    const improved = signal.score >= prev.score + 8 || signal.score >= 90 && prev.score < 90;
+    const improved = signal.score >= prev.score + 8 || signal.score >= 92 && prev.score < 92;
     return Date.now() - prev.sentAt >= cooldownMs || improved;
   }
 
@@ -374,7 +374,7 @@ export class Scanner {
   }
 
   private async trackWatchlist(signal: Signal) {
-    if (signal.mode !== "futures" || signal.score < 80 || signal.score >= 90) return;
+    if (signal.mode !== "futures" || signal.score < 72 || signal.side !== "WATCHLIST") return;
     const key = watchKey(signal.symbol, signal.mode);
     if (this.watchlistSent.has(key)) return;
     this.watchlistSent.add(key);
@@ -383,7 +383,7 @@ export class Scanner {
   }
 
   private async monitorWatchlist() {
-    const items = state.watchlist.filter((signal) => signal.mode === "futures" && signal.score >= 80);
+    const items = state.watchlist.filter((signal) => signal.mode === "futures" && signal.score >= 72);
     if (!items.length || Date.now() < this.bybitCooldownUntil) return;
     let btcCandles: Record<string, Candle[]>;
     try {
@@ -403,7 +403,7 @@ export class Scanner {
         logger.info({ symbol: item.symbol, score: signal.score, side: signal.side, scoreBreakdown: signal.scoreBreakdown }, "watchlist recheck");
         const evolution = watchlistEvolution(item, signal);
         const fomo = fomoBlock(signal);
-        if (signal.score >= 90 && fomo.blocked) {
+        if (signal.score >= 92 && fomo.blocked) {
           if (!this.fomoWatchlist.has(key)) {
             this.fomoWatchlist.add(key);
             if (notificationsEnabled()) await this.notifier.pumpDetected(signal, fomo.reasons);
@@ -411,7 +411,7 @@ export class Scanner {
           state.watchlist = [signal, ...state.watchlist.filter((x) => watchKey(x.symbol, x.mode) !== key)].slice(0, 30);
           continue;
         }
-        if (signal.score >= 90 && activationConfirmed(signal, evolution)) {
+        if (signal.score >= 92 && activationConfirmed(signal, evolution)) {
           const activated = signal;
           this.activatedWatchlist.add(key);
           recordSignal(activated);
@@ -449,7 +449,7 @@ export function activationConfirmed(signal: Signal, evolution: WatchlistEvolutio
     evolution.oiImproved,
     evolution.volumeImproved
   ].filter(Boolean).length;
-  return !isExpired(signal) && signal.score >= 90 && confirmations >= 5 && sniperConfirmed(signal) && signal.btcStable && signal.entryStatus === "ENTER_NOW" && !fomoBlock(signal).blocked;
+  return !isExpired(signal) && signal.score >= 92 && confirmations >= 5 && sniperConfirmed(signal) && signal.btcStable && signal.entryStatus === "ENTER_NOW" && !fomoBlock(signal).blocked;
 }
 
 export type WatchlistEvolution = ReturnType<typeof watchlistEvolution>;
@@ -478,11 +478,11 @@ function watchlistDecayed(prev: Signal, next: Signal, evolution: WatchlistEvolut
   if (next.score < 75) return true;
   if (!next.btcStable && next.symbol !== "BTCUSDT") return true;
   const faded = [evolution.volumeFaded, evolution.oiFaded, evolution.momentumFaded, evolution.orderbookFaded].filter(Boolean).length;
-  return prev.score >= 85 && next.score < 80 || faded >= 3;
+  return prev.score >= 82 && next.score < 72 || faded >= 3;
 }
 
 function activationReasons(signal: Signal, evolution: WatchlistEvolution) {
-  const reasons = ["score оновився до 90+"];
+  const reasons = ["score оновився до 92+"];
   if (evolution.scoreDelta > 0) reasons.push(`score покращився +${evolution.scoreDelta}`);
   if (evolution.volumeImproved || volumeConfirmed(signal)) reasons.push("volume increased");
   if (evolution.oiImproved || (signal.scoreBreakdown.openInterestConfirmation ?? 0) >= 58) reasons.push("OI rising");

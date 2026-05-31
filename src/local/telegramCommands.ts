@@ -252,7 +252,7 @@ export class TelegramCommandCenter {
 
   private async sendTopSetups(): Promise<void> {
     const top = topSignals();
-    if (!top.length) return this.notifier.send("🔥 Топ Сетапи\n\nЗараз немає setup 80+. Scanner активний, чекаємо якісний сигнал.", signalActionsKeyboard());
+    if (!top.length) return this.notifier.send("🔥 Топ Сетапи\n\nЗараз немає setup 72+. Scanner активний, чекаємо якісний сигнал.", signalActionsKeyboard());
     await this.notifier.send("🔥 Топ Сетапи\n\nНайкращі live setup зараз:", signalActionsKeyboard());
     for (const signal of top) await this.notifier.send(compactSignalCard(signal), signalQuickActions(signal.symbol));
   }
@@ -473,7 +473,7 @@ function mainMenuText() {
 }
 
 function signalMenuText() {
-  return ["📊 Сигнали", "", "🔍 Аналіз пари — введи BTCUSDT або іншу пару.", "🔥 Найкращі сигнали — сетапи 85+.", "🟢 Активні угоди — відкриті позиції."].join("\n");
+  return ["📊 Сигнали", "", "🔍 Аналіз пари — введи BTCUSDT або іншу пару.", "🔥 Найкращі сигнали — setup 72+ / watchlist 82+.", "🟢 Активні угоди — відкриті позиції."].join("\n");
 }
 
 function watchlistMenuText() {
@@ -595,7 +595,7 @@ function topText() {
 }
 
 function topSignals() {
-  return [...state.activeSignals, ...state.watchlist, ...state.history].filter((signal) => signal.side !== "NO_TRADE" && signal.score >= 80).sort((a, b) => b.score - a.score).slice(0, 5);
+  return [...state.activeSignals, ...state.watchlist, ...state.history].filter((signal) => signal.side !== "NO_TRADE" && signal.score >= 72).sort((a, b) => b.score - a.score).slice(0, 5);
 }
 
 function watchlistText() {
@@ -604,7 +604,7 @@ function watchlistText() {
   return [
     "👀 ТОП WATCHLIST",
     "",
-    ...(ranked.length ? ranked.slice(0, 10).map((signal, index) => `#${index + 1} ${signal.symbol} — ${signal.score}/100`) : ["Активних setup 80+ поки немає"]),
+    ...(ranked.length ? ranked.slice(0, 10).map((signal, index) => `#${index + 1} ${signal.symbol} — ${signal.score}/100`) : ["Активних setup 72+ поки немає"]),
     "",
     "Priority pairs:",
     ...(pairs.length ? pairs.map((pair) => `✅ ${pair}`) : ["Watchlist порожній"])
@@ -613,13 +613,13 @@ function watchlistText() {
 
 function watchStatusText() {
   const ranked = rankedWatchlist();
-  if (!ranked.length) return ["👀 Watch status", "", "Активних setup 80+ зараз немає.", "Scanner продовжує моніторинг без FOMO."].join("\n");
+  if (!ranked.length) return ["👀 Watch status", "", "Активних setup 72+ зараз немає.", "Scanner продовжує моніторинг без FOMO."].join("\n");
   return ["👀 ТОП WATCHLIST", "", ...ranked.slice(0, 8).map(watchStatusCard)].join("\n\n");
 }
 
 function rankedWatchlist() {
   return state.watchlist
-    .filter((signal) => signal.mode === "futures" && signal.score >= 80)
+    .filter((signal) => signal.mode === "futures" && signal.score >= 72)
     .sort((a, b) => readinessScore(b) - readinessScore(a));
 }
 
@@ -666,7 +666,7 @@ function readinessPercent(signal: Signal) {
 function readinessLabel(signal: Signal) {
   const missing = missingWatchConfirmations(signal).length;
   if (signal.score >= 88 && missing <= 2) return "HIGH";
-  if (signal.score >= 84 && missing <= 4) return "MEDIUM";
+  if (signal.score >= 82 && missing <= 4) return "MEDIUM";
   return "EARLY";
 }
 
@@ -690,7 +690,7 @@ function watchAddedText(pair: string) {
 function monitoringStatusFor(pair: string) {
   const signal = findSignal(pair);
   if (!signal) return [pair, "", "Статус:", "⏳ Очікуємо дані scanner", "", "Чекаємо кращу точку входу."].join("\n");
-  const side = signal.side === "WATCHLIST" ? `🟡 WATCHLIST ${signal.score}/100` : signal.side === "NO_TRADE" ? "❌ NO TRADE" : `${signal.side} ${signal.score}%`;
+  const side = signal.side === "WATCHLIST" ? `${signal.score >= 82 ? "👀 WATCHLIST" : "⏳ EARLY SETUP"} ${signal.score}/100` : signal.side === "NO_TRADE" ? "❌ NO TRADE" : `${signal.side} ${signal.score}%`;
   return [pair, "", "Статус:", side, "", signal.side === "WATCHLIST" ? `Readiness: ${readinessLabel(signal)}` : signal.management].join("\n");
 }
 
