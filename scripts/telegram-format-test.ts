@@ -11,53 +11,34 @@ class CaptureNotifier extends TelegramNotifier {
 const notifier = new CaptureNotifier();
 
 const longMessage = [
-  "🚨 SIGNAL: LONG",
+  "🚀 BTCUSDT — ENTER NOW",
   "",
-  "📍 Pair:",
-  "BTCUSDT",
+  "📍 Entry: 104250 - 104400",
+  "🛑 SL: 103780",
   "",
-  "🎯 Entry:",
-  "104250–104400",
+  "🎯 TP1: 105100",
+  "🎯 TP2: 106000",
+  "🎯 TP3: 107200",
   "",
-  "🛡 Stop Loss:",
-  "103780",
+  "⚡ x2",
+  "🔥 Confidence: 94%",
+  "📊 RR: 1:4.2",
   "",
-  "💰 Take Profit:",
-  "TP1 105100 / TP2 106000 / TP3 107200",
-  "",
-  "⚡ Leverage:",
-  "x2",
-  "",
-  "📈 Confidence:",
-  "94%",
-  "",
-  "📊 Reason:",
-  "RSI momentum aligned; MACD impulse confirmed; SMA trend aligned."
+  "Причина:",
+  "✅ momentum confirm",
+  "✅ OI confirm",
+  "✅ volume confirm"
 ].join("\n");
 
 const shortMessage = [
-  "🚨 SIGNAL: SHORT",
+  "❌ BTCUSDT — NO TRADE",
   "",
-  "📍 Pair:",
-  "BTCUSDT",
+  "Причина:",
+  "• weak volume",
+  "• no sniper trigger",
+  "• no retest",
   "",
-  "🎯 Entry:",
-  "104250–104400",
-  "",
-  "🛡 Stop Loss:",
-  "104900",
-  "",
-  "💰 Take Profit:",
-  "TP1 103800 / TP2 103100 / TP3 102400",
-  "",
-  "⚡ Leverage:",
-  "x3",
-  "",
-  "📈 Confidence:",
-  "97%",
-  "",
-  "📊 Reason:",
-  "RSI momentum aligned; MACD confirms direction; SMA trend aligned."
+  "⏱ Recheck: 2 min"
 ].join("\n");
 
 async function main() {
@@ -66,13 +47,13 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     sent: [
-      { type: "LONG", header: "🚨 SIGNAL: LONG", symbol: "BTCUSDT" },
-      { type: "SHORT", header: "🚨 SIGNAL: SHORT", symbol: "BTCUSDT" }
+      { type: "ENTER_NOW", header: "🚀 BTCUSDT — ENTER NOW", symbol: "BTCUSDT" },
+      { type: "NO_TRADE", header: "❌ BTCUSDT — NO TRADE", symbol: "BTCUSDT" }
     ],
     checks: {
       noLiveTelegramSpam: notifier.messages.length === 2,
-      requiredFields: "Signal / Pair / Entry / Stop Loss / TP1-TP3 / Leverage / Confidence / Reason",
-      readableInSeconds: "3-5"
+      requiredFields: "Pair / Status / Entry / SL / TP1-TP3 / Leverage / Confidence / RR / 3-5 reasons",
+      readableInSeconds: "1-2"
     }
   }, null, 2));
 }

@@ -19,7 +19,7 @@ async function main() {
   const checks: Record<string, boolean> = {};
   await click(center, checks, "📊 Сигнали", "📊 Сигнали");
   await click(center, checks, "🔍 Пошук по парах", "Введіть пару");
-  await click(center, checks, "DOGE", "Професійний аналіз");
+  await click(center, checks, "DOGE", "📍 Entry");
   await click(center, checks, "🔍 Аналіз пари", "Введіть пару");
   await click(center, checks, "BTCUSDT", "Аналіз");
   await click(center, checks, "🔥 Найкращі сигнали", "Топ Сетапи");

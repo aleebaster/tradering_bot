@@ -18,7 +18,7 @@ export class TelegramNotifier {
 
   async signal(signal: Signal) {
     if (!isRealEntrySignal(signal)) return;
-    await this.send(formatSignal(signal));
+    await this.send(formatExecutionSignal(signal), signalQuickActions(signal.symbol));
   }
 
   async setupActivated(signal: Signal, reasons: string[]) {
@@ -76,7 +76,7 @@ export function signalQuickActions(symbol: string): TelegramReplyMarkup {
   return {
     inline_keyboard: [
       [{ text: "🟢 Моніторити", callback_data: `watch:${symbol}` }, { text: "🔄 Оновити Аналіз", callback_data: `refresh:${symbol}` }],
-      [{ text: "📊 Повний Аналіз", callback_data: `full:${symbol}` }, { text: "❌ Видалити", callback_data: `remove:${symbol}` }]
+      [{ text: "📈 Детальний аналіз", callback_data: `analyze_futures:${symbol}` }, { text: "❌ Видалити", callback_data: `remove:${symbol}` }]
     ]
   };
 }
@@ -85,32 +85,28 @@ function modeUa(mode: string) {
   return mode === "LOCAL_ONLY" ? "локальний" : mode === "HYBRID" ? "гібридний" : mode === "OFFLINE_TEST" ? "тест без підключень" : mode;
 }
 
-function formatSignal(signal: Signal) {
-  const direction = signal.side === "SHORT" ? "SHORT" : signal.side === "BUY" ? "LONG" : "LONG";
+export function formatExecutionSignal(signal: Signal) {
   const leverage = strongestSetup(signal) ? "x3" : "x2";
+  const status = executionStatus(signal);
+  const label = status.replace(/^[^\s]+\s/, "");
   return [
-    `🚨 SIGNAL: ${direction}`,
+    `${status.split(" ")[0]} ${signal.symbol} — ${label}`,
     "",
-    "📍 Pair:",
-    signal.symbol,
+    `📍 Entry: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
+    `🛑 SL: ${fmt(signal.stopLoss)}`,
     "",
-    "🎯 Entry:",
-    `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+    `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
+    `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
+    `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
     "",
-    "🛡 Stop Loss:",
-    fmt(signal.stopLoss),
+    `⚡ ${leverage}`,
+    `🔥 Confidence: ${signal.confidence}%`,
+    `📊 RR: ${signal.riskReward}`,
     "",
-    "💰 Take Profit:",
-    `TP1 ${fmt(signal.takeProfit[0])} / TP2 ${fmt(signal.takeProfit[1])} / TP3 ${fmt(signal.takeProfit[2])}`,
-    "",
-    "⚡ Leverage:",
-    leverage,
-    "",
-    "📈 Confidence:",
-    `${signal.confidence}%`,
-    "",
-    "📊 Reason:",
-    signalReason(signal)
+    "Причина:",
+    ...executionReasons(signal).map((reason) => `${label === "NO TRADE" ? "•" : "✅"} ${reason}`),
+    label === "NO TRADE" ? "" : null,
+    label === "NO TRADE" ? "⏱ Recheck: 2 min" : null
   ].filter(Boolean).join("\n");
 }
 
@@ -141,17 +137,33 @@ export function isRealEntrySignal(signal: Signal) {
     && rrNumber(signal.riskReward) >= 2;
 }
 
-function signalReason(signal: Signal) {
+function executionStatus(signal: Signal) {
+  if (signal.entryStatus === "ENTER_NOW" && signal.side !== "NO_TRADE" && signal.side !== "WATCHLIST") return "🚀 ENTER NOW";
+  if (signal.entryStatus === "WAIT_FOR_ENTRY" && signal.score >= 88) return "✅ READY";
+  if (signal.side === "WATCHLIST" || signal.score >= 72) return "👀 WATCHLIST";
+  return "❌ NO TRADE";
+}
+
+function executionReasons(signal: Signal) {
   const breakdown = signal.scoreBreakdown;
-  const rsi = (breakdown.momentumQuality ?? 0) >= 70 ? "RSI momentum aligned" : "RSI acceptable";
-  const macd = (breakdown.momentumQuality ?? 0) >= 76 ? "MACD impulse confirmed" : "MACD confirms direction";
-  const sma = (breakdown.multiTimeframeAlignment ?? 0) >= 67 ? "SMA trend aligned" : "SMA trend acceptable";
-  const confirmations = [
-    (breakdown.entrySniper ?? 0) >= 70 ? "sniper" : null,
-    (breakdown.volumeConfirmation ?? 0) >= 65 ? "volume" : null,
-    signal.btcStable || signal.symbol === "BTCUSDT" ? "BTC stable" : null
-  ].filter(Boolean).join(" + ");
-  return `${rsi}; ${macd}; ${sma}; ${confirmations}.`;
+  const noTrade = executionStatus(signal).includes("NO TRADE");
+  const positive = [
+    (breakdown.momentumQuality ?? 0) >= 70 ? "momentum confirm" : null,
+    (breakdown.openInterestConfirmation ?? 0) >= 65 ? "OI confirm" : null,
+    (breakdown.volumeConfirmation ?? 0) >= 65 ? "volume confirm" : null,
+    (breakdown.entrySniper ?? 0) >= 70 ? "sniper trigger" : null,
+    signal.btcStable || signal.symbol === "BTCUSDT" ? "BTC stable" : null,
+    (breakdown.liquiditySweep ?? 0) >= 65 ? "retest confirm" : null
+  ].filter(Boolean) as string[];
+  const blockers = [
+    (breakdown.volumeConfirmation ?? 0) < 65 ? "weak volume" : null,
+    (breakdown.entrySniper ?? 0) < 70 ? "no sniper trigger" : null,
+    (breakdown.liquiditySweep ?? 0) < 65 ? "no retest" : null,
+    !signal.btcStable && signal.symbol !== "BTCUSDT" ? "BTC not stable" : null,
+    signal.fakeBreakout.risk ? "fake breakout risk" : null
+  ].filter(Boolean) as string[];
+  if (noTrade) return blockers.slice(0, 5);
+  return [...positive, ...blockers.filter((reason) => !positive.includes(reason))].slice(0, 5);
 }
 
 function strongestSetup(signal: Signal) {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { config } from "./config";
 import { state } from "./state";
-import { signalQuickActions, TelegramNotifier, type TelegramReplyMarkup } from "./telegram";
+import { formatExecutionSignal, signalQuickActions, TelegramNotifier, type TelegramReplyMarkup } from "./telegram";
 import { paperMemoryStatsText, paperStatsText, setPaperMode } from "./paperTrading";
 import { addPriorityPair, loadPriorityWatchlist, normalizePriorityPair, removePriorityPair } from "./watchlistStore";
 import { loadTelegramSettings, updateTelegramSettings, type MaxLeverage, type RiskMode } from "./telegramSettings";
@@ -436,12 +436,12 @@ export class TelegramCommandCenter {
     if (!result || !result.best) return this.notifier.send(pairNotFoundText(query, result?.suggestions ?? []), mainMenuKeyboard());
     if (result.futures.length) {
       const signal = await analyzeFutures(result.best.symbol).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
-      if (!("error" in signal)) return this.notifier.send(futuresProfessionalAnalysisText(signal, result.futures[0], result), pairSearchKeyboard(signal.symbol, true, Boolean(result.spot.length)));
+      if (!("error" in signal)) return this.notifier.send(futuresExecutionAnalysisText(signal, result.futures[0], result), pairSearchKeyboard(signal.symbol, true, Boolean(result.spot.length)));
       logger.warn({ err: signal.error, query }, "Futures pair analysis failed");
     }
     const spot = await analyzeSpot(result.spot[0]?.symbol ?? result.best.symbol).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
     if ("error" in spot) return this.notifier.send(`Пару знайдено, але аналіз зараз недоступний: ${spot.error}`, mainMenuKeyboard());
-    return this.notifier.send(spotProfessionalAnalysisText(spot, result.spot[0] ?? result.best, result), pairSearchKeyboard(spot.symbol, Boolean(result.futures.length), true));
+    return this.notifier.send(spotExecutionAnalysisText(spot), pairSearchKeyboard(spot.symbol, Boolean(result.futures.length), true));
   }
 
   private async sendSpotAnalysis(pair: string): Promise<void> {
@@ -640,8 +640,9 @@ function backKeyboard(): TelegramReplyMarkup {
 function pairSearchKeyboard(symbol: string, hasFutures: boolean, hasSpot: boolean): TelegramReplyMarkup {
   const rows: TelegramReplyMarkup["inline_keyboard"] = [];
   const analysis = [];
-  if (hasFutures) analysis.push({ text: "📈 Аналіз Futures", callback_data: `analyze_futures:${symbol}` });
-  if (hasSpot) analysis.push({ text: "💰 Аналіз Spot", callback_data: `analyze_spot:${symbol}` });
+  if (hasFutures) analysis.push({ text: "📈 Детальний аналіз", callback_data: `analyze_futures:${symbol}` });
+  if (!hasFutures && hasSpot) analysis.push({ text: "📈 Детальний аналіз", callback_data: `analyze_spot:${symbol}` });
+  if (hasFutures && hasSpot) analysis.push({ text: "💰 Детальний Spot", callback_data: `analyze_spot:${symbol}` });
   if (analysis.length) rows.push(analysis);
   rows.push([{ text: "🔥 Додати у Watchlist", callback_data: `search_add:${symbol}` }]);
   rows.push([uiButton("🔍 Пошук по парах", "search_pair"), uiButton("🔙 Назад", "back")]);
@@ -1012,6 +1013,58 @@ function pairNotFoundText(query: string, suggestions: MarketRegistryItem[]) {
     suggestions.length ? "Можливі варіанти:" : "",
     ...suggestions.slice(0, 8).map((item) => `${item.symbol} · ${item.marketType}`)
   ].filter(Boolean).join("\n");
+}
+
+function futuresExecutionAnalysisText(signal: Signal, _market?: MarketRegistryItem, result?: { query: string; futures: MarketRegistryItem[]; spot: MarketRegistryItem[] }) {
+  return [
+    formatExecutionSignal(signal),
+    result?.query ? `\nЗапит: ${result.query}` : ""
+  ].filter(Boolean).join("\n");
+}
+
+function spotExecutionAnalysisText(analysis: Awaited<ReturnType<typeof analyzeSpot>>) {
+  const ready = analysis.suitability.shortTermTrade || analysis.suitability.midTermHold;
+  const status = ready && analysis.shortTerm.confidence >= 72 ? "✅ READY" : analysis.shortTerm.confidence >= 62 ? "👀 WATCHLIST" : "❌ NO TRADE";
+  const label = status.replace(/^[^\s]+\s/, "");
+  const sl = analysis.longTerm.accumulationZone[0] * 0.97;
+  return [
+    `${status.split(" ")[0]} ${analysis.symbol} — ${label}`,
+    "",
+    `📍 Entry: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
+    `🛑 SL: ${fmt(sl)}`,
+    "",
+    `🎯 TP1: ${fmt(analysis.longTerm.resistance[0])}`,
+    `🎯 TP2: ${fmt(analysis.longTerm.resistance[1])}`,
+    `🎯 TP3: ${analysis.longTerm.growthPotential}`,
+    "",
+    "⚡ spot",
+    `🔥 Confidence: ${analysis.shortTerm.confidence}%`,
+    `📊 RR: ${spotRiskReward(analysis.metrics.price, sl, analysis.longTerm.resistance[0])}`,
+    "",
+    "Причина:",
+    ...spotExecutionReasons(analysis, label === "NO TRADE").map((reason) => `${label === "NO TRADE" ? "•" : "✅"} ${reason}`),
+    label === "NO TRADE" ? "" : null,
+    label === "NO TRADE" ? "⏱ Recheck: 2 min" : null
+  ].filter(Boolean).join("\n");
+}
+
+function spotExecutionReasons(analysis: Awaited<ReturnType<typeof analyzeSpot>>, noTrade: boolean) {
+  const positive = [
+    analysis.metrics.momentumScore >= 60 ? "momentum confirm" : null,
+    analysis.metrics.trendScore >= 60 ? "trend confirm" : null,
+    analysis.metrics.volume24h >= 1_000_000 ? "volume confirm" : null,
+    analysis.metrics.health.score >= 55 ? "liquidity ok" : null,
+    analysis.metrics.btcCorrelation > -0.4 ? "BTC stable" : null
+  ].filter(Boolean) as string[];
+  const blockers = [
+    analysis.metrics.volume24h < 1_000_000 ? "weak volume" : null,
+    analysis.metrics.momentumScore < 55 ? "weak momentum" : null,
+    analysis.metrics.price > analysis.longTerm.accumulationZone[1] ? "no retest" : null,
+    analysis.metrics.health.score < 55 ? "weak liquidity" : null,
+    analysis.longTerm.riskProfile === "Extreme" ? "high risk" : null
+  ].filter(Boolean) as string[];
+  if (noTrade) return blockers.slice(0, 5);
+  return [...positive, ...blockers.filter((reason) => !positive.includes(reason))].slice(0, 5);
 }
 
 function futuresProfessionalAnalysisText(signal: Signal, market?: MarketRegistryItem, result?: { query: string; futures: MarketRegistryItem[]; spot: MarketRegistryItem[] }) {
