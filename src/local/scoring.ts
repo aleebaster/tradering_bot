@@ -3,6 +3,7 @@ import { atr, clamp, ema, macd, rsi, supportResistance, volumeProfileScore, vwap
 import { calculatePositionSizing } from "./positionSizing";
 import { config } from "./config";
 import { adaptiveWeights } from "./learning";
+import { paperSetupConfidenceAdjustment } from "./paperTrading";
 import type { AccuracyRisk, AccuracySession, Candle, CorrelationContext, FakeBreakoutAnalysis, FastMoveQuality, HigherTimeframeBias, LiquidityIntelligence, MarketRegime, MarketSnapshot, OpenInterestAnalysis, OrderFlowAnalysis, Signal, SignalGrade, Side } from "./types";
 
 export function regimeFrom(candles: MarketSnapshot["candles"]): MarketRegime {
@@ -82,8 +83,9 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const btcPenalty = (snapshot.symbol === "BTCUSDT" || snapshot.btcStable ? 0 : 24) * learned.btc;
   const confirmationProfile = adaptiveConfirmationProfile(snapshot, { volume, momentum, liquidityScore: snapshot.liquidityScore, orderbook, fastMoveScore: fastMove.score });
   const confirmationPenalty = confirmationProfile.allowed ? confirmationProfile.penalty : 35;
+  const paperAdjustment = paperSetupConfidenceAdjustment(setupTypeFromScores(snapshot, { momentum, volume, mtf, liquiditySweep: liquidity.score }));
   const advancedBonus = htf.score * 0.15 * learned.htf + liquidity.score * 0.08 * learned.liquidity + orderFlow.score * 0.1 * learned.orderFlow + oiAnalysis.score * 0.08 * learned.oi + fakeBreakout.score * 0.11 + fastMove.score * 0.08 + (correlation.aligned ? 8 : correlation.riskOff ? -18 : 0) + session.confidenceAdjustment + htf.confidenceAdjustment;
-  const weighted = trendStrength * 0.12 + snapshot.liquidityScore * 0.06 + volume * 0.1 * learned.volume + smc.score * 0.13 * learned.smc + mtf * 0.1 + snapshot.whaleScore * 0.05 + funding * 0.05 + oi * 0.04 + momentum * 0.09 * learned.macd + orderbook * 0.06 + advancedBonus - regimePenalty - btcPenalty;
+  const weighted = trendStrength * 0.12 + snapshot.liquidityScore * 0.06 + volume * 0.1 * learned.volume + smc.score * 0.13 * learned.smc + mtf * 0.1 + snapshot.whaleScore * 0.05 + funding * 0.05 + oi * 0.04 + momentum * 0.09 * learned.macd + orderbook * 0.06 + advancedBonus + paperAdjustment - regimePenalty - btcPenalty;
   let score = clamp(weighted - confirmationPenalty);
   const weakMomentum = direction !== 0 && momentum < 55;
   const hardBlock = accuracyHardBlock(snapshot, { side, direction, session, newsRisk, htf, liquidity, orderFlow, oiAnalysis, fakeBreakout, fastMove, correlation });
@@ -211,6 +213,13 @@ function adaptiveConfirmationProfile(snapshot: MarketSnapshot, quality: { volume
   }
   if (snapshot.confirmations.alignedCount >= 2) return { allowed: true, penalty: 0, smallAltStrict: false, reason: "2+ exchanges confirmed" };
   return { allowed: false, penalty: 35, smallAltStrict: false, reason: "small alt needs Bybit+Binance or 2+ exchanges" };
+}
+
+function setupTypeFromScores(snapshot: MarketSnapshot, scores: { momentum: number; volume: number; mtf: number; liquiditySweep: number }) {
+  if (scores.liquiditySweep >= 65 && snapshot.btcStable) return "liquidity_sweep_btc_stable";
+  if (scores.momentum >= 55 && scores.volume < 65) return "macd_weak_volume";
+  if (scores.mtf >= 67) return "mtf_alignment";
+  return "borderline_standard";
 }
 
 function leverageRecommendation(score: number, volatility: number, momentum: number, regime: MarketRegime) {

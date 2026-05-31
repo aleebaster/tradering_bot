@@ -16,6 +16,8 @@ interface LearningTrade {
   id: string;
   symbol: string;
   outcome: Outcome;
+  tier: "STRONG" | "NORMAL" | "IGNORE";
+  impact: number;
   regime: RegimeBucket;
   patterns: string[];
   features: Partial<Record<WeightKey, number>>;
@@ -53,6 +55,7 @@ export function adaptiveWeights(regime?: MarketRegime) {
 
 export function recordLearningOutcome(signal: Signal, outcome: Outcome) {
   const state = load();
+  const tier = learningTier(signal);
   state.total += 1;
   if (outcome === "TP") state.wins += 1;
   if (outcome === "SL") state.losses += 1;
@@ -61,6 +64,8 @@ export function recordLearningOutcome(signal: Signal, outcome: Outcome) {
     id: signal.id,
     symbol: signal.symbol,
     outcome,
+    tier: tier.tier,
+    impact: tier.impact,
     regime: regimeBucket(signal.marketRegime),
     patterns: setupPatterns(signal),
     features: featureScores(signal),
@@ -89,6 +94,7 @@ export function learningStatusText() {
     `Adaptation: ${state.total >= minTradesToAdapt ? "ON" : `OFF until ${minTradesToAdapt} trades`}`,
     "Limits: ±10% per rolling 50 trades",
     "Old trades: decay-weighted",
+    "Validation: only Tier 1/2 quality setups affect weights",
     "",
     `MACD modifier: ${modifier(state.weights.macd)}`,
     `Volume modifier: ${modifier(state.weights.volume)}`,
@@ -107,11 +113,12 @@ function recomputeSafeLearning(state: LearningState) {
   state.patterns = patternStats(state.trades);
   state.weights = { ...defaultWeights };
   state.regimeModifiers = emptyRegimeModifiers();
-  if (state.total < minTradesToAdapt) return;
-  const strength = state.total >= fullStrengthTrades ? 1 : 0.5;
-  state.weights = computeWeights(state.trades.slice(0, rollingWindow), strength);
+  const validated = state.trades.filter((trade) => (trade.impact ?? 0) > 0);
+  if (validated.length < minTradesToAdapt) return;
+  const strength = validated.length >= fullStrengthTrades ? 1 : 0.5;
+  state.weights = computeWeights(validated.slice(0, rollingWindow), strength);
   for (const regime of Object.keys(state.regimeModifiers) as RegimeBucket[]) {
-    const trades = state.trades.filter((trade) => trade.regime === regime).slice(0, rollingWindow);
+    const trades = validated.filter((trade) => trade.regime === regime).slice(0, rollingWindow);
     state.regimeModifiers[regime] = trades.length >= minTradesToAdapt ? computeWeights(trades, strength) : { ...defaultWeights };
   }
 }
@@ -124,7 +131,7 @@ function computeWeights(trades: LearningTrade[], strength: number) {
     const direction = trade.outcome === "TP" ? 1 : -1;
     for (const [key, score] of Object.entries(trade.features) as [WeightKey, number][]) {
       if (score <= 0) continue;
-      const influence = decay * (score / 100);
+      const influence = decay * (trade.impact ?? 0) * (score / 100);
       deltas[key] += direction * influence;
       totals[key] += influence;
     }
@@ -134,6 +141,24 @@ function computeWeights(trades: LearningTrade[], strength: number) {
     const normalized = totals[key] > 0 ? deltas[key] / totals[key] : 0;
     return [key, clampWeight(base + normalized * 0.1 * strength)];
   })) as Record<WeightKey, number>;
+}
+
+function learningTier(signal: Signal): { tier: "STRONG" | "NORMAL" | "IGNORE"; impact: number } {
+  const fullConfirmations = fullQualityConfirmation(signal);
+  if (signal.score >= 90 && fullConfirmations) return { tier: "STRONG", impact: 1 };
+  if (signal.score >= 85 && signal.score < 90 && fullConfirmations) return { tier: "STRONG", impact: 1 };
+  if (signal.score >= 85 && signal.score < 90) return { tier: "NORMAL", impact: 0.4 };
+  return { tier: "IGNORE", impact: 0 };
+}
+
+function fullQualityConfirmation(signal: Signal) {
+  const breakdown = signal.scoreBreakdown;
+  const mtf = (breakdown.multiTimeframeAlignment ?? 0) >= 67 && (breakdown.executionAlignment ?? 0) >= 100;
+  const momentum = (breakdown.momentumQuality ?? 0) >= 70;
+  const volume = (breakdown.volumeConfirmation ?? 0) >= 65;
+  const fakeBreakoutOk = !signal.fakeBreakout.risk && (breakdown.fakeBreakoutProtection ?? 0) >= 65;
+  const microConfirmation = (breakdown.orderBookImbalance ?? 0) >= 60 || (breakdown.liquiditySweep ?? 0) >= 65;
+  return mtf && signal.btcStable && momentum && volume && fakeBreakoutOk && microConfirmation;
 }
 
 function setupPatterns(signal: Signal) {
@@ -200,7 +225,7 @@ function load(): LearningState {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Partial<LearningState>;
     const migrated = { ...defaults, ...parsed, weights: { ...defaultWeights, ...(parsed.weights ?? {}) }, regimeModifiers: { ...emptyRegimeModifiers(), ...(parsed.regimeModifiers ?? {}) }, patterns: parsed.patterns ?? {}, trades: Array.isArray(parsed.trades) ? parsed.trades : [] };
     const safe = { ...migrated, weights: sanitizeWeights(migrated.weights), regimeModifiers: sanitizeRegimes(migrated.regimeModifiers), patterns: patternStats(migrated.trades) };
-    if (safe.total < minTradesToAdapt || safe.trades.length < minTradesToAdapt) return { ...safe, weights: { ...defaultWeights }, regimeModifiers: emptyRegimeModifiers() };
+    if (safe.total < minTradesToAdapt || safe.trades.filter((trade) => (trade.impact ?? 0) > 0).length < minTradesToAdapt) return { ...safe, weights: { ...defaultWeights }, regimeModifiers: emptyRegimeModifiers() };
     return safe;
   } catch {
     return { ...defaults, weights: { ...defaultWeights }, regimeModifiers: emptyRegimeModifiers(), patterns: {}, trades: [] };

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { config } from "./config";
 import { state } from "./state";
 import { signalQuickActions, TelegramNotifier, type TelegramReplyMarkup } from "./telegram";
-import { paperStatsText, setPaperMode } from "./paperTrading";
+import { paperMemoryStatsText, paperStatsText, setPaperMode } from "./paperTrading";
 import { addPriorityPair, loadPriorityWatchlist, normalizePriorityPair, removePriorityPair } from "./watchlistStore";
 import { loadTelegramSettings, updateTelegramSettings, type MaxLeverage, type RiskMode } from "./telegramSettings";
 import { tradeStatsText } from "./tradeMemory";
@@ -150,6 +150,7 @@ export class TelegramCommandCenter {
       if (action === "off") return this.notifier.send(paperModeText(false));
       return this.notifier.send(paperStatsText(), settingsKeyboard());
     }
+    if (command === "/paperstats") return this.notifier.send(paperMemoryStatsText(), mainMenuKeyboard());
 
     if (command === "/watch") {
       if (!pair) return this.askPair("watch");
@@ -473,6 +474,7 @@ function helpText() {
     "/paper on — увімкнути paper trading",
     "/paper off — вимкнути paper trading",
     "/paper — статистика paper trading",
+    "/paperstats — watchlist simulation stats",
     "/diagnostics — API і біржі",
     "/help — список команд"
   ].join("\n");

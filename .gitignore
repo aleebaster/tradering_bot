@@ -7,5 +7,9 @@ build
 logs
 *.log
 *.tsbuildinfo
+data/learning-state.json
+data/paper-trading.json
+data/paper-trade-memory.json
+data/telegram-settings.json
 
 .vercel

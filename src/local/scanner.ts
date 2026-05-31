@@ -8,7 +8,7 @@ import { logger } from "./logger";
 import { TelegramNotifier } from "./telegram";
 import { recordLearningOutcome } from "./learning";
 import { loadPriorityWatchlist } from "./watchlistStore";
-import { recordPaperClose, recordPaperOpen } from "./paperTrading";
+import { recordPaperClose, recordPaperOpen, recordPaperSetup, updatePaperTradeMemory } from "./paperTrading";
 import { notificationsEnabled } from "./telegramSettings";
 import { recordTradeMemory } from "./tradeMemory";
 
@@ -127,6 +127,7 @@ export class Scanner {
           const signal = buildSignal(snapshot);
           logger.info({ symbol, mode, side: signal.side, score: signal.score, winProbability: signal.winProbability, rejectionReason: signal.rejectionReason, scoreBreakdown: signal.scoreBreakdown }, "рішення сканера");
           recordSignal(signal);
+          if (mode === "futures") updatePaperTradeMemory(signal.symbol, signal.currentPrice);
           candidates.push(signal);
           await this.trackWatchlist(signal);
           if (!["NO_TRADE", "WATCHLIST"].includes(signal.side) && this.canSendSignal(signal)) {
@@ -374,6 +375,7 @@ export class Scanner {
     const key = watchKey(signal.symbol, signal.mode);
     if (this.watchlistSent.has(key)) return;
     this.watchlistSent.add(key);
+    recordPaperSetup(signal);
     logger.info({ symbol: signal.symbol, score: signal.score }, "watchlist setup tracked silently");
   }
 
