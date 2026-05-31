@@ -119,11 +119,83 @@ function formatSignal(signal: Signal) {
 }
 
 function formatWatchlist(signal: Signal) {
-  return [`⚠️ WATCHLIST ONLY — ${signal.symbol}`, "", "Чекаємо кращу точку входу.", "Сигнал ще не готовий."].join("\n");
+  return formatWaitingSignal(signal, "⚠️ WATCHLIST ONLY");
 }
 
 function formatNoTrade(signal: Signal) {
-  return [`❌ NO TRADE — ${signal.symbol}`, "", "Причина:", "", "Слабкий сигнал.", "", "Чекаємо кращу точку входу."].join("\n");
+  return formatWaitingSignal(signal, "ОЧІКУВАННЯ");
+}
+
+function formatWaitingSignal(signal: Signal, label: string) {
+  const direction = potentialDirection(signal);
+  const trigger = waitingTriggers(signal, direction);
+  return [
+    `🚨 СИГНАЛ: ${label}`,
+    "",
+    "📊 Обґрунтування:",
+    waitingReason(signal, direction),
+    "",
+    "⏳ Що чекаємо:",
+    ...trigger,
+    "",
+    "📍 Потенційна зона входу:",
+    `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+    "",
+    "🛡 Потенційний Stop-Loss:",
+    fmt(signal.stopLoss),
+    "",
+    "💰 Потенційні TP:",
+    `TP1: ${fmt(signal.takeProfit[0])}`,
+    `TP2: ${fmt(signal.takeProfit[1])}`,
+    `TP3: ${fmt(signal.takeProfit[2])}`,
+    "",
+    "⚡ Потенційне плече:",
+    potentialLeverage(signal),
+    "",
+    "🟠 Беззбиток:",
+    smartBreakevenText(signal),
+    "",
+    "📈 Confidence:",
+    `${signal.confidence}%`,
+    "",
+    "💰 Risk/Reward:",
+    signal.riskReward
+  ].join("\n");
+}
+
+function potentialDirection(signal: Signal) {
+  if (signal.side === "SHORT") return "SHORT";
+  if (signal.side === "LONG" || signal.side === "BUY") return "LONG";
+  const averageEntry = (signal.entry[0] + signal.entry[1]) / 2;
+  return signal.stopLoss > averageEntry ? "SHORT" : "LONG";
+}
+
+function waitingReason(signal: Signal, direction: "LONG" | "SHORT") {
+  const momentum = signal.scoreBreakdown.momentumQuality ?? 0;
+  const volume = signal.scoreBreakdown.volumeConfirmation ?? 0;
+  const smas = signal.scoreBreakdown.multiTimeframeAlignment ?? 0;
+  const orderbook = signal.scoreBreakdown.orderBookImbalance ?? 0;
+  const bias = direction === "SHORT" ? "bearish" : "bullish";
+  const momentumText = momentum >= 70 ? "momentum підтверджує напрям" : momentum >= 45 ? "momentum нейтральний" : "momentum слабкий";
+  const volumeText = volume >= 65 ? "volume підтверджує рух" : "volume ще слабкий";
+  const smaText = smas >= 67 ? "SMA/EMA alignment достатній" : "SMA/EMA alignment ще не чистий";
+  const microText = orderbook >= 60 ? "orderbook підтримує setup" : "5M/orderbook підтвердження ще неповне";
+  return `15M ${bias} bias, ${momentumText}; ${smaText}, ${volumeText}, ${microText}. ${signal.rejectionReason}`;
+}
+
+function waitingTriggers(signal: Signal, direction: "LONG" | "SHORT") {
+  const triggers = direction === "SHORT"
+    ? ["✅ повторний rejection від VWAP/SMA50", "✅ MACD bearish cross на 5M", "✅ liquidity sweep над локальним resistance"]
+    : ["✅ reclaim VWAP/SMA50 з утриманням", "✅ MACD bullish cross на 5M", "✅ liquidity sweep під локальним support"];
+  if ((signal.scoreBreakdown.volumeConfirmation ?? 0) < 65) triggers.push("✅ volume spike без fake breakout");
+  if (!signal.btcStable && signal.symbol !== "BTCUSDT") triggers.push("✅ BTC стабілізується");
+  if (signal.fakeBreakout.risk) triggers.push("✅ trap/fake breakout скасовано закриттям 5M");
+  return triggers;
+}
+
+function potentialLeverage(signal: Signal) {
+  if (signal.confidence >= 85) return "x2–x3";
+  return "x2 тільки після підтвердження";
 }
 
 function fmt(n: number) {
