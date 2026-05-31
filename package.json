@@ -24,6 +24,7 @@
     "telegram:button-test": "chcp 65001 >nul && tsx scripts/telegram-button-handler-test.ts",
     "telegram:entry-only-test": "chcp 65001 >nul && tsx scripts/telegram-real-entry-only-test.ts",
     "telegram:silent-proof": "chcp 65001 >nul && tsx scripts/telegram-silent-live-proof.ts",
+    "telegram:live-session": "chcp 65001 >nul && tsx scripts/telegram-live-session-verification.ts",
     "telegram:real-flow-test": "chcp 65001 >nul && tsx scripts/telegram-real-flow-validation.ts",
     "paper:simulation-test": "chcp 65001 >nul && tsx scripts/paper-simulation-test.ts",
     "newtokens:test": "chcp 65001 >nul && tsx scripts/bybit-new-token-scan-test.ts",
