@@ -5,10 +5,12 @@ const notifier = new TelegramNotifier();
 const longMessage = [
   "🟢 LONG — BTCUSDT",
   "",
-    "📍 Вхід:",
+  "✅ ЗАХОДИТИ ЗАРАЗ",
+  "",
+  "📍 Вхід:",
   "104250–104400",
   "",
-  "🛑 Stop Loss:",
+  "🛑 SL:",
   "103780",
   "",
   "🎯 TP1:",
@@ -23,20 +25,25 @@ const longMessage = [
   "⚡ Плече:",
   "x3",
   "",
-    "💰 Position size for 5 USDT:",
-    "15 USDT",
+  "💰 Баланс:",
+  "5 USDT",
+  "",
+  "📦 Вхід:",
+  "15 USDT",
   "",
   "🟠 Беззбиток:",
-  "Перенести Stop Loss після TP1"
+  "Після TP1"
 ].join("\n");
 
 const shortMessage = [
   "🔴 SHORT — BTCUSDT",
   "",
-    "📍 Вхід:",
+  "✅ ЗАХОДИТИ ЗАРАЗ",
+  "",
+  "📍 Вхід:",
   "104250–104400",
   "",
-  "🛑 Stop Loss:",
+  "🛑 SL:",
   "104900",
   "",
   "🎯 TP1:",
@@ -51,11 +58,14 @@ const shortMessage = [
   "⚡ Плече:",
   "x3",
   "",
-    "💰 Position size for 5 USDT:",
-    "15 USDT",
+  "💰 Баланс:",
+  "5 USDT",
+  "",
+  "📦 Вхід:",
+  "15 USDT",
   "",
   "🟠 Беззбиток:",
-  "Перенести Stop Loss після TP1"
+  "Після TP1"
 ].join("\n");
 
 async function main() {
@@ -70,7 +80,7 @@ async function main() {
     checks: {
       telegramDelivery: true,
       emojis: "🟢 🔴 ✅ 📌 📍 🛑 🎯 ⚡",
-      ukrainianText: "Вхід / Stop Loss / Плече / Беззбиток",
+      ukrainianText: "Вхід / SL / Плече / Баланс / Беззбиток",
       readableInSeconds: "3-5"
     }
   }, null, 2));

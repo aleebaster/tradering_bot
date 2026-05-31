@@ -1,6 +1,14 @@
 import { config } from "./config";
 import type { Signal } from "./types";
 
+export type TelegramReplyMarkup = {
+  keyboard?: { text: string }[][];
+  inline_keyboard?: { text: string; callback_data: string }[][];
+  resize_keyboard?: boolean;
+  one_time_keyboard?: boolean;
+  is_persistent?: boolean;
+};
+
 export class TelegramNotifier {
   private enabled = Boolean(config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID);
 
@@ -12,12 +20,12 @@ export class TelegramNotifier {
   async signal(signal: Signal) {
     if (signal.side === "NO_TRADE") return this.noTrade(signal);
     if (signal.side === "WATCHLIST") return this.diagnostics(formatWatchlist(signal));
-    await this.send(formatSignal(signal));
+    await this.send(formatSignal(signal), signalQuickActions(signal.symbol));
   }
 
   async setupActivated(signal: Signal, reasons: string[]) {
     const side = signal.side === "SHORT" ? "🔴 SETUP ACTIVATED" : "🟢 SETUP ACTIVATED";
-    await this.send([`${side} — ${signal.symbol}`, "", formatSignal({ ...signal, entryStatus: "ENTER_NOW" })].join("\n"));
+    await this.send([`${side} — ${signal.symbol}`, "", formatSignal({ ...signal, entryStatus: "ENTER_NOW" })].join("\n"), signalQuickActions(signal.symbol));
   }
 
   async setupInvalidated(signal: Signal, reasons: string[]) {
@@ -46,12 +54,23 @@ export class TelegramNotifier {
     await this.send(["🛠 ДІАГНОСТИКА", "", message].join("\n"));
   }
 
-  async send(text: string) {
+  async send(text: string, replyMarkup?: TelegramReplyMarkup) {
     if (!this.enabled) return;
     const url = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`;
-    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chat_id: config.TELEGRAM_CHAT_ID, text: branded(text) }) });
+    const body: Record<string, unknown> = { chat_id: config.TELEGRAM_CHAT_ID, text: branded(text) };
+    if (replyMarkup) body.reply_markup = replyMarkup;
+    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(`Помилка Telegram ${res.status}: ${(await res.text()).slice(0, 180)}`);
   }
+}
+
+export function signalQuickActions(symbol: string): TelegramReplyMarkup {
+  return {
+    inline_keyboard: [
+      [{ text: "🟢 Моніторити", callback_data: `watch:${symbol}` }, { text: "🔄 Оновити", callback_data: `refresh:${symbol}` }],
+      [{ text: "❌ Видалити", callback_data: `remove:${symbol}` }, { text: "📊 Повний аналіз", callback_data: `full:${symbol}` }]
+    ]
+  };
 }
 
 function modeUa(mode: string) {
