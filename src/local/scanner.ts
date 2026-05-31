@@ -370,7 +370,7 @@ export class Scanner {
       if (action.stage === "TP3") { recordTradeMemory(signal, "TP3", current); recordProtectionOutcome("WIN"); recordLearningOutcome(signal, "TP"); recordPaperClose(signal, "WIN", 3); }
       if (action.stage === "SL") { recordTradeMemory(signal, "SL", current); recordProtectionOutcome("LOSS"); recordLearningOutcome(signal, signal.fakeBreakout.risk ? "FAKE_BREAKOUT" : "SL"); recordPaperClose(signal, "LOSS", -1); }
       logger.info({ symbol: signal.symbol, action: action.label, currentPrice: current, reasons: action.reasons }, "trade management alert");
-      if (notificationsEnabled()) await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Не вдалося надіслати Telegram-сповіщення управління угодою"));
+      if (notificationsEnabled() && ["TP1", "TP2", "TP3", "SL"].includes(action.stage)) await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Не вдалося надіслати Telegram-сповіщення управління угодою"));
     }
   }
 
@@ -609,16 +609,16 @@ function tradeManagementAction(signal: Signal, current: number, btcOk: boolean, 
   const entryLow = Math.min(...signal.entry);
   const entryHigh = Math.max(...signal.entry);
   const entered = signal.entryStatus === "ENTER_NOW" || (current >= entryLow && current <= entryHigh);
-  if (!entered && isExpired(signal)) return { stage: "EXPIRED", label: `⏳ ${signal.symbol}\n\nSIGNAL EXPIRED`, reasons: ["Пізній вхід заборонено"] };
+  if (!entered && isExpired(signal)) return { stage: "EXPIRED", label: `EXPIRED — ${signal.symbol}`, reasons: [] };
   if (!entered) return null;
-  if (!sent.has(`${signal.id}-ENTRY`)) return { stage: "ENTRY", label: `🟢 ${signal.symbol}\n\nENTRY OPENED`, reasons: [`Поточна ціна: ${formatPrice(current)}`] };
-  if ((long && current <= signal.stopLoss) || (short && current >= signal.stopLoss)) return { stage: "SL", label: `🔴 ${signal.symbol}\n\n❌ Stop loss triggered`, reasons: ["TRADE CLOSED"] };
-  if (!btcOk && signal.symbol !== "BTCUSDT") return { stage: "BTC_RISK", label: `⚠️ ${signal.symbol}\n\nBTC risk increased`, reasons: ["Зменшити ризик або закрити частину"] };
-  if ((long && current >= signal.takeProfit[2]) || (short && current <= signal.takeProfit[2])) return { stage: "TP3", label: `🟢 ${signal.symbol}\n\nTP3 HIT\n✅ Trade closed`, reasons: ["TRADE CLOSED"] };
-  if ((long && current >= signal.takeProfit[1]) || (short && current <= signal.takeProfit[1])) return { stage: "TP2", label: `🟠 ${signal.symbol}\n\nTP2 HIT\n✅ Trail by ATR`, reasons: ["Вести залишок по структурі"] };
+  if (!sent.has(`${signal.id}-ENTRY`)) return { stage: "ENTRY", label: `ENTRY OPENED — ${signal.symbol}`, reasons: [] };
+  if ((long && current <= signal.stopLoss) || (short && current >= signal.stopLoss)) return { stage: "SL", label: `❌ Stop loss hit — ${signal.symbol}\n🏁 Trade closed`, reasons: [] };
+  if (!btcOk && signal.symbol !== "BTCUSDT") return { stage: "BTC_RISK", label: `BTC risk — ${signal.symbol}`, reasons: [] };
+  if ((long && current >= signal.takeProfit[2]) || (short && current <= signal.takeProfit[2])) return { stage: "TP3", label: `🏁 Trade closed — ${signal.symbol}\n✅ TP3 HIT`, reasons: [] };
+  if ((long && current >= signal.takeProfit[1]) || (short && current <= signal.takeProfit[1])) return { stage: "TP2", label: `✅ TP2 HIT — ${signal.symbol}`, reasons: [] };
   if ((long && current >= signal.takeProfit[0]) || (short && current <= signal.takeProfit[0])) {
     const move = shouldMoveToBreakeven(signal);
-    return { stage: "TP1", label: `🟠 ${signal.symbol}\n\nTP1 HIT\n${move ? "✅ Move SL to breakeven" : "✅ Strong momentum — let it breathe"}`, reasons: [move ? "Імпульс слабшає, захищаємо угоду" : "Імпульс сильний, не душимо позицію"] };
+    return { stage: "TP1", label: `✅ TP1 HIT — ${signal.symbol}${move ? "\n🛡 Breakeven activated" : ""}`, reasons: [] };
   }
   return null;
 }

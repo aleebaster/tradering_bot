@@ -13,93 +13,63 @@ export class TelegramNotifier {
   private enabled = Boolean(config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID);
 
   async started() {
-    await this.send(["✅ ШІ-бот торгових сигналів успішно запущено", "", "Діагностика:", `• Режим: ${modeUa(config.mode)}`, `• OKX: ${config.partialMode ? "частковий режим" : "автентифікацію увімкнено"}`].join("\n"));
-    if (config.warning) await this.diagnostics(config.warning);
+    return;
   }
 
   async signal(signal: Signal) {
-    if (signal.side === "NO_TRADE") return this.noTrade(signal);
-    if (signal.side === "WATCHLIST") return this.diagnostics(formatWatchlist(signal));
+    if (signal.side === "NO_TRADE" || signal.side === "WATCHLIST" || signal.entryStatus !== "ENTER_NOW") return;
     await this.send(formatSignal(signal), signalQuickActions(signal.symbol));
   }
 
   async setupActivated(signal: Signal, reasons: string[]) {
     const short = signal.side === "SHORT";
     await this.send([
-      short ? "🔴 SETUP ACTIVATED" : "🟢 SETUP ACTIVATED",
+      `🚀 ${short ? "SHORT" : "LONG"} — ${signal.symbol}`,
       "",
-      signal.symbol,
+      "Entry:",
+      `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
       "",
-      "Status:",
-      "✅ ЗАХОДИТИ ЗАРАЗ",
+      "SL:",
+      fmt(signal.stopLoss),
       "",
-      "Причина:",
-      ...reasons.slice(0, 8).map((reason) => `✅ ${reason}`),
+      "TP1:",
+      fmt(signal.takeProfit[0]),
       "",
-      `📍 Вхід: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
-      `🛑 SL: ${fmt(signal.stopLoss)}`,
-      `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
-      `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
-      `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
-      `⚡ Плече: ${leverageText(signal)}`
+      "TP2:",
+      fmt(signal.takeProfit[1]),
+      "",
+      `Confidence: ${signal.confidence}%`,
+      "",
+      "Reason:",
+      reasons.slice(0, 3).join(" / ")
     ].join("\n"), signalQuickActions(signal.symbol));
   }
 
   async setupUpgraded(signal: Signal, reasons: string[]) {
     await this.send([
-      "🚀 SETUP UPGRADED",
-      "",
-      signal.symbol,
-      "",
-      "Watchlist → Entry",
+      `🚀 ENTRY READY — ${signal.symbol}`,
       "",
       "Reason:",
-      ...reasons.slice(0, 8).map((reason) => `✅ ${reason}`),
+      reasons.slice(0, 3).join(" / "),
       "",
-      `📍 Вхід: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
-      `🛑 SL: ${fmt(signal.stopLoss)}`,
-      `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
-      `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
-      `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
-      `⚡ Плече: ${leverageText(signal)}`
+      `Entry: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+      `SL: ${fmt(signal.stopLoss)}`,
+      `TP1: ${fmt(signal.takeProfit[0])}`,
+      `TP2: ${fmt(signal.takeProfit[1])}`,
+      `Confidence: ${signal.confidence}%`
     ].join("\n"), signalQuickActions(signal.symbol));
   }
 
   async pumpDetected(signal: Signal, reasons: string[]) {
-    await this.send([
-      "⚠️ PUMP DETECTED",
-      "",
-      signal.symbol,
-      "",
-      "WAIT RETEST",
-      "",
-      "Причина:",
-      ...reasons.slice(0, 6).map((reason) => `⚠️ ${reason}`),
-      "",
-      "No FOMO trade.",
-      "Потрібно:",
-      "✅ pullback",
-      "✅ retest",
-      "✅ liquidity sweep",
-      "✅ sniper confirmation"
-    ].join("\n"), signalQuickActions(signal.symbol));
+    return;
   }
 
   async setupInvalidated(signal: Signal, reasons: string[]) {
-    await this.send([
-      "❌ WATCHLIST CANCELLED",
-      "",
-      signal.symbol,
-      "",
-      "Причина:",
-      ...reasons.slice(0, 6).map((reason) => `⚠️ ${reason}`),
-      "",
-      "No trade."
-    ].join("\n"));
+    return;
   }
 
   async noTrade(signal: Signal) {
-    await this.send(formatNoTrade(signal));
+    return;
   }
 
   async exitAlert(signal: Signal, action: string, reasons: string[]) {
@@ -109,15 +79,13 @@ export class TelegramNotifier {
   async tradeManagementAlert(signal: Signal, action: string, currentPrice: number, reasons: string[]) {
     await this.send([
       action,
-      reasons.length ? "" : null,
-      ...reasons,
       "",
-      `Ціна: ${fmt(currentPrice)}`
+      `Price: ${fmt(currentPrice)}`
     ].filter(Boolean).join("\n"));
   }
 
   async diagnostics(message: string) {
-    await this.send(["🛠 ДІАГНОСТИКА", "", message].join("\n"));
+    return;
   }
 
   async send(text: string, replyMarkup?: TelegramReplyMarkup) {
@@ -157,30 +125,26 @@ function formatSignal(signal: Signal) {
   const sizing = signal.positionSizing;
   const balance = sizing?.balanceUsdt ?? config.USER_BALANCE_USDT;
   return [
-    `${icon} ${direction} — ${signal.symbol}`,
+    `🚀 ${direction} — ${signal.symbol}`,
     "",
-    signal.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : "⏳ ЧЕКАТИ КРАЩИЙ ВХІД",
+    "Entry:",
+    `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
     "",
-    `📍 Вхід: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
-    `🛑 SL: ${fmt(signal.stopLoss)}`,
-    `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
-    `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
-    `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
-    `⚡ Плече: ${leverageText(signal)}`,
-    `💵 Баланс: ${balance} USDT`,
-    `📦 Розмір входу: ${sizing ? `${sizing.positionSizeUsdt} USDT` : "після підтвердження"}`,
+    "SL:",
+    fmt(signal.stopLoss),
+    "",
+    "TP1:",
+    fmt(signal.takeProfit[0]),
+    "",
+    "TP2:",
+    fmt(signal.takeProfit[1]),
+    "",
+    `Confidence: ${signal.confidence}%`,
+    `Position: ${sizing ? `${sizing.positionSizeUsdt} USDT` : `${balance} USDT balance`}`,
     sizing?.entryPlan ? `🧩 Entry plan: ${sizing.entryPlan}` : null,
-    sizing?.addOnRule ? `➕ Add-on: ${sizing.addOnRule}` : null,
-    `🎯 Потенційний профіт: ${sizing ? `${sizing.potentialProfitUsdt[0]} / ${sizing.potentialProfitUsdt[1]} / ${sizing.potentialProfitUsdt[2]} USDT` : "після підтвердження"}`,
-    `🛑 Максимальний ризик: ${sizing ? `${sizing.potentialLossUsdt} USDT (${sizing.accountRiskPercent}%)` : "після підтвердження"}`,
     "",
-    `📊 Confidence: ${signal.confidence}%`,
-    `📈 RR: ${signal.riskReward}`,
-    "",
-    "Причина:",
-    ...premiumReasons(signal),
-    "",
-    `🟠 Беззбиток: ${smartBreakevenText(signal)}`
+    "Reason:",
+    premiumReasons(signal).slice(0, 3).join(" / ")
   ].filter(Boolean).join("\n");
 }
 
