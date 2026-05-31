@@ -45,6 +45,26 @@ export class TelegramNotifier {
     ].join("\n"), signalQuickActions(signal.symbol));
   }
 
+  async setupUpgraded(signal: Signal, reasons: string[]) {
+    await this.send([
+      "🚀 SETUP UPGRADED",
+      "",
+      signal.symbol,
+      "",
+      "Watchlist → Entry",
+      "",
+      "Reason:",
+      ...reasons.slice(0, 8).map((reason) => `✅ ${reason}`),
+      "",
+      `📍 Вхід: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
+      `🛑 SL: ${fmt(signal.stopLoss)}`,
+      `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
+      `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
+      `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
+      `⚡ Плече: ${leverageText(signal)}`
+    ].join("\n"), signalQuickActions(signal.symbol));
+  }
+
   async pumpDetected(signal: Signal, reasons: string[]) {
     await this.send([
       "⚠️ PUMP DETECTED",
@@ -149,6 +169,8 @@ function formatSignal(signal: Signal) {
     `⚡ Плече: ${leverageText(signal)}`,
     `💵 Баланс: ${balance} USDT`,
     `📦 Розмір входу: ${sizing ? `${sizing.positionSizeUsdt} USDT` : "після підтвердження"}`,
+    sizing?.entryPlan ? `🧩 Entry plan: ${sizing.entryPlan}` : null,
+    sizing?.addOnRule ? `➕ Add-on: ${sizing.addOnRule}` : null,
     `🎯 Потенційний профіт: ${sizing ? `${sizing.potentialProfitUsdt[0]} / ${sizing.potentialProfitUsdt[1]} / ${sizing.potentialProfitUsdt[2]} USDT` : "після підтвердження"}`,
     `🛑 Максимальний ризик: ${sizing ? `${sizing.potentialLossUsdt} USDT (${sizing.accountRiskPercent}%)` : "після підтвердження"}`,
     "",

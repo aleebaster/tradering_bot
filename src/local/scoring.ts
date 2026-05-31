@@ -51,6 +51,12 @@ export function btcStable(btc: MarketSnapshot["candles"]): boolean {
   return a / last.close < 0.022 && !fakeBreak;
 }
 
+export function marketThresholdProfile(regime: MarketRegime, btcOk: boolean) {
+  if ((regime === "TRENDING" || regime === "BREAKOUT" || regime === "EXPANSION") && btcOk) return { mode: "Bull / Trending", aggression: "Balanced", entry: 90, watch: 80, early: 72 };
+  if ((regime === "HIGH_VOLATILITY" || regime === "VOLATILE") && btcOk) return { mode: "High Volatility", aggression: "Selective fast momentum", entry: 90, watch: 82, early: 72 };
+  return { mode: "Sideways / Weak", aggression: "Conservative", entry: 92, watch: 82, early: 72 };
+}
+
 export function buildSignal(snapshot: MarketSnapshot): Signal {
   const primaryTf = snapshot.mode === "futures" ? "15" : "240";
   const candles = snapshot.candles[primaryTf] ?? [];
@@ -120,11 +126,13 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   if (rrValue < 2) score = Math.min(score, 69);
   score = Math.max(score, earlySetupFloor(snapshot, { side, executionAligned: execution.aligned, htfScore: htf.score, trendStrength, mtf, volume, orderFlowScore: orderFlow.score, liquidityScore: liquidity.score, funding, fakeBreakoutRisk: fakeBreakout.risk, newsBlocked: newsRisk.blocked, rrValue }));
   const roundedScore = Math.round(score);
-  const entryThreshold = 92;
-  const watchThreshold = coinQuality.watchThreshold;
-  const earlyThreshold = 72;
+  const thresholds = marketThresholdProfile(snapshot.regime, snapshot.btcStable);
+  const entryThreshold = thresholds.entry;
+  const watchThreshold = Math.min(coinQuality.watchThreshold, thresholds.watch);
+  const earlyThreshold = thresholds.early;
   const inEntryZone = last.close >= Math.min(...entry) && last.close <= Math.max(...entry);
-  const strongEntryReady = roundedScore >= entryThreshold && side !== "NO_TRADE" && inEntryZone && sniper.ready && snapshot.btcStable && volume >= 65 && momentum >= 70 && liquidity.score >= 65 && !fakeBreakout.risk && !hardBlock.blocked;
+  const fastMomentumEntry = (snapshot.regime === "HIGH_VOLATILITY" || snapshot.regime === "VOLATILE") && fastMove.clean && volume >= 72 && momentum >= 76;
+  const strongEntryReady = roundedScore >= entryThreshold && side !== "NO_TRADE" && inEntryZone && sniper.ready && snapshot.btcStable && volume >= 65 && momentum >= 70 && (liquidity.score >= 65 || fastMomentumEntry) && !fakeBreakout.risk && !hardBlock.blocked;
   const qualifiedSide: Side = strongEntryReady ? side : roundedScore >= earlyThreshold && snapshot.mode === "futures" && side !== "NO_TRADE" ? "WATCHLIST" : "NO_TRADE";
   const entryStatus = qualifiedSide === "NO_TRADE" || qualifiedSide === "WATCHLIST" ? "NO_TRADE" : "ENTER_NOW";
   const riskReward = riskRewardRatio(rrValue);
@@ -205,6 +213,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
       btcPenalty: Math.round(btcPenalty),
       exchangeConfirmationPenalty: Math.round(confirmationPenalty),
       adaptiveConfirmationRequired: entryThreshold,
+      marketAggression: thresholds.aggression === "Balanced" ? 70 : thresholds.aggression === "Selective fast momentum" ? 60 : 40,
       watchlistThreshold: watchThreshold,
       earlySetupThreshold: earlyThreshold,
       smallAltStrictConfirmation: confirmationProfile.smallAltStrict ? 100 : 0,

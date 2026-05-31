@@ -25,6 +25,7 @@ export interface NewTokenOpportunity {
   reasons: string[];
   waitingFor: string[];
   rejectionReason: string;
+  earlyMomentum: boolean;
 }
 
 const client = new ExchangeClient();
@@ -91,12 +92,15 @@ export async function analyzeBybitNewToken(symbol: string): Promise<NewTokenOppo
   const fundingScore = clamp(100 - Math.abs(fundingRate) * 10000);
   const fakeBreakoutRisk = recentPump > 0.18 || impulse > 0.12 || orderbook.spoofRisk || volatilityPct > 0.03 || !btcOk;
   const confirmations = [volume >= 65, oiScore >= 58, momentum >= 65, liquidityScore >= 70, retest.confirmed, btcOk, orderbookScore >= 80, !fakeBreakoutRisk, sniper.confirmed].filter(Boolean).length;
+  const firstStructure = earlyCandleStructure(c15, c5, direction);
+  const earlyMomentum = firstStructure && volume >= 60 && oiScore >= 55 && liquidityScore >= 60 && orderbookScore >= 80 && btcOk && !orderbook.spoofRisk;
   let score = clamp(volume * 0.12 + oiScore * 0.1 + fundingScore * 0.08 + momentum * 0.14 + liquidityScore * 0.16 + orderbookScore * 0.14 + retest.score * 0.12 + sniper.score * 0.08 + smc.score * 0.06 - (fakeBreakoutRisk ? 28 : 0));
   if (ticker.turnover24h < MIN_TURNOVER || orderbook.spreadPct > MAX_SPREAD || orderbook.depthUsdt < MIN_DEPTH || Math.abs(orderbook.imbalance) > 0.65) score = Math.min(score, 55);
   if (ticker.turnover24h < ENTRY_MIN_TURNOVER) score = Math.min(score, 84);
   if (recentPump > 0.2 || impulse > 0.15 || volatilityPct > 0.035) score = Math.min(score, 62);
   if (!btcOk) score = Math.min(score, 84);
   if (!retest.confirmed || !sniper.confirmed) score = Math.min(score, 89);
+  if (earlyMomentum && !retest.confirmed) score = Math.max(score, 80);
   const side = direction === 1 ? "LONG" : direction === -1 ? "SHORT" : "WAIT";
   const status: NewTokenStatus = score >= 92 && ticker.turnover24h >= ENTRY_MIN_TURNOVER && retest.confirmed && sniper.confirmed && !fakeBreakoutRisk && side !== "WAIT" ? "SIGNAL" : score >= 80 ? "WATCHLIST" : "WAIT";
   const entry = entryZone(last.close, atr(c15), direction || 1);
@@ -120,7 +124,8 @@ export async function analyzeBybitNewToken(symbol: string): Promise<NewTokenOppo
     leverage: score >= 95 && confirmations >= 7 ? "x3" : "x2",
     reasons: reasons({ ticker, orderbook, volume, oiScore, fundingScore, momentum, liquidityScore, retest, sniper, btcOk, regime: regimeFrom(candles), fakeBreakoutRisk }),
     waitingFor: waitingFor({ volume, oiScore, momentum, liquidityScore, retest, sniper, btcOk, orderbookScore, fakeBreakoutRisk }),
-    rejectionReason: rejectionReason({ ticker, orderbook, btcOk, recentPump, impulse, volatilityPct, confirmations, retest, sniper, score })
+    rejectionReason: earlyMomentum && !retest.confirmed ? "EARLY MOMENTUM: Wait retest." : rejectionReason({ ticker, orderbook, btcOk, recentPump, impulse, volatilityPct, confirmations, retest, sniper, score }),
+    earlyMomentum
   };
 }
 
@@ -130,14 +135,15 @@ export function formatNewTokenWatch(items: NewTokenOpportunity[]) {
 }
 
 export function formatNewTokenCard(item: NewTokenOpportunity) {
-  const statusLabel = item.status === "SIGNAL" ? "🟢 REAL ENTRY" : item.score >= 85 ? "🟡 WATCHLIST" : item.score >= 80 ? "👀 EARLY SETUP" : item.status === "REJECTED" ? "❌ rejected" : "❌ weak setup";
+  const statusLabel = item.status === "SIGNAL" ? "🟢 REAL ENTRY" : item.earlyMomentum ? "⚠️ EARLY MOMENTUM" : item.score >= 85 ? "🟡 WATCHLIST" : item.score >= 80 ? "👀 EARLY SETUP" : item.status === "REJECTED" ? "❌ rejected" : "❌ weak setup";
   const pumpDetected = item.waitingFor.some((reason) => reason.toLowerCase().includes("pump")) || item.rejectionReason.toLowerCase().includes("pumped");
-  const header = item.status === "SIGNAL" ? `🟢 REAL ENTRY — ${item.symbol}` : item.score >= 85 ? `🚀 HIGH POTENTIAL DETECTED\n\n${item.symbol}` : item.score >= 80 ? `👀 EARLY SETUP — ${item.symbol}` : `🚀 NEW TOKEN WATCH\n\n${item.symbol}`;
+  const header = item.status === "SIGNAL" ? `🟢 REAL ENTRY — ${item.symbol}` : item.earlyMomentum ? `⚠️ EARLY MOMENTUM\n\n${item.symbol}` : item.score >= 85 ? `🚀 HIGH POTENTIAL DETECTED\n\n${item.symbol}` : item.score >= 80 ? `👀 EARLY SETUP — ${item.symbol}` : `🚀 NEW TOKEN WATCH\n\n${item.symbol}`;
   return [
     header,
     "",
     pumpDetected ? "⚠️ PUMP DETECTED" : null,
     pumpDetected ? "WAIT RETEST" : null,
+    item.earlyMomentum && !pumpDetected ? "Wait retest." : null,
     pumpDetected ? "" : null,
     "Current status:",
     statusLabel,
@@ -177,6 +183,17 @@ function candidatePriority(item: { ticker?: { turnover24h: number; price24hPcnt:
 function listedDays(launchTime: number) {
   if (!launchTime || !Number.isFinite(launchTime)) return null;
   return Math.max(0, Math.floor((Date.now() - launchTime) / 86_400_000));
+}
+
+function earlyCandleStructure(c15: Candle[], c5: Candle[], direction: number) {
+  if (direction === 0 || c15.length < 3 || c5.length < 6) return false;
+  const last15 = c15.slice(-2);
+  const last5 = c5.slice(-6);
+  const impulse15 = last15.some((c) => Math.abs(c.close - c.open) / Math.max(c.open, 1e-9) >= 0.01 && c.volume > 0);
+  const heldStructure = direction === 1
+    ? last5.at(-1)!.close >= Math.min(...last5.map((c) => c.low)) * 1.006
+    : last5.at(-1)!.close <= Math.max(...last5.map((c) => c.high)) * 0.994;
+  return impulse15 && heldStructure;
 }
 
 function recentMove(candles: Candle[], length: number) {
@@ -258,7 +275,7 @@ function rejectionReason(input: { ticker: { turnover24h: number }; orderbook: { 
 }
 
 function rejected(symbol: string, reason: string): NewTokenOpportunity {
-  return { symbol, status: "REJECTED", side: "WAIT", score: 0, listedDays: null, turnover24h: 0, spreadPct: 1, depthUsdt: 0, confirmations: 0, btcStable: false, entryStatus: "NO_TRADE", entry: [0, 0], stopLoss: 0, takeProfit: [0, 0, 0], leverage: "x2", reasons: ["Bybit futures only", "strict small-account protection"], waitingFor: ["quality liquidity", "BTC stable", "retest", "sniper trigger"], rejectionReason: reason };
+  return { symbol, status: "REJECTED", side: "WAIT", score: 0, listedDays: null, turnover24h: 0, spreadPct: 1, depthUsdt: 0, confirmations: 0, btcStable: false, entryStatus: "NO_TRADE", entry: [0, 0], stopLoss: 0, takeProfit: [0, 0, 0], leverage: "x2", reasons: ["Bybit futures only", "strict small-account protection"], waitingFor: ["quality liquidity", "BTC stable", "retest", "sniper trigger"], rejectionReason: reason, earlyMomentum: false };
 }
 
 function formatUsd(value: number) {

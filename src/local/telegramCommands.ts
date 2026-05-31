@@ -9,6 +9,7 @@ import { performanceText, tradeStatsText } from "./tradeMemory";
 import { learningStatusText, resetLearning } from "./learning";
 import { analyzeBybitNewToken, formatNewTokenCard, formatNewTokenWatch, scanBybitNewTokens } from "./newTokenScanner";
 import { logger } from "./logger";
+import { marketThresholdProfile } from "./scoring";
 import type { Signal } from "./types";
 
 type PendingAction = "signal" | "watch" | "unwatch" | "balance" | "newsignal";
@@ -140,6 +141,7 @@ export class TelegramCommandCenter {
     if (command === "/status") return this.notifier.send(statusText(), mainMenuKeyboard());
     if (command === "/diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
     if (command === "/market") return this.notifier.send(marketText(), marketActionsKeyboard());
+    if (command === "/markethealth") return this.notifier.send(marketHealthText(), marketActionsKeyboard());
     if (command === "/btc") return this.notifier.send(btcText(), marketActionsKeyboard());
     if (command === "/positions") return this.sendPositions();
     if (command === "/stats") return this.notifier.send(tradeStatsText(), mainMenuKeyboard());
@@ -238,7 +240,8 @@ export class TelegramCommandCenter {
       leverage: "x2" as const,
       reasons: ["Bybit Futures only"],
       waitingFor: ["quality liquidity", "BTC stable", "retest", "sniper trigger"],
-      rejectionReason: error instanceof Error ? error.message : String(error)
+      rejectionReason: error instanceof Error ? error.message : String(error),
+      earlyMomentum: false
     }));
     return this.notifier.send(formatNewTokenCard(item), signalQuickActions(pair));
   }
@@ -520,6 +523,7 @@ function helpText() {
     "/newsignal TOKENUSDT — аналіз нового futures токена",
     "/newwatch — якісні нові лістинги під моніторингом",
     "/market — стан ринку",
+    "/markethealth — режим, агресивність і активні пороги",
     "/btc — BTC фільтр",
     "/status — статус сканера",
     "/positions — активні угоди",
@@ -581,6 +585,56 @@ function btcText() {
     `Напрям ринку: ${state.marketCondition}`,
     `Волатильність: ${btcSignal?.marketRegime ?? "немає даних"}`
   ].join("\n");
+}
+
+function marketHealthText() {
+  const latest = [...state.activeSignals, ...state.watchlist, ...state.history].find(Boolean);
+  const btcSignal = [...state.activeSignals, ...state.watchlist, ...state.history].find((signal) => signal.symbol === "BTCUSDT");
+  const btcOk = latest?.btcStable ?? false;
+  const regime = latest?.marketRegime ?? btcSignal?.marketRegime ?? "SIDEWAYS";
+  const thresholds = marketThresholdProfile(regime, btcOk);
+  const recent = state.history.slice(0, 20);
+  const entries = recent.filter((signal) => !["NO_TRADE", "WATCHLIST"].includes(signal.side)).length;
+  const watch = recent.filter((signal) => signal.side === "WATCHLIST").length;
+  const noTrade = recent.filter((signal) => signal.side === "NO_TRADE").length;
+  const avgScore = recent.length ? Math.round(recent.reduce((sum, signal) => sum + signal.score, 0) / recent.length) : 0;
+  return [
+    "🩺 Market Health",
+    "",
+    `Market: ${thresholds.mode}`,
+    `BTC: ${btcOk ? "stable" : "unstable"}`,
+    `Volatility: ${regime}`,
+    `Aggression: ${thresholds.aggression}`,
+    `Active thresholds: Entry ${thresholds.entry}+ / Watchlist ${thresholds.watch}+ / Early ${thresholds.early}+`,
+    "",
+    `Expected signals: ${expectedSignals(thresholds.aggression, btcOk)}`,
+    `Recent flow: ${entries} entries / ${watch} watchlist / ${noTrade} no-trade`,
+    `Average score: ${avgScore || "немає даних"}`,
+    "",
+    "Why signals are low/high:",
+    ...marketHealthReasons(recent, btcOk, thresholds.aggression)
+  ].join("\n");
+}
+
+function expectedSignals(aggression: string, btcOk: boolean) {
+  if (!btcOk) return "Low";
+  if (aggression === "Balanced") return "Normal: 1-2 entries, 4-6 watchlist per 20 checks";
+  if (aggression === "Selective fast momentum") return "Medium: fast clean setups only";
+  return "Low";
+}
+
+function marketHealthReasons(recent: Signal[], btcOk: boolean, aggression: string) {
+  const reasons: string[] = [];
+  if (!btcOk) reasons.push("⚠️ BTC stability filter limits alt entries");
+  if (aggression === "Conservative") reasons.push("⚠️ Sideways/weak regime keeps strict 92+ entry threshold");
+  const weakVolume = recent.filter((signal) => (signal.scoreBreakdown.volumeConfirmation ?? 0) < 65).length;
+  const weakSniper = recent.filter((signal) => (signal.scoreBreakdown.entrySniper ?? 0) < 70).length;
+  const fakeRisk = recent.filter((signal) => signal.fakeBreakout?.risk).length;
+  if (weakVolume >= Math.max(3, recent.length / 3)) reasons.push("⚠️ Volume confirmation is low across recent scans");
+  if (weakSniper >= Math.max(3, recent.length / 3)) reasons.push("⚠️ Sniper/retest trigger is not ready on most setups");
+  if (fakeRisk) reasons.push("⚠️ Fake-breakout protection is active");
+  if (!reasons.length) reasons.push("✅ Market filters are healthy; scanner can upgrade watchlist quickly");
+  return reasons.slice(0, 5);
 }
 
 function positionsText() {

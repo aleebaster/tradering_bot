@@ -35,7 +35,8 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
   const maxLossUsdt = balanceUsdt * maxRiskPercent / 100;
   const fullNotional = balanceUsdt * leverage;
   const maxSafeNotional = maxLossUsdt / (priceRiskPercent / 100);
-  const positionSizeUsdt = roundMoney(Math.max(0, Math.min(fullNotional, maxSafeNotional)));
+  const starterEntry = balanceUsdt <= 5.5 && input.score >= 88;
+  const positionSizeUsdt = roundMoney(Math.max(0, Math.min(fullNotional, maxSafeNotional)) * (starterEntry ? 0.5 : 1));
   if (!isFinitePositive(positionSizeUsdt)) return undefined;
 
   const marginUsdt = roundMoney(positionSizeUsdt / leverage);
@@ -62,7 +63,10 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
     potentialLossUsdt,
     potentialProfitUsdt,
     liquidationSafety: liquidationSafetyText(liquidationSafetyPercent, leverage),
-    liquidationSafetyPercent
+    liquidationSafetyPercent,
+    entryPlan: starterEntry ? "50% starter entry, add only after confirmation" : "single confirmed entry",
+    starterEntryPercent: starterEntry ? 50 : 100,
+    addOnRule: starterEntry ? "Add remaining 50% only after volume/retest/sniper confirmation holds." : undefined
   };
 }
 

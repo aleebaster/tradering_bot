@@ -25,6 +25,7 @@ export class Scanner {
   private activatedWatchlist = new Set<string>();
   private invalidatedWatchlist = new Set<string>();
   private fomoWatchlist = new Set<string>();
+  private watchlistCheckedAt = new Map<string, number>();
   private binanceWs: WebSocket | null = null;
   private scanning = false;
   private symbols = config.symbols;
@@ -52,7 +53,7 @@ export class Scanner {
     this.connectKrakenTicker();
     await this.scan();
     this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
-    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 3 * 60_000);
+    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 60_000);
   }
 
   stop() {
@@ -396,6 +397,10 @@ export class Scanner {
     for (const item of items) {
       const key = watchKey(item.symbol, item.mode);
       if (this.activatedWatchlist.has(key) || this.invalidatedWatchlist.has(key)) continue;
+      const recheckMs = isNewTokenWatch(item.symbol) ? 60_000 : 2 * 60_000;
+      const checkedAt = this.watchlistCheckedAt.get(key) ?? 0;
+      if (Date.now() - checkedAt < recheckMs) continue;
+      this.watchlistCheckedAt.set(key, Date.now());
       try {
         const candles = item.symbol === "BTCUSDT" ? btcCandles : await this.loadCandles(item.symbol, "futures");
         const snapshot = await this.snapshot(item.symbol, "futures", candles, btcOk, btcCandles);
@@ -403,7 +408,8 @@ export class Scanner {
         logger.info({ symbol: item.symbol, score: signal.score, side: signal.side, scoreBreakdown: signal.scoreBreakdown }, "watchlist recheck");
         const evolution = watchlistEvolution(item, signal);
         const fomo = fomoBlock(signal);
-        if (signal.score >= 92 && fomo.blocked) {
+        const entryThreshold = signal.scoreBreakdown.adaptiveConfirmationRequired ?? 92;
+        if (signal.score >= entryThreshold && fomo.blocked) {
           if (!this.fomoWatchlist.has(key)) {
             this.fomoWatchlist.add(key);
             if (notificationsEnabled()) await this.notifier.pumpDetected(signal, fomo.reasons);
@@ -411,12 +417,12 @@ export class Scanner {
           state.watchlist = [signal, ...state.watchlist.filter((x) => watchKey(x.symbol, x.mode) !== key)].slice(0, 30);
           continue;
         }
-        if (signal.score >= 92 && activationConfirmed(signal, evolution)) {
+        if (signal.score >= entryThreshold && activationConfirmed(signal, evolution)) {
           const activated = signal;
           this.activatedWatchlist.add(key);
           recordSignal(activated);
           this.markSignalSent(activated);
-          if (notificationsEnabled()) await this.notifier.setupActivated(activated, activationReasons(activated, evolution));
+          if (notificationsEnabled()) await this.notifier.setupUpgraded(activated, activationReasons(activated, evolution));
           recordPaperOpen(activated);
           continue;
         }
@@ -438,6 +444,7 @@ export class Scanner {
 }
 
 export function activationConfirmed(signal: Signal, evolution: WatchlistEvolution) {
+  const entryThreshold = signal.scoreBreakdown.adaptiveConfirmationRequired ?? 92;
   const confirmations = [
     momentumConfirmed(signal),
     volumeConfirmed(signal),
@@ -449,7 +456,8 @@ export function activationConfirmed(signal: Signal, evolution: WatchlistEvolutio
     evolution.oiImproved,
     evolution.volumeImproved
   ].filter(Boolean).length;
-  return !isExpired(signal) && signal.score >= 92 && confirmations >= 5 && sniperConfirmed(signal) && signal.btcStable && signal.entryStatus === "ENTER_NOW" && !fomoBlock(signal).blocked;
+  const improvedEnough = evolution.scoreDelta >= 5 || [evolution.volumeImproved, evolution.momentumShift, evolution.retestImproved, evolution.oiImproved].filter(Boolean).length >= 2;
+  return !isExpired(signal) && !["NO_TRADE", "WATCHLIST"].includes(signal.side) && signal.score >= entryThreshold && confirmations >= (improvedEnough ? 4 : 5) && improvedEnough && sniperConfirmed(signal) && (evolution.retestImproved || liquiditySweepConfirmed(signal)) && signal.btcStable && signal.entryStatus === "ENTER_NOW" && !fomoBlock(signal).blocked;
 }
 
 export type WatchlistEvolution = ReturnType<typeof watchlistEvolution>;
@@ -482,7 +490,7 @@ function watchlistDecayed(prev: Signal, next: Signal, evolution: WatchlistEvolut
 }
 
 function activationReasons(signal: Signal, evolution: WatchlistEvolution) {
-  const reasons = ["score оновився до 92+"];
+  const reasons = [`score оновився до ${signal.scoreBreakdown.adaptiveConfirmationRequired ?? 92}+`];
   if (evolution.scoreDelta > 0) reasons.push(`score покращився +${evolution.scoreDelta}`);
   if (evolution.volumeImproved || volumeConfirmed(signal)) reasons.push("volume increased");
   if (evolution.oiImproved || (signal.scoreBreakdown.openInterestConfirmation ?? 0) >= 58) reasons.push("OI rising");
@@ -492,6 +500,10 @@ function activationReasons(signal: Signal, evolution: WatchlistEvolution) {
   if (signal.btcStable) reasons.push("BTC stable");
   if (breakoutConfirmed(signal)) reasons.push("breakout confirmation");
   return reasons;
+}
+
+function isNewTokenWatch(symbol: string) {
+  return !config.symbols.includes(symbol);
 }
 
 function invalidationReasons(signal: Signal, evolution?: WatchlistEvolution) {

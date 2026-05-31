@@ -177,6 +177,9 @@ export interface PositionSizing {
   potentialProfitUsdt: [number, number, number];
   liquidationSafety: string;
   liquidationSafetyPercent: number;
+  entryPlan?: string;
+  starterEntryPercent?: number;
+  addOnRule?: string;
 }
 
 export interface Diagnostics {
