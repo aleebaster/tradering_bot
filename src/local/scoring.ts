@@ -288,9 +288,9 @@ function btcAltRiskPenalty(snapshot: MarketSnapshot, direction: number, correlat
 
 function earlySetupFloor(snapshot: MarketSnapshot, quality: { side: Side; executionAligned: boolean; htfScore: number; trendStrength: number; mtf: number; volume: number; orderFlowScore: number; liquidityScore: number; funding: number; fakeBreakoutRisk: boolean; newsBlocked: boolean; rrValue: number }) {
   if (snapshot.mode !== "futures" || quality.side === "NO_TRADE" || quality.newsBlocked || quality.fakeBreakoutRisk || quality.rrValue < 2) return 0;
-  if (quality.funding < 70 || quality.trendStrength < 20 || !snapshot.btcStable) return 0;
+  if (quality.funding < 70 || !snapshot.btcStable) return 0;
   const structureReady = quality.executionAligned || quality.htfScore >= 55 || quality.mtf >= 67;
-  if (!structureReady) return 0;
+  if (!structureReady || quality.trendStrength < 8 && quality.mtf < 67 && quality.htfScore < 55) return 0;
   const confirmations = [quality.executionAligned, quality.htfScore >= 55, quality.mtf >= 67, quality.volume >= 50, quality.orderFlowScore >= 80, quality.liquidityScore >= 70, snapshot.btcStable].filter(Boolean).length;
   if (confirmations >= 5) return 85;
   if (confirmations >= 4) return 80;

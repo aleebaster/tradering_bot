@@ -206,7 +206,7 @@ export class TelegramCommandCenter {
 
   private async sendNewTokens(): Promise<void> {
     if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send("🚀 NEW TOKENS WATCH\n\nТестовий режим: Bybit scan skipped.", signalActionsKeyboard());
-    await this.notifier.send("⏳ Сканую Bybit Futures new listings з hard filters...", signalActionsKeyboard());
+    await this.notifier.send("⏳ Сканую Bybit Futures new listings: A+ entry, B watchlist, C early setup...", signalActionsKeyboard());
     const items = await scanBybitNewTokens(5).catch((error) => {
       logger.warn({ err: error }, "Bybit new token scan failed");
       return [];

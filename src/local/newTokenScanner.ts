@@ -28,7 +28,8 @@ export interface NewTokenOpportunity {
 }
 
 const client = new ExchangeClient();
-const MIN_TURNOVER = 20_000_000;
+const MIN_TURNOVER = 5_000_000;
+const ENTRY_MIN_TURNOVER = 20_000_000;
 const IDEAL_TURNOVER = 50_000_000;
 const MAX_SPREAD = 0.0015;
 const MIN_DEPTH = 100_000;
@@ -48,7 +49,6 @@ export async function scanBybitNewTokens(limit = 5): Promise<NewTokenOpportunity
   for (const candidate of candidates) {
     const result = await analyzeBybitNewToken(candidate.symbol).catch((error) => rejected(candidate.symbol, `Bybit new token scan error: ${error instanceof Error ? error.message : String(error)}`));
     opportunities.push(result);
-    if (opportunities.filter((item) => item.status !== "REJECTED").length >= limit) break;
   }
   return opportunities.sort((a, b) => b.score - a.score).slice(0, limit);
 }
@@ -60,7 +60,7 @@ export async function analyzeBybitNewToken(symbol: string): Promise<NewTokenOppo
   const instrument = instruments.find((item) => item.symbol === normalized);
   const ticker = tickers.find((item) => item.symbol === normalized);
   if (!instrument || instrument.quoteCoin !== "USDT" || !instrument.contractType.toLowerCase().includes("perpetual")) return rejected(normalized, "Немає Bybit USDT perpetual futures market");
-  if (!ticker || ticker.turnover24h < MIN_TURNOVER) return rejected(normalized, "Недостатній futures volume: потрібно 20M+ USDT за 24h");
+  if (!ticker || ticker.turnover24h < MIN_TURNOVER) return rejected(normalized, "Недостатній futures volume: потрібно 5M+ USDT за 24h для моніторингу");
   if (instrument.status !== "Trading") return rejected(normalized, "PreLaunch: торгівля ще не активна, тільки моніторинг");
 
   const [candles, orderbook, fundingRate, oiChange] = await Promise.all([loadCandles(normalized), client.bybitOrderBookStats(normalized), client.fundingRate(normalized).catch(() => 0), client.openInterestChange(normalized).catch(() => 0)]);
@@ -93,12 +93,12 @@ export async function analyzeBybitNewToken(symbol: string): Promise<NewTokenOppo
   const confirmations = [volume >= 65, oiScore >= 58, momentum >= 65, liquidityScore >= 70, retest.confirmed, btcOk, orderbookScore >= 80, !fakeBreakoutRisk, sniper.confirmed].filter(Boolean).length;
   let score = clamp(volume * 0.12 + oiScore * 0.1 + fundingScore * 0.08 + momentum * 0.14 + liquidityScore * 0.16 + orderbookScore * 0.14 + retest.score * 0.12 + sniper.score * 0.08 + smc.score * 0.06 - (fakeBreakoutRisk ? 28 : 0));
   if (ticker.turnover24h < MIN_TURNOVER || orderbook.spreadPct > MAX_SPREAD || orderbook.depthUsdt < MIN_DEPTH || Math.abs(orderbook.imbalance) > 0.65) score = Math.min(score, 55);
-  if (recentPump > 0.2 || impulse > 0.15 || volatilityPct > 0.035) score = Math.min(score, 55);
+  if (ticker.turnover24h < ENTRY_MIN_TURNOVER) score = Math.min(score, 84);
+  if (recentPump > 0.2 || impulse > 0.15 || volatilityPct > 0.035) score = Math.min(score, 62);
   if (!btcOk) score = Math.min(score, 84);
-  if (confirmations < 4) score = Math.min(score, 84);
   if (!retest.confirmed || !sniper.confirmed) score = Math.min(score, 89);
   const side = direction === 1 ? "LONG" : direction === -1 ? "SHORT" : "WAIT";
-  const status: NewTokenStatus = score >= 92 && confirmations >= 6 && retest.confirmed && sniper.confirmed && side !== "WAIT" ? "SIGNAL" : score >= 80 ? "WATCHLIST" : score >= 65 ? "WAIT" : "REJECTED";
+  const status: NewTokenStatus = score >= 92 && ticker.turnover24h >= ENTRY_MIN_TURNOVER && retest.confirmed && sniper.confirmed && !fakeBreakoutRisk && side !== "WAIT" ? "SIGNAL" : score >= 80 ? "WATCHLIST" : "WAIT";
   const entry = entryZone(last.close, atr(c15), direction || 1);
   const stopLoss = direction === -1 ? Math.min(sr.resistance, last.close + atr(c15) * 1.5) : Math.max(sr.support, last.close - atr(c15) * 1.5);
   const takeProfit = targets(last.close, atr(c15), direction || 1);
@@ -125,16 +125,18 @@ export async function analyzeBybitNewToken(symbol: string): Promise<NewTokenOppo
 }
 
 export function formatNewTokenWatch(items: NewTokenOpportunity[]) {
-  if (!items.length) return ["🚀 NEW TOKENS WATCH", "", "Якісних Bybit futures new-token setup зараз немає.", "Фільтр: volume 20M+, low spread, healthy depth, BTC stable, retest/sniper only."].join("\n");
+  if (!items.length) return ["🚀 NEW TOKENS WATCH", "", "Якісних Bybit futures new-token setup зараз немає.", "Фільтр: monitoring 5M+, entry 20M+, low spread, healthy depth, BTC stable, retest/sniper only."].join("\n");
   return ["🚀 NEW TOKENS WATCH", "", ...items.map(formatNewTokenCard)].join("\n\n");
 }
 
 export function formatNewTokenCard(item: NewTokenOpportunity) {
-  const header = item.status === "SIGNAL" ? `🟢 ${item.side} — ${item.symbol}` : item.score >= 85 ? `🟡 WATCHLIST — ${item.symbol}` : item.status === "WATCHLIST" ? `⚡ EARLY SETUP — ${item.symbol}` : `⏳ WAIT — ${item.symbol}`;
+  const statusLabel = item.status === "SIGNAL" ? "🟢 REAL ENTRY" : item.score >= 85 ? "🟡 WATCHLIST" : item.score >= 80 ? "👀 EARLY SETUP" : item.status === "REJECTED" ? "❌ rejected" : "❌ weak setup";
+  const header = item.status === "SIGNAL" ? `🟢 REAL ENTRY — ${item.symbol}` : item.score >= 85 ? `🚀 HIGH POTENTIAL DETECTED\n\n${item.symbol}` : item.score >= 80 ? `👀 EARLY SETUP — ${item.symbol}` : `🚀 NEW TOKEN WATCH\n\n${item.symbol}`;
   return [
     header,
     "",
-    `📍 Статус: ${item.status}`,
+    "Current status:",
+    statusLabel,
     `Score: ${item.score}/100 · confirmations ${item.confirmations}/9`,
     `Volume 24h: ${formatUsd(item.turnover24h)}`,
     `Spread: ${(item.spreadPct * 100).toFixed(3)}% · depth: ${formatUsd(item.depthUsdt)}`,
@@ -142,8 +144,8 @@ export function formatNewTokenCard(item: NewTokenOpportunity) {
     "Причина:",
     ...item.reasons.slice(0, 6).map((reason) => `✅ ${reason}`),
     "",
-    item.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : "Чекаємо:",
-    ...(item.entryStatus === "ENTER_NOW" ? [] : item.waitingFor.slice(0, 5).map((reason) => `• ${reason}`)),
+    item.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : item.score >= 85 ? "Waiting for:" : "Missing:",
+    ...(item.entryStatus === "ENTER_NOW" ? [] : item.waitingFor.slice(0, 5).map((reason) => item.score >= 85 ? `• ${reason}` : `⚠️ ${reason}`)),
     item.entryStatus === "ENTER_NOW" ? "" : "Наступна перевірка: 5 хв",
     "",
     `📍 Вхід: ${fmt(item.entry[0])}-${fmt(item.entry[1])}`,
@@ -151,7 +153,7 @@ export function formatNewTokenCard(item: NewTokenOpportunity) {
     `🎯 TP1: ${fmt(item.takeProfit[0])}`,
     `🎯 TP2: ${fmt(item.takeProfit[1])}`,
     `⚡ Плече: ${item.leverage} максимум`,
-    item.status === "REJECTED" ? `Причина відхилення: ${item.rejectionReason}` : "Risk: 1-2% account max, no FOMO."
+    item.status === "REJECTED" ? `Причина відхилення: ${item.rejectionReason}` : item.entryStatus === "ENTER_NOW" ? "Risk: 1-2% account max, no FOMO." : "Bot continues monitoring. Auto-upgrade only after OI/volume/retest/orderbook/sniper improve."
   ].join("\n");
 }
 
@@ -214,7 +216,7 @@ function targets(price: number, a: number, direction: number): [number, number, 
 function reasons(input: { ticker: { turnover24h: number }; orderbook: { spreadPct: number; depthUsdt: number }; volume: number; oiScore: number; fundingScore: number; momentum: number; liquidityScore: number; retest: { confirmed: boolean; message: string }; sniper: { confirmed: boolean; message: string }; btcOk: boolean; regime: string; fakeBreakoutRisk: boolean }) {
   return [
     "новий Bybit USDT perpetual candidate",
-    input.ticker.turnover24h >= IDEAL_TURNOVER ? "сильний futures обсяг 50M+" : "обсяг пройшов 20M+ hard filter",
+    input.ticker.turnover24h >= IDEAL_TURNOVER ? "сильний futures обсяг 50M+" : input.ticker.turnover24h >= ENTRY_MIN_TURNOVER ? "обсяг 20M+ достатній для entry після підтверджень" : "обсяг 5M+ достатній тільки для моніторингу",
     input.oiScore >= 58 ? "OI росте без перегріву" : "OI нейтральний",
     input.fundingScore >= 80 ? "funding стабільний" : "funding не критичний",
     input.retest.confirmed ? input.retest.message : "чекаємо retest",
@@ -227,7 +229,7 @@ function reasons(input: { ticker: { turnover24h: number }; orderbook: { spreadPc
 
 function waitingFor(input: { volume: number; oiScore: number; momentum: number; liquidityScore: number; retest: { confirmed: boolean }; sniper: { confirmed: boolean }; btcOk: boolean; orderbookScore: number; fakeBreakoutRisk: boolean }) {
   const out: string[] = [];
-  if (input.volume < 65) out.push("volume confirm");
+  if (input.volume < 65) out.push("volume confirm / 20M+ turnover for entry");
   if (input.oiScore < 58) out.push("OI confirm");
   if (input.momentum < 65) out.push("momentum confirm");
   if (input.liquidityScore < 70 || input.orderbookScore < 80) out.push("healthy orderbook/liquidity");
@@ -239,15 +241,15 @@ function waitingFor(input: { volume: number; oiScore: number; momentum: number; 
 }
 
 function rejectionReason(input: { ticker: { turnover24h: number }; orderbook: { spreadPct: number; depthUsdt: number; spoofRisk: boolean }; btcOk: boolean; recentPump: number; impulse: number; volatilityPct: number; confirmations: number; retest: { confirmed: boolean }; sniper: { confirmed: boolean }; score: number }) {
-  if (input.ticker.turnover24h < MIN_TURNOVER) return "low volume";
+  if (input.ticker.turnover24h < MIN_TURNOVER) return "low volume below 5M monitoring minimum";
   if (input.orderbook.spreadPct > MAX_SPREAD) return "wide spread";
   if (input.orderbook.depthUsdt < MIN_DEPTH || input.orderbook.spoofRisk) return "thin/suspicious orderbook";
   if (!input.btcOk) return "BTC unstable";
   if (input.recentPump > 0.2 || input.impulse > 0.15) return "already pumped / FOMO candle";
   if (input.volatilityPct > 0.035) return "insane volatility";
-  if (input.confirmations < 4) return "less than 4 confirmations";
+  if (input.confirmations < 4) return "setup ще слабкий, але лишається під моніторингом";
   if (!input.retest.confirmed || !input.sniper.confirmed) return "WAIT: retest/sniper not confirmed";
-  return `score ${Math.round(input.score)} below new-token threshold 90-95`;
+  return `score ${Math.round(input.score)}: моніторинг без входу`;
 }
 
 function rejected(symbol: string, reason: string): NewTokenOpportunity {

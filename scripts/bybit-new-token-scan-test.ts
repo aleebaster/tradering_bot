@@ -7,7 +7,7 @@ async function main() {
   const checks = {
     arrayReturned: Array.isArray(watch),
     bybitFuturesOnly: analysis.symbol.endsWith("USDT"),
-    strictThreshold: analysis.status !== "SIGNAL" || analysis.score >= 92 && analysis.confirmations >= 6,
+    strictThreshold: analysis.status !== "SIGNAL" || analysis.score >= 92,
     smallAccountLeverage: analysis.leverage === "x2" || analysis.leverage === "x3",
     noBlindTrade: analysis.entryStatus !== "ENTER_NOW" || analysis.waitingFor.length <= 2
   };
