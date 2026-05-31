@@ -21,11 +21,11 @@ app.get("/signals", (_req, res) => res.json({ active: state.activeSignals, watch
 app.get("/diagnostics", (_req, res) => res.json(state.diagnostics));
 app.get("/telegram/status", (_req, res) => res.json(telegramCommands.status()));
 app.get("/markets", async (_req, res) => {
-  try { res.json(await marketRegistry()); }
+  try { res.json({ ok: true, ...(await marketRegistry()) }); }
   catch (err) { res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) }); }
 });
 app.get("/markets/search", async (req, res) => {
-  try { res.json(await resolvePair(String(req.query.q ?? ""))); }
+  try { res.json({ ok: true, ...(await resolvePair(String(req.query.q ?? ""))) }); }
   catch (err) { res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) }); }
 });
 app.get("/analysis/spot/:query", async (req, res) => {

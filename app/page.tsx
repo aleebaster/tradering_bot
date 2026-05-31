@@ -85,8 +85,7 @@ export default function Dashboard() {
   useEffect(() => {
     let alive = true;
     async function loadMarkets() {
-      const res = await fetch("/api/markets", { cache: "no-store" });
-      const json = await res.json();
+      const json = await firstOkJson([`${apiUrl}/markets`, "/api/markets"]);
       if (alive && json.ok) setMarkets(json.items ?? []);
     }
     void loadMarkets();
@@ -95,15 +94,16 @@ export default function Dashboard() {
   }, []);
 
   async function searchPair() {
-    const res = await fetch(`/api/markets/search?q=${encodeURIComponent(pairQuery)}`, { cache: "no-store" });
-    const json = await res.json();
+    const q = encodeURIComponent(pairQuery);
+    const json = await firstOkJson([`${apiUrl}/markets/search?q=${q}`, `/api/markets/search?q=${q}`]);
     setPairResult(json.ok ? json : null);
     setAnalysis(null);
   }
 
   async function analyze(mode: "spot" | "futures") {
-    const res = await fetch(`/api/analysis/${mode}?q=${encodeURIComponent(pairQuery)}`, { cache: "no-store" });
-    setAnalysis(await res.json());
+    const q = encodeURIComponent(pairQuery);
+    const json = await firstOkJson([`${apiUrl}/analysis/${mode}/${q}`, `/api/analysis/${mode}?q=${q}`]);
+    setAnalysis(json);
   }
 
   const active = state?.activeSignals ?? [];
@@ -227,6 +227,21 @@ function SignalList({ items }: { items: Signal[] }) {
 
 function SearchColumn({ title, items }: { title: string; items: MarketItem[] }) {
   return <div className="rounded-xl border border-edge p-3"><h3 className="font-black">{title}</h3>{items.length ? items.slice(0, 8).map((m) => <div key={`${m.marketType}-${m.symbol}`} className="mt-2 text-sm text-slate-300"><b>{m.symbol}</b><br />{formatUsd(m.turnover24h)} · liquidity {m.liquidity}/100 · spread {(m.spreadPct * 100).toFixed(3)}%</div>) : <p className="mt-2 text-slate-500">Not found</p>}</div>;
+}
+
+async function firstOkJson(urls: string[]) {
+  let last: unknown = null;
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      const json = await res.json();
+      if (res.ok && json?.ok !== false) return json;
+      last = json;
+    } catch (error) {
+      last = error;
+    }
+  }
+  return { ok: false, error: last instanceof Error ? last.message : "API unavailable" };
 }
 
 function Row({ label, value }: { label: string; value: string }) { return <div><p className="text-xs uppercase text-slate-500">{label}</p><p className="break-words text-sm text-slate-100">{value}</p></div>; }

@@ -36,6 +36,7 @@ export class TelegramCommandCenter {
   private startedAt: string | null = null;
   private lastPollAt: string | null = null;
   private lastUpdateAt: string | null = null;
+  private lastPollingError: string | null = null;
   private processedUpdates = 0;
   private handledCallbacks = 0;
   private handledMessages = 0;
@@ -75,7 +76,8 @@ export class TelegramCommandCenter {
       processedUpdates: this.processedUpdates,
       handledCallbacks: this.handledCallbacks,
       handledMessages: this.handledMessages,
-      pendingAction: this.pendingAction
+      pendingAction: this.pendingAction,
+      lastPollingError: this.lastPollingError
     };
   }
 
@@ -85,12 +87,15 @@ export class TelegramCommandCenter {
     this.lastPollAt = new Date().toISOString();
     try {
       const url = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/getUpdates?timeout=1&offset=${this.offset}`;
-      const res = await fetch(url);
+      const res = await telegramFetch(url);
       if (!res.ok) {
-        logger.warn({ status: res.status, body: await res.text().catch(() => "") }, "Telegram getUpdates failed");
+        const body = await res.text().catch(() => "");
+        this.lastPollingError = `${res.status} ${body}`.slice(0, 300);
+        logger.warn({ status: res.status, body }, "Telegram getUpdates failed");
         return;
       }
       const json = await res.json() as { ok: boolean; result?: TelegramUpdate[] };
+      this.lastPollingError = null;
       const updates = json.result ?? [];
       if (updates.length) logger.info({ count: updates.length, offset: this.offset }, "Telegram updates received");
       for (const update of updates) {
@@ -115,6 +120,7 @@ export class TelegramCommandCenter {
         }
       }
     } catch (err) {
+      this.lastPollingError = err instanceof Error ? err.message : String(err);
       logger.warn({ err }, "Telegram polling error");
     } finally {
       this.polling = false;
@@ -132,7 +138,11 @@ export class TelegramCommandCenter {
   private async resetPollingOffset() {
     if (!config.TELEGRAM_BOT_TOKEN) return;
     try {
-      await fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/deleteWebhook`, { method: "POST" }).catch(() => undefined);
+      await telegramFetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/deleteWebhook`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ drop_pending_updates: false })
+      }).catch((error) => logger.warn({ err: error }, "Telegram deleteWebhook timed out; continuing with polling"));
       this.offset = 0;
       logger.info({ offset: this.offset }, "Telegram polling initialized without discarding pending updates");
     } catch (err) {
@@ -418,11 +428,21 @@ export class TelegramCommandCenter {
 
 async function answerCallback(callbackQueryId: string) {
   if (!config.TELEGRAM_BOT_TOKEN) return;
-  await fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
+  await telegramFetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ callback_query_id: callbackQueryId })
   }).catch(() => undefined);
+}
+
+async function telegramFetch(url: string, init?: RequestInit, timeoutMs = 8_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function startOneShotAnalysis(pair: string) {
@@ -508,7 +528,7 @@ function watchlistActionsKeyboard(): TelegramReplyMarkup {
 function positionsActionsKeyboard(): TelegramReplyMarkup {
   return {
     inline_keyboard: [
-      [uiButton("🔄 Оновити Позиції", "positions"), uiButton("🔥 Топ Сетапи", "top")],
+      [uiButton("🔍 Пошук по парах", "search_pair"), uiButton("🔥 Топ Сетапи", "top")],
       [uiButton("📊 Сигнали", "signals"), uiButton("🔙 Назад", "back")]
     ]
   };
