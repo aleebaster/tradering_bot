@@ -5,7 +5,7 @@ import { signalQuickActions, TelegramNotifier, type TelegramReplyMarkup } from "
 import { paperMemoryStatsText, paperStatsText, setPaperMode } from "./paperTrading";
 import { addPriorityPair, loadPriorityWatchlist, normalizePriorityPair, removePriorityPair } from "./watchlistStore";
 import { loadTelegramSettings, updateTelegramSettings, type MaxLeverage, type RiskMode } from "./telegramSettings";
-import { tradeStatsText } from "./tradeMemory";
+import { performanceText, tradeStatsText } from "./tradeMemory";
 import { learningStatusText, resetLearning } from "./learning";
 import { analyzeBybitNewToken, formatNewTokenCard, formatNewTokenWatch, scanBybitNewTokens } from "./newTokenScanner";
 import { logger } from "./logger";
@@ -143,6 +143,7 @@ export class TelegramCommandCenter {
     if (command === "/btc") return this.notifier.send(btcText(), marketActionsKeyboard());
     if (command === "/positions") return this.sendPositions();
     if (command === "/stats") return this.notifier.send(tradeStatsText(), mainMenuKeyboard());
+    if (command === "/performance") return this.notifier.send(performanceText(), mainMenuKeyboard());
     if (command === "/learning") return this.notifier.send(learningStatusText(), mainMenuKeyboard());
     if (command === "/resetlearning") return this.resetLearningCommand();
     if (command === "/top") return this.sendTopSetups();
@@ -523,6 +524,7 @@ function helpText() {
     "/status — статус сканера",
     "/positions — активні угоди",
     "/stats — journal статистика",
+    "/performance — real strategy performance",
     "/learning — safe learning статус",
     "/resetlearning — скинути adaptive weights",
     "/paper on — увімкнути paper trading",

@@ -4,6 +4,7 @@ import { calculatePositionSizing } from "./positionSizing";
 import { config } from "./config";
 import { adaptiveWeights } from "./learning";
 import { paperSetupConfidenceAdjustment } from "./paperTrading";
+import { realTradeQualityAdjustment } from "./tradeMemory";
 import type { AccuracyRisk, AccuracySession, Candle, CorrelationContext, FakeBreakoutAnalysis, FastMoveQuality, HigherTimeframeBias, LiquidityIntelligence, MarketRegime, MarketSnapshot, OpenInterestAnalysis, OrderFlowAnalysis, Signal, SignalGrade, Side } from "./types";
 
 export function regimeFrom(candles: MarketSnapshot["candles"]): MarketRegime {
@@ -139,7 +140,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
     momentumScore: momentum
   });
   const management = managementText(qualifiedSide, entryStatus);
-  return {
+  const signal: Signal = {
     id: `${snapshot.symbol}-${snapshot.mode}-${Date.now()}`,
     createdAt: new Date().toISOString(),
     symbol: snapshot.symbol,
@@ -201,11 +202,20 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
       btcPenalty: Math.round(btcPenalty),
       exchangeConfirmationPenalty: Math.round(confirmationPenalty),
       adaptiveConfirmationRequired: entryThreshold,
-      smallAltStrictConfirmation: confirmationProfile.smallAltStrict ? 100 : 0
+      smallAltStrictConfirmation: confirmationProfile.smallAltStrict ? 100 : 0,
+      realTradeMemoryAdjustment: 0
     },
     tradeManagementActions: tradeManagementActions(qualifiedSide, entryStatus),
     management
   };
+  const realAdjustment = realTradeQualityAdjustment(signal);
+  signal.scoreBreakdown.realTradeMemoryAdjustment = Math.round(realAdjustment * 100) / 100;
+  if (realAdjustment === 0 || signal.score < 80) return signal;
+  const adjustedScore = Math.round(clamp(signal.score + realAdjustment, 0, 100));
+  signal.score = adjustedScore;
+  signal.confidence = adjustedScore;
+  signal.winProbability = Math.round(clamp(adjustedScore, 0, 94));
+  return signal;
 }
 
 function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, weakMomentum: boolean, rrValue: number, entryThreshold: number, hardBlockReason?: string) {
