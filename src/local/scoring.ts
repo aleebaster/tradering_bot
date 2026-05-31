@@ -77,9 +77,9 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const fakeBreakout = fakeBreakoutAnalysis(candles, direction, volume, oiAnalysis, snapshot.btcStable, snapshot.regime);
   const fastMove = fastMoveQuality(precisionCandles, candles, direction, volume, orderFlow, snapshot.regime);
   const correlation = snapshot.correlation ?? neutralCorrelation();
-  const learned = adaptiveWeights();
+  const learned = adaptiveWeights(snapshot.regime);
   const regimePenalty = snapshot.regime === "TRENDING" || snapshot.regime === "EXPANSION" ? 0 : snapshot.regime === "COMPRESSION" ? 12 : snapshot.regime === "RANGING" ? 28 : snapshot.regime === "VOLATILE" ? 22 : 40;
-  const btcPenalty = snapshot.symbol === "BTCUSDT" || snapshot.btcStable ? 0 : 24;
+  const btcPenalty = (snapshot.symbol === "BTCUSDT" || snapshot.btcStable ? 0 : 24) * learned.btc;
   const confirmationProfile = adaptiveConfirmationProfile(snapshot, { volume, momentum, liquidityScore: snapshot.liquidityScore, orderbook, fastMoveScore: fastMove.score });
   const confirmationPenalty = confirmationProfile.allowed ? confirmationProfile.penalty : 35;
   const advancedBonus = htf.score * 0.15 * learned.htf + liquidity.score * 0.08 * learned.liquidity + orderFlow.score * 0.1 * learned.orderFlow + oiAnalysis.score * 0.08 * learned.oi + fakeBreakout.score * 0.11 + fastMove.score * 0.08 + (correlation.aligned ? 8 : correlation.riskOff ? -18 : 0) + session.confidenceAdjustment + htf.confidenceAdjustment;

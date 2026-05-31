@@ -6,6 +6,7 @@ import { paperStatsText, setPaperMode } from "./paperTrading";
 import { addPriorityPair, loadPriorityWatchlist, normalizePriorityPair, removePriorityPair } from "./watchlistStore";
 import { loadTelegramSettings, updateTelegramSettings, type MaxLeverage, type RiskMode } from "./telegramSettings";
 import { tradeStatsText } from "./tradeMemory";
+import { learningStatusText, resetLearning } from "./learning";
 import { logger } from "./logger";
 import type { Signal } from "./types";
 
@@ -139,6 +140,8 @@ export class TelegramCommandCenter {
     if (command === "/btc") return this.notifier.send(btcText(), marketActionsKeyboard());
     if (command === "/positions") return this.sendPositions();
     if (command === "/stats") return this.notifier.send(tradeStatsText(), mainMenuKeyboard());
+    if (command === "/learning") return this.notifier.send(learningStatusText(), mainMenuKeyboard());
+    if (command === "/resetlearning") return this.resetLearningCommand();
     if (command === "/top") return this.sendTopSetups();
     if (command === "/watchlist") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
     if (command === "/paper") {
@@ -233,6 +236,11 @@ export class TelegramCommandCenter {
   private async setRiskMode(value: RiskMode): Promise<void> {
     const settings = updateTelegramSettings({ riskMode: value });
     return this.notifier.send(["✅ Risk mode оновлено", "", `Поточний режим: ${settings.riskMode}`].join("\n"), settingsKeyboard());
+  }
+
+  private async resetLearningCommand(): Promise<void> {
+    resetLearning();
+    return this.notifier.send(["✅ Learning reset", "", "Adaptive weights restored to defaults.", "Safe learning will restart after 20 completed trades."].join("\n"), mainMenuKeyboard());
   }
 
   private async handleCallback(id: string, data: string, answer = true): Promise<void> {
@@ -460,6 +468,8 @@ function helpText() {
     "/status — статус сканера",
     "/positions — активні угоди",
     "/stats — journal статистика",
+    "/learning — safe learning статус",
+    "/resetlearning — скинути adaptive weights",
     "/paper on — увімкнути paper trading",
     "/paper off — вимкнути paper trading",
     "/paper — статистика paper trading",

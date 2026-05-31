@@ -1,16 +1,36 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Signal } from "./types";
+import type { MarketRegime, Signal } from "./types";
 
 const filePath = path.join(process.cwd(), "data", "learning-state.json");
+const minTradesToAdapt = 20;
+const fullStrengthTrades = 50;
+const rollingWindow = 50;
+const defaultWeights = { smc: 1, macd: 1, volume: 1, orderFlow: 1, liquidity: 1, htf: 1, oi: 1, btc: 1 };
+
+type WeightKey = keyof typeof defaultWeights;
+type Outcome = "TP" | "SL" | "FAKE_BREAKOUT";
+type RegimeBucket = "trending" | "sideways" | "high_volatility" | "low_volatility";
+
+interface LearningTrade {
+  id: string;
+  symbol: string;
+  outcome: Outcome;
+  regime: RegimeBucket;
+  patterns: string[];
+  features: Partial<Record<WeightKey, number>>;
+  createdAt: string;
+}
 
 interface LearningState {
   total: number;
   wins: number;
   losses: number;
   fakeBreakouts: number;
-  weights: Record<string, number>;
+  weights: Record<WeightKey, number>;
+  regimeModifiers: Record<RegimeBucket, Record<WeightKey, number>>;
   patterns: Record<string, { wins: number; losses: number }>;
+  trades: LearningTrade[];
 }
 
 const defaults: LearningState = {
@@ -18,46 +38,102 @@ const defaults: LearningState = {
   wins: 0,
   losses: 0,
   fakeBreakouts: 0,
-  weights: { smc: 1, macd: 1, volume: 1, orderFlow: 1, liquidity: 1, htf: 1, oi: 1 },
-  patterns: {}
+  weights: { ...defaultWeights },
+  regimeModifiers: emptyRegimeModifiers(),
+  patterns: {},
+  trades: []
 };
 
-export function adaptiveWeights() {
-  return load().weights;
+export function adaptiveWeights(regime?: MarketRegime) {
+  const state = load();
+  const bucket = regime ? regimeBucket(regime) : undefined;
+  const regimeWeights = bucket ? state.regimeModifiers[bucket] : undefined;
+  return Object.fromEntries(Object.entries(state.weights).map(([key, value]) => [key, clampWeight(value * (regimeWeights?.[key as WeightKey] ?? 1))])) as Record<WeightKey, number>;
 }
 
-export function recordLearningOutcome(signal: Signal, outcome: "TP" | "SL" | "FAKE_BREAKOUT") {
+export function recordLearningOutcome(signal: Signal, outcome: Outcome) {
   const state = load();
   state.total += 1;
   if (outcome === "TP") state.wins += 1;
   if (outcome === "SL") state.losses += 1;
   if (outcome === "FAKE_BREAKOUT") state.fakeBreakouts += 1;
-
-  adjust(state, signal, outcome);
-  rememberPatterns(state, signal, outcome);
+  state.trades.unshift({
+    id: signal.id,
+    symbol: signal.symbol,
+    outcome,
+    regime: regimeBucket(signal.marketRegime),
+    patterns: setupPatterns(signal),
+    features: featureScores(signal),
+    createdAt: new Date().toISOString()
+  });
+  state.trades = state.trades.slice(0, 300);
+  recomputeSafeLearning(state);
   save(state);
 }
 
-function adjust(state: LearningState, signal: Signal, outcome: "TP" | "SL" | "FAKE_BREAKOUT") {
-  const positive = outcome === "TP" ? 0.03 : -0.03;
-  if ((signal.scoreBreakdown.smcConfirmation ?? 0) >= 50) state.weights.smc = clampWeight(state.weights.smc + positive);
-  if ((signal.scoreBreakdown.volumeConfirmation ?? 0) >= 65) state.weights.volume = clampWeight(state.weights.volume + positive);
-  if ((signal.scoreBreakdown.cvdOrderFlow ?? 0) >= 65) state.weights.orderFlow = clampWeight(state.weights.orderFlow + positive);
-  if ((signal.scoreBreakdown.liquiditySweep ?? 0) >= 65) state.weights.liquidity = clampWeight(state.weights.liquidity + positive);
-  if ((signal.scoreBreakdown.higherTimeframeBias ?? 0) >= 65) state.weights.htf = clampWeight(state.weights.htf + positive);
-  if ((signal.scoreBreakdown.smartOpenInterest ?? 0) >= 65) state.weights.oi = clampWeight(state.weights.oi + positive);
-  if (outcome !== "TP" && (signal.scoreBreakdown.momentumQuality ?? 0) >= 55) state.weights.macd = clampWeight(state.weights.macd - 0.02);
+export function resetLearning() {
+  const state = { ...defaults, weights: { ...defaultWeights }, regimeModifiers: emptyRegimeModifiers(), patterns: {}, trades: [] };
+  save(state);
+  return state;
 }
 
-function rememberPatterns(state: LearningState, signal: Signal, outcome: "TP" | "SL" | "FAKE_BREAKOUT") {
-  const won = outcome === "TP";
-  for (const pattern of setupPatterns(signal)) {
-    const stat = state.patterns[pattern] ?? { wins: 0, losses: 0 };
-    if (won) stat.wins += 1;
-    else stat.losses += 1;
-    state.patterns[pattern] = stat;
+export function learningStatusText() {
+  const state = load();
+  const best = rankedPattern(state, true);
+  const worst = rankedPattern(state, false);
+  return [
+    "🧠 Learning Mode",
+    "",
+    "Mode: SAFE / CONTROLLED",
+    `Completed trades: ${state.total}`,
+    `Adaptation: ${state.total >= minTradesToAdapt ? "ON" : `OFF until ${minTradesToAdapt} trades`}`,
+    "Limits: ±10% per rolling 50 trades",
+    "Old trades: decay-weighted",
+    "",
+    `MACD modifier: ${modifier(state.weights.macd)}`,
+    `Volume modifier: ${modifier(state.weights.volume)}`,
+    `SMC modifier: ${modifier(state.weights.smc)}`,
+    `BTC filter modifier: ${modifier(state.weights.btc)}`,
+    "",
+    `Best-performing setup: ${best}`,
+    `Worst-performing setup: ${worst}`,
+    "",
+    "Regime modifiers:",
+    ...Object.entries(state.regimeModifiers).map(([regime, weights]) => `${regime}: MACD ${modifier(weights.macd)}, VOL ${modifier(weights.volume)}, LIQ ${modifier(weights.liquidity)}`)
+  ].join("\n");
+}
+
+function recomputeSafeLearning(state: LearningState) {
+  state.patterns = patternStats(state.trades);
+  state.weights = { ...defaultWeights };
+  state.regimeModifiers = emptyRegimeModifiers();
+  if (state.total < minTradesToAdapt) return;
+  const strength = state.total >= fullStrengthTrades ? 1 : 0.5;
+  state.weights = computeWeights(state.trades.slice(0, rollingWindow), strength);
+  for (const regime of Object.keys(state.regimeModifiers) as RegimeBucket[]) {
+    const trades = state.trades.filter((trade) => trade.regime === regime).slice(0, rollingWindow);
+    state.regimeModifiers[regime] = trades.length >= minTradesToAdapt ? computeWeights(trades, strength) : { ...defaultWeights };
   }
-  applyPatternBias(state);
+}
+
+function computeWeights(trades: LearningTrade[], strength: number) {
+  const deltas = Object.fromEntries(Object.keys(defaultWeights).map((key) => [key, 0])) as Record<WeightKey, number>;
+  const totals = Object.fromEntries(Object.keys(defaultWeights).map((key) => [key, 0])) as Record<WeightKey, number>;
+  trades.forEach((trade, index) => {
+    const decay = decayFactor(index);
+    const direction = trade.outcome === "TP" ? 1 : -1;
+    for (const [key, score] of Object.entries(trade.features) as [WeightKey, number][]) {
+      if (score <= 0) continue;
+      const influence = decay * (score / 100);
+      deltas[key] += direction * influence;
+      totals[key] += influence;
+    }
+  });
+  return Object.fromEntries(Object.entries(defaultWeights).map(([rawKey, base]) => {
+    const key = rawKey as WeightKey;
+    const normalized = totals[key] > 0 ? deltas[key] / totals[key] : 0;
+    return [key, clampWeight(base + normalized * 0.1 * strength)];
+  })) as Record<WeightKey, number>;
 }
 
 function setupPatterns(signal: Signal) {
@@ -70,28 +146,64 @@ function setupPatterns(signal: Signal) {
   return patterns.length ? patterns : ["standard_momentum"];
 }
 
-function applyPatternBias(state: LearningState) {
-  const weakVolume = state.patterns.macd_weak_volume;
-  if (weakVolume && weakVolume.wins + weakVolume.losses >= 5 && weakVolume.losses > weakVolume.wins) {
-    state.weights.macd = clampWeight(state.weights.macd - 0.02);
-    state.weights.volume = clampWeight(state.weights.volume + 0.02);
-  }
-  const liquidity = state.patterns.liquidity_sweep_btc_stable;
-  if (liquidity && liquidity.wins + liquidity.losses >= 5 && liquidity.wins > liquidity.losses) {
-    state.weights.liquidity = clampWeight(state.weights.liquidity + 0.02);
-    state.weights.htf = clampWeight(state.weights.htf + 0.01);
-  }
-  const fake = state.patterns.fake_breakout_risk;
-  if (fake && fake.losses >= 3) state.weights.smc = clampWeight(state.weights.smc - 0.02);
+function featureScores(signal: Signal): Partial<Record<WeightKey, number>> {
+  return {
+    smc: signal.scoreBreakdown.smcConfirmation ?? 0,
+    macd: signal.scoreBreakdown.momentumQuality ?? 0,
+    volume: signal.scoreBreakdown.volumeConfirmation ?? 0,
+    orderFlow: signal.scoreBreakdown.cvdOrderFlow ?? 0,
+    liquidity: signal.scoreBreakdown.liquiditySweep ?? 0,
+    htf: signal.scoreBreakdown.higherTimeframeBias ?? 0,
+    oi: signal.scoreBreakdown.smartOpenInterest ?? 0,
+    btc: signal.symbol === "BTCUSDT" || signal.btcStable ? 0 : 100
+  };
+}
+
+function patternStats(trades: LearningTrade[]) {
+  const stats: Record<string, { wins: number; losses: number }> = {};
+  trades.forEach((trade, index) => {
+    const weight = decayFactor(index);
+    for (const pattern of trade.patterns) {
+      const stat = stats[pattern] ?? { wins: 0, losses: 0 };
+      if (trade.outcome === "TP") stat.wins += weight;
+      else stat.losses += weight;
+      stats[pattern] = stat;
+    }
+  });
+  return stats;
+}
+
+function rankedPattern(state: LearningState, best: boolean) {
+  const ranked = Object.entries(state.patterns)
+    .filter(([, stat]) => stat.wins + stat.losses >= 3)
+    .map(([name, stat]) => ({ name, score: stat.wins - stat.losses, total: stat.wins + stat.losses }))
+    .sort((a, b) => best ? b.score - a.score : a.score - b.score);
+  const top = ranked[0];
+  return top ? `${top.name} (${top.score.toFixed(1)} net / ${top.total.toFixed(1)} weighted)` : "немає даних";
+}
+
+function regimeBucket(regime: MarketRegime): RegimeBucket {
+  if (regime === "TRENDING" || regime === "EXPANSION") return "trending";
+  if (regime === "RANGING") return "sideways";
+  if (regime === "VOLATILE" || regime === "NEWS_DRIVEN" || regime === "MANIPULATION_RISK") return "high_volatility";
+  return "low_volatility";
+}
+
+function decayFactor(index: number) {
+  if (index < 30) return 1;
+  if (index < 100) return Math.max(0.25, 1 - (index - 30) / 100);
+  return 0.15;
 }
 
 function load(): LearningState {
   try {
-    const raw = fs.readFileSync(filePath, "utf8");
-    const parsed = JSON.parse(raw) as LearningState;
-    return { ...defaults, ...parsed, weights: { ...defaults.weights, ...(parsed.weights ?? {}) }, patterns: { ...defaults.patterns, ...(parsed.patterns ?? {}) } };
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Partial<LearningState>;
+    const migrated = { ...defaults, ...parsed, weights: { ...defaultWeights, ...(parsed.weights ?? {}) }, regimeModifiers: { ...emptyRegimeModifiers(), ...(parsed.regimeModifiers ?? {}) }, patterns: parsed.patterns ?? {}, trades: Array.isArray(parsed.trades) ? parsed.trades : [] };
+    const safe = { ...migrated, weights: sanitizeWeights(migrated.weights), regimeModifiers: sanitizeRegimes(migrated.regimeModifiers), patterns: patternStats(migrated.trades) };
+    if (safe.total < minTradesToAdapt || safe.trades.length < minTradesToAdapt) return { ...safe, weights: { ...defaultWeights }, regimeModifiers: emptyRegimeModifiers() };
+    return safe;
   } catch {
-    return { ...defaults, weights: { ...defaults.weights }, patterns: { ...defaults.patterns } };
+    return { ...defaults, weights: { ...defaultWeights }, regimeModifiers: emptyRegimeModifiers(), patterns: {}, trades: [] };
   }
 }
 
@@ -100,6 +212,30 @@ function save(state: LearningState) {
   fs.writeFileSync(filePath, JSON.stringify(state, null, 2));
 }
 
+function sanitizeWeights(weights: Record<string, number>) {
+  return Object.fromEntries(Object.entries(defaultWeights).map(([key, value]) => [key, clampWeight(weights[key] ?? value)])) as Record<WeightKey, number>;
+}
+
+function sanitizeRegimes(regimes: Record<string, Record<string, number>>) {
+  const next = emptyRegimeModifiers();
+  for (const regime of Object.keys(next) as RegimeBucket[]) next[regime] = sanitizeWeights(regimes[regime] ?? defaultWeights);
+  return next;
+}
+
+function emptyRegimeModifiers() {
+  return {
+    trending: { ...defaultWeights },
+    sideways: { ...defaultWeights },
+    high_volatility: { ...defaultWeights },
+    low_volatility: { ...defaultWeights }
+  };
+}
+
 function clampWeight(value: number) {
-  return Math.max(0.75, Math.min(1.25, Math.round(value * 100) / 100));
+  return Math.max(0.9, Math.min(1.1, Math.round(value * 1000) / 1000));
+}
+
+function modifier(value: number) {
+  const pct = Math.round((value - 1) * 1000) / 10;
+  return `${pct > 0 ? "+" : ""}${pct}%`;
 }
