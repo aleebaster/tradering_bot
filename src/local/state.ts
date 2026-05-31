@@ -20,7 +20,8 @@ export const state: BotState = {
   activeSignals: [],
   watchlist: [],
   history: [],
-  stats: { signalsToday: 0, wins: 0, losses: 0, winRate: 0 }
+  stats: { signalsToday: 0, wins: 0, losses: 0, winRate: 0 },
+  intelligence: { latestBySymbol: {}, marketReport: null, updatedAt: null }
 };
 
 export function recordSignal(signal: Signal) {

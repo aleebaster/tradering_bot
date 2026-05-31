@@ -29,6 +29,7 @@
     "watchlist:test": "chcp 65001 >nul && tsx scripts/watchlist-evolution-test.ts",
     "sniper:test": "chcp 65001 >nul && tsx scripts/sniper-entry-test.ts",
     "stats:test": "chcp 65001 >nul && tsx scripts/stats-performance-test.ts",
+    "intelligence:test": "chcp 65001 >nul && tsx scripts/intelligence-bots-live-test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },

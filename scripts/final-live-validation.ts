@@ -2,8 +2,13 @@ import { setTimeout as wait } from "node:timers/promises";
 import { ExchangeClient } from "../src/local/exchanges";
 import { btcStable, buildSignal, regimeFrom } from "../src/local/scoring";
 import type { Candle, MarketSnapshot, Signal } from "../src/local/types";
+import { LiqBot, MarketReportBot, PumpDetectorBot, WhaleTrackerBot } from "../src/local/bots";
 
 const client = new ExchangeClient();
+const pumpDetector = new PumpDetectorBot();
+const whaleTracker = new WhaleTrackerBot();
+const liqBot = new LiqBot();
+const marketReportBot = new MarketReportBot();
 const preferred = [
   "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "TRXUSDT", "LINKUSDT", "AVAXUSDT",
   "LTCUSDT", "BCHUSDT", "DOTUSDT", "UNIUSDT", "ETCUSDT", "AAVEUSDT", "APTUSDT", "ARBUSDT", "OPUSDT", "SUIUSDT",
@@ -26,11 +31,21 @@ async function main() {
 
   for (const symbol of symbols) {
     const candles = symbol === "BTCUSDT" ? btcCandles : await loadBybitCandles(symbol);
-    const [imbalance, fundingRate, openInterestChange] = await Promise.all([
-      retry(() => client.orderBookImbalance(symbol)).catch(() => 0),
+    const [orderBook, fundingRate, openInterestChange] = await Promise.all([
+      retry(() => client.bybitOrderBookStats(symbol)).catch(() => ({ spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false })),
       retry(() => client.fundingRate(symbol)).catch(() => 0),
       retry(() => client.openInterestChange(symbol)).catch(() => 0)
     ]);
+    const liquidityScore = liquidity(candles["15"]);
+    const regime = regimeFrom(candles);
+    const intelligenceInput = { symbol, candles, orderBook, fundingRate, openInterestChange, liquidityScore, btcStable: symbol === "BTCUSDT" ? true : btcOk, regime };
+    const intelligence = {
+      pump: pumpDetector.analyze(intelligenceInput),
+      whale: whaleTracker.analyze(intelligenceInput),
+      liq: liqBot.analyze(intelligenceInput),
+      market: marketReportBot.analyze(intelligenceInput),
+      updatedAt: new Date().toISOString()
+    };
     const snapshot: MarketSnapshot = {
       symbol,
       mode: "futures",
@@ -39,14 +54,15 @@ async function main() {
       kucoinCandles: {},
       krakenCandles: {},
       binanceCandles: {},
-      orderBookImbalance: imbalance,
+      orderBookImbalance: orderBook.imbalance,
       fundingRate,
       openInterestChange,
-      liquidityScore: liquidity(candles["15"]),
-      whaleScore: Math.min(100, Math.max(0, Math.abs(openInterestChange) * 2500 + Math.abs(imbalance) * 120)),
+      liquidityScore,
+      whaleScore: intelligence.whale.smartMoneyScore,
       btcStable: symbol === "BTCUSDT" ? true : btcOk,
-      regime: regimeFrom(candles),
-      confirmations: { bybit: true, okx: false, kucoin: false, kraken: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit: live validation"] }
+      regime,
+      confirmations: { bybit: true, okx: false, kucoin: false, kraken: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit: live validation"] },
+      intelligence
     };
     const signal = buildSignal(snapshot);
     outputs.push(signal);
@@ -65,7 +81,7 @@ async function bybitLinearSymbols() {
 
 async function loadBybitCandles(symbol: string): Promise<Record<string, Candle[]>> {
   const out: Record<string, Candle[]> = {};
-  for (const tf of ["5", "15", "60"]) {
+  for (const tf of ["1", "5", "15", "60", "240"]) {
     out[tf] = await retry(() => client.bybitKlines(symbol, tf, "linear", 220));
     await wait(450);
   }

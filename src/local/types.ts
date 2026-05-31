@@ -1,3 +1,5 @@
+import type { IntelligenceBundle } from "./bots";
+
 export type Mode = "LOCAL_ONLY" | "HYBRID" | "OFFLINE_TEST";
 export type Side = "LONG" | "SHORT" | "BUY" | "NO_TRADE" | "WATCHLIST";
 export type MarketRegime = "TRENDING" | "SIDEWAYS" | "BREAKOUT" | "REVERSAL" | "HIGH_VOLATILITY" | "LOW_VOLATILITY" | "CHOPPY" | "RANGING" | "EXPANSION" | "COMPRESSION" | "VOLATILE" | "NEWS_DRIVEN" | "MANIPULATION_RISK";
@@ -32,6 +34,7 @@ export interface MarketSnapshot {
   regime: MarketRegime;
   confirmations: ExchangeConfirmations;
   correlation?: CorrelationContext;
+  intelligence?: IntelligenceBundle;
 }
 
 export interface CorrelationContext {
@@ -90,6 +93,7 @@ export interface Signal {
   marketRegime: MarketRegime;
   btcStable: boolean;
   confirmations: ExchangeConfirmations;
+  intelligence?: IntelligenceBundle;
   reasons: string[];
   rejectionReason: string;
   scoreBreakdown: Record<string, number>;
@@ -202,4 +206,5 @@ export interface BotState {
   watchlist: Signal[];
   history: Signal[];
   stats: { signalsToday: number; wins: number; losses: number; winRate: number };
+  intelligence: { latestBySymbol: Record<string, IntelligenceBundle>; marketReport: IntelligenceBundle["market"] | null; updatedAt: string | null };
 }

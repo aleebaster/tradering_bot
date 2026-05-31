@@ -16,6 +16,7 @@ app.get("/health", (_req, res) => res.json({ ok: true, mode: config.mode, partia
 app.get("/state", (_req, res) => res.json(state));
 app.get("/signals", (_req, res) => res.json({ active: state.activeSignals, watchlist: state.watchlist, history: state.history }));
 app.get("/diagnostics", (_req, res) => res.json(state.diagnostics));
+app.get("/telegram/status", (_req, res) => res.json(telegramCommands.status()));
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });

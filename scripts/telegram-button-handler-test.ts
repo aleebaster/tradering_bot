@@ -34,6 +34,15 @@ async function main() {
   await click(center, checks, "❌ Видалити пару", "Яку пару видалити");
   await click(center, checks, "AIGENSYNUSDT", "Видалено");
   await click(center, checks, "📈 Ринок", "Ринок");
+  await click(center, checks, "📡 Intelligence", "Intelligence");
+  await center.handleCallbackForTest("ui:pump_detector");
+  checks["inline_ui_pump_detector"] = last(notifier).includes("Pump Detector") || last(notifier).includes("Дані ще формуються");
+  await center.handleCallbackForTest("ui:whale_bias");
+  checks["inline_ui_whale_bias"] = last(notifier).includes("Whale Bias") || last(notifier).includes("Дані ще формуються");
+  await center.handleCallbackForTest("ui:liquidation_status");
+  checks["inline_ui_liquidation_status"] = last(notifier).includes("Liquidation Status") || last(notifier).includes("Дані ще формуються");
+  await center.handleCallbackForTest("ui:market_regime");
+  checks["inline_ui_market_regime"] = last(notifier).includes("Market Regime") || last(notifier).includes("Дані ще формуються");
   await click(center, checks, "₿ BTC Фільтр", "BTC Фільтр");
   await click(center, checks, "🧪 Діагностика", "Діагностика");
   await click(center, checks, "⚙️ Налаштування", "Налаштування");

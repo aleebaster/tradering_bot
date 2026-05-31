@@ -12,6 +12,7 @@ import { recordPaperClose, recordPaperOpen, recordPaperSetup, updatePaperTradeMe
 import { notificationsEnabled } from "./telegramSettings";
 import { recordTradeMemory } from "./tradeMemory";
 import { recordProtectionOutcome, signalsPaused } from "./lossProtection";
+import { LiqBot, MarketReportBot, PumpDetectorBot, WhaleTrackerBot } from "./bots";
 
 type Broadcast = (payload: unknown) => void;
 
@@ -35,6 +36,10 @@ export class Scanner {
   private btcCache: { candles: Record<string, Candle[]>; expiresAt: number } | null = null;
   private linearSymbols = new Set<string>();
   private spotSymbols = new Set<string>();
+  private pumpDetector = new PumpDetectorBot();
+  private whaleTracker = new WhaleTrackerBot();
+  private liqBot = new LiqBot();
+  private marketReportBot = new MarketReportBot();
 
   constructor(private broadcast: Broadcast) {}
 
@@ -294,12 +299,12 @@ export class Scanner {
 
   private async snapshot(symbol: string, mode: "spot" | "futures", candles: Record<string, Candle[]>, btcOk: boolean, btcCandles: Record<string, Candle[]>): Promise<MarketSnapshot> {
     const tfs = mode === "futures" ? config.futuresTimeframes : config.spotTimeframes;
-    const [okxEntries, kucoinEntries, krakenEntries, binanceEntries, imbalance, funding, oi, correlation] = await Promise.all([
+    const [okxEntries, kucoinEntries, krakenEntries, binanceEntries, orderBook, funding, oi, correlation] = await Promise.all([
       Promise.all(tfs.map(async (tf) => [tf, await this.client.okxKlines(symbol, tf).catch(() => [])] as const)),
       Promise.all(tfs.map(async (tf) => [tf, await this.client.kucoinKlines(symbol, tf).catch(() => [])] as const)),
       Promise.all(tfs.map(async (tf) => [tf, await this.client.krakenSpotKlines(symbol, tf).catch(() => [])] as const)),
       Promise.all(tfs.map(async (tf) => [tf, await this.client.binanceKlines(symbol, tf).catch(() => [])] as const)),
-      mode === "futures" ? this.client.orderBookImbalance(symbol).catch(() => 0) : Promise.resolve(0),
+      mode === "futures" ? this.client.bybitOrderBookStats(symbol).catch(() => ({ spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false })) : Promise.resolve({ spreadPct: 0, depthUsdt: 0, imbalance: 0, spoofRisk: false }),
       mode === "futures" ? this.client.fundingRate(symbol).catch(() => 0) : Promise.resolve(0),
       mode === "futures" ? this.client.openInterestChange(symbol).catch(() => 0) : Promise.resolve(0),
       this.correlationContext(symbol, mode, candles, btcCandles).catch((err) => {
@@ -312,7 +317,22 @@ export class Scanner {
     state.diagnostics.apiStatus.binance = "підключено";
     const primary = candles[mode === "futures" ? "15" : "240"] ?? [];
     const dollarVolume = primary.slice(-24).reduce((s, c) => s + c.volume * c.close, 0) / 24;
-    const whaleScore = Math.min(100, Math.max(0, Math.abs(oi) * 2500 + Math.abs(imbalance) * 120));
+    const liquidityScore = Math.min(100, Math.log10(Math.max(dollarVolume, 1)) * 11);
+    const regime = regimeFrom(candles);
+    const intelligenceInput = { symbol, candles, orderBook, fundingRate: funding, openInterestChange: oi, liquidityScore, btcStable: btcOk, regime };
+    const intelligence = mode === "futures" ? {
+      pump: this.pumpDetector.analyze(intelligenceInput),
+      whale: this.whaleTracker.analyze(intelligenceInput),
+      liq: this.liqBot.analyze(intelligenceInput),
+      market: this.marketReportBot.analyze(intelligenceInput),
+      updatedAt: new Date().toISOString()
+    } : undefined;
+    const whaleScore = intelligence ? intelligence.whale.smartMoneyScore : Math.min(100, Math.max(0, Math.abs(oi) * 2500 + Math.abs(orderBook.imbalance) * 120));
+    if (intelligence) {
+      state.intelligence.latestBySymbol[symbol] = intelligence;
+      state.intelligence.marketReport = intelligence.market;
+      state.intelligence.updatedAt = intelligence.updatedAt;
+    }
     return {
       symbol,
       mode,
@@ -321,15 +341,16 @@ export class Scanner {
       kucoinCandles: Object.fromEntries(kucoinEntries),
       krakenCandles: Object.fromEntries(krakenEntries),
       binanceCandles: Object.fromEntries(binanceEntries),
-      orderBookImbalance: imbalance,
+      orderBookImbalance: orderBook.imbalance,
       fundingRate: funding,
       openInterestChange: oi,
-      liquidityScore: Math.min(100, Math.log10(Math.max(dollarVolume, 1)) * 11),
+      liquidityScore,
       whaleScore,
       btcStable: btcOk,
-      regime: regimeFrom(candles),
+      regime,
       confirmations: exchangeConfirmations(candles, Object.fromEntries(okxEntries), Object.fromEntries(kucoinEntries), Object.fromEntries(krakenEntries), Object.fromEntries(binanceEntries), mode),
-      correlation
+      correlation,
+      intelligence
     };
   }
 

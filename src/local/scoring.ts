@@ -96,6 +96,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const fastMove = fastMoveQuality(precisionCandles, candles, direction, volume, orderFlow, snapshot.regime);
   const correlation = snapshot.correlation ?? neutralCorrelation();
   const learned = adaptiveWeights(snapshot.regime);
+  const intel = intelligenceScores(snapshot, direction);
   const marketQuality = marketQualityProfile(snapshot, { trendStrength, momentum, volume, orderbook, fastMoveScore: fastMove.score, fakeBreakoutRisk: fakeBreakout.risk });
   const coinQuality = coinQualityProfile(snapshot, { volume, orderbook, volatilityPct: a / last.close, fakeBreakoutRisk: fakeBreakout.risk });
   const btcRiskPenalty = btcAltRiskPenalty(snapshot, direction, correlation) * learned.btc;
@@ -105,8 +106,8 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const confirmationPenalty = confirmationProfile.allowed ? confirmationProfile.penalty : 35;
   const paperAdjustment = paperSetupConfidenceAdjustment(setupTypeFromScores(snapshot, { momentum, volume, mtf, liquiditySweep: liquidity.score }));
   const sniper = entrySniperTrigger(fiveMinuteCandles, precisionCandles, direction, volume);
-  const advancedBonus = htf.score * 0.15 * learned.htf + liquidity.score * 0.08 * learned.liquidity + orderFlow.score * 0.1 * learned.orderFlow + oiAnalysis.score * 0.08 * learned.oi + fakeBreakout.score * 0.11 + fastMove.score * 0.08 + (sniper.ready ? 4 : -6) + (correlation.aligned ? 8 : correlation.riskOff ? -18 : 0) + session.confidenceAdjustment + htf.confidenceAdjustment;
-  const weighted = trendStrength * marketQuality.trendWeight + snapshot.liquidityScore * 0.06 + volume * 0.1 * learned.volume + smc.score * 0.13 * learned.smc + mtf * 0.1 + snapshot.whaleScore * 0.05 + funding * 0.05 + oi * 0.04 + momentum * marketQuality.momentumWeight * learned.macd + orderbook * 0.06 + advancedBonus + paperAdjustment - regimePenalty - btcPenalty - coinQuality.penalty;
+  const advancedBonus = htf.score * 0.15 * learned.htf + liquidity.score * 0.08 * learned.liquidity + orderFlow.score * 0.1 * learned.orderFlow + oiAnalysis.score * 0.08 * learned.oi + fakeBreakout.score * 0.11 + fastMove.score * 0.08 + (sniper.ready ? 4 : -6) + (correlation.aligned ? 8 : correlation.riskOff ? -18 : 0) + session.confidenceAdjustment + htf.confidenceAdjustment + intel.bonus;
+  const weighted = trendStrength * marketQuality.trendWeight + snapshot.liquidityScore * 0.06 + volume * 0.1 * learned.volume + smc.score * 0.13 * learned.smc + mtf * 0.1 + snapshot.whaleScore * 0.04 + funding * 0.05 + oi * 0.04 + momentum * marketQuality.momentumWeight * learned.macd + orderbook * 0.06 + advancedBonus + paperAdjustment - regimePenalty - btcPenalty - coinQuality.penalty - intel.penalty;
   let score = clamp(weighted - confirmationPenalty);
   const weakMomentum = direction !== 0 && momentum < 55;
   const hardBlock = accuracyHardBlock(snapshot, { side, direction, session, newsRisk, htf, liquidity, orderFlow, oiAnalysis, fakeBreakout, fastMove, correlation });
@@ -118,6 +119,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   if (!confirmationProfile.allowed) score = Math.min(score, confirmationProfile.reason === "exchange conflict" ? 79 : 84);
   if (confirmationProfile.smallAltStrict && score < 90) score = Math.min(score, 84);
   if (hardBlock.blocked) score = Math.min(score, hardBlock.maxScore);
+  if (intel.hardRisk) score = Math.min(score, 79);
   const levels = professionalTradeLevels(candles, precisionCandles, oneHourCandles, direction, a, sr);
   const entry = levels.entry;
   const stopLoss = levels.stopLoss;
@@ -132,7 +134,8 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const earlyThreshold = thresholds.early;
   const inEntryZone = last.close >= Math.min(...entry) && last.close <= Math.max(...entry);
   const fastMomentumEntry = (snapshot.regime === "HIGH_VOLATILITY" || snapshot.regime === "VOLATILE") && fastMove.clean && volume >= 72 && momentum >= 76;
-  const strongEntryReady = roundedScore >= entryThreshold && side !== "NO_TRADE" && inEntryZone && sniper.ready && snapshot.btcStable && volume >= 65 && momentum >= 70 && (liquidity.score >= 65 || fastMomentumEntry) && !fakeBreakout.risk && !hardBlock.blocked;
+  const intelligenceEntry = intel.entryQuality >= 72 && intel.aligned && !intel.hardRisk;
+  const strongEntryReady = roundedScore >= entryThreshold && side !== "NO_TRADE" && inEntryZone && sniper.ready && snapshot.btcStable && volume >= 65 && momentum >= 70 && (liquidity.score >= 65 || fastMomentumEntry || intelligenceEntry) && !fakeBreakout.risk && !hardBlock.blocked && !intel.hardRisk;
   const qualifiedSide: Side = strongEntryReady ? side : roundedScore >= earlyThreshold && snapshot.mode === "futures" && side !== "NO_TRADE" ? "WATCHLIST" : "NO_TRADE";
   const entryStatus = qualifiedSide === "NO_TRADE" || qualifiedSide === "WATCHLIST" ? "NO_TRADE" : "ENTER_NOW";
   const riskReward = riskRewardRatio(rrValue);
@@ -184,6 +187,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
     marketRegime: snapshot.regime,
     btcStable: snapshot.btcStable,
     confirmations: snapshot.confirmations,
+    intelligence: snapshot.intelligence,
     reasons: reasons(snapshot, { trendStrength, volume, mtf, smc: smc.score, momentum, funding, oi, orderbook, rs }, { session, newsRisk, htf, liquidity, orderFlow, oiAnalysis, fakeBreakout, fastMove, correlation }),
     rejectionReason: rejectionReason(qualifiedSide, roundedScore, snapshot, weakMomentum, rrValue, entryThreshold, hardBlock.reason),
     scoreBreakdown: {
@@ -217,7 +221,13 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
       watchlistThreshold: watchThreshold,
       earlySetupThreshold: earlyThreshold,
       smallAltStrictConfirmation: confirmationProfile.smallAltStrict ? 100 : 0,
-      realTradeMemoryAdjustment: 0
+      realTradeMemoryAdjustment: 0,
+      pumpDetector: Math.round(intel.pumpScore),
+      whaleTracker: Math.round(intel.whaleScore),
+      liqBot: Math.round(intel.liqScore),
+      marketReport: Math.round(intel.marketScore),
+      intelligenceBonus: Math.round(intel.bonus),
+      intelligencePenalty: Math.round(intel.penalty)
     },
     tradeManagementActions: tradeManagementActions(qualifiedSide, entryStatus),
     management
@@ -230,6 +240,36 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   signal.confidence = adjustedScore;
   signal.winProbability = Math.round(clamp(adjustedScore, 0, 94));
   return signal;
+}
+
+function intelligenceScores(snapshot: MarketSnapshot, direction: number) {
+  const intel = snapshot.intelligence;
+  if (!intel || direction === 0) return { pumpScore: 0, whaleScore: 0, liqScore: 0, marketScore: 50, entryQuality: 0, aligned: false, hardRisk: false, bonus: 0, penalty: 0 };
+  const side = direction === 1 ? "LONG" : "SHORT";
+  const pumpAligned = intel.pump.direction === side || intel.pump.direction === "NEUTRAL" && intel.pump.entryTiming !== "AVOID";
+  const whaleAligned = intel.whale.whaleBias === side || intel.whale.whaleBias === "NEUTRAL";
+  const liqAligned = intel.liq.sweepDirection === side || intel.liq.sweepDirection === "NEUTRAL";
+  const marketOk = intel.market.marketRegime !== "RISK_OFF" || side === "SHORT";
+  const alignedCount = [pumpAligned, whaleAligned, liqAligned, marketOk].filter(Boolean).length;
+  const pumpScore = pumpAligned ? intel.pump.pumpScore : Math.max(0, 50 - intel.pump.pumpScore);
+  const whaleScore = whaleAligned ? intel.whale.smartMoneyScore : Math.max(0, 45 - intel.whale.smartMoneyScore * 0.4);
+  const liqScore = liqAligned ? intel.liq.entryQuality : Math.max(0, 45 - intel.liq.entryQuality * 0.4);
+  const marketScore = Math.max(0, 100 - intel.market.riskScore + intel.market.marketAggression * 0.35);
+  const trapPenalty = Math.max(intel.whale.trapRisk * 0.08, intel.liq.trapProbability * 0.08, intel.pump.fakeBreakoutRisk * 0.1);
+  const bonus = pumpScore * 0.045 + whaleScore * 0.05 + liqScore * 0.045 + marketScore * 0.025 + (alignedCount >= 3 ? 5 : 0);
+  const penalty = trapPenalty + (alignedCount <= 1 ? 12 : 0) + (intel.market.marketRegime === "RISK_OFF" && side === "LONG" ? 15 : 0);
+  const hardRisk = intel.pump.fakeBreakoutRisk >= 78 || intel.whale.trapRisk >= 82 || intel.liq.trapProbability >= 82 || intel.market.riskScore >= 85;
+  return {
+    pumpScore,
+    whaleScore,
+    liqScore,
+    marketScore,
+    entryQuality: (pumpScore + whaleScore + liqScore + marketScore) / 4,
+    aligned: alignedCount >= 3,
+    hardRisk,
+    bonus,
+    penalty
+  };
 }
 
 function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, weakMomentum: boolean, rrValue: number, entryThreshold: number, hardBlockReason?: string) {
@@ -457,6 +497,12 @@ function reasons(snapshot: MarketSnapshot, parts: Record<string, number>, advanc
   if (parts.mtf > 65) out.push("мультитаймфрейм підтверджує напрямок");
   if (parts.orderbook > 60) out.push("дисбаланс стакана підтримує напрямок");
   if (Math.abs(snapshot.fundingRate) < 0.0008) out.push("funding не перегрітий");
+  if (snapshot.intelligence) {
+    out.push(`Pump Detector: ${snapshot.intelligence.pump.pumpScore}/100, timing ${snapshot.intelligence.pump.entryTiming}`);
+    out.push(`Whale Tracker: ${snapshot.intelligence.whale.whaleBias} ${snapshot.intelligence.whale.smartMoneyScore}/100, trap ${snapshot.intelligence.whale.trapRisk}/100`);
+    out.push(`Liq Bot: ${snapshot.intelligence.liq.sweepDirection} ${snapshot.intelligence.liq.entryQuality}/100, reclaim ${snapshot.intelligence.liq.reclaimConfirmed ? "yes" : "no"}`);
+    out.push(`Market Report: ${snapshot.intelligence.market.marketRegime}, aggression ${snapshot.intelligence.market.marketAggression}/100`);
+  }
   if (snapshot.confirmations.alignedCount >= 2) out.push(`підтверджено біржами: ${confirmedBy(snapshot).join(", ")}`);
   return out;
 }

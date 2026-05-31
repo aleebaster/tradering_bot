@@ -30,6 +30,12 @@ export class TelegramCommandCenter {
   private polling = false;
   private timer: NodeJS.Timeout | null = null;
   private pendingAction: PendingAction | null = null;
+  private startedAt: string | null = null;
+  private lastPollAt: string | null = null;
+  private lastUpdateAt: string | null = null;
+  private processedUpdates = 0;
+  private handledCallbacks = 0;
+  private handledMessages = 0;
 
   constructor(notifier: TelegramCommandHandler = new TelegramNotifier()) {
     this.notifier = notifier;
@@ -37,7 +43,12 @@ export class TelegramCommandCenter {
 
   async start() {
     if (!this.enabled) return;
+    if (this.timer) {
+      logger.info(this.status(), "Telegram command center already running");
+      return;
+    }
     await this.resetPollingOffset();
+    this.startedAt = new Date().toISOString();
     logger.info("Telegram command center started");
     void this.poll();
     this.timer = setInterval(() => void this.poll(), 2500);
@@ -45,11 +56,30 @@ export class TelegramCommandCenter {
 
   stop() {
     if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    logger.info(this.status(), "Telegram command center stopped");
+  }
+
+  status() {
+    return {
+      enabled: this.enabled,
+      running: Boolean(this.timer),
+      polling: this.polling,
+      offset: this.offset,
+      startedAt: this.startedAt,
+      lastPollAt: this.lastPollAt,
+      lastUpdateAt: this.lastUpdateAt,
+      processedUpdates: this.processedUpdates,
+      handledCallbacks: this.handledCallbacks,
+      handledMessages: this.handledMessages,
+      pendingAction: this.pendingAction
+    };
   }
 
   private async poll() {
     if (this.polling || !config.TELEGRAM_BOT_TOKEN) return;
     this.polling = true;
+    this.lastPollAt = new Date().toISOString();
     try {
       const url = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/getUpdates?timeout=1&offset=${this.offset}`;
       const res = await fetch(url);
@@ -58,11 +88,16 @@ export class TelegramCommandCenter {
         return;
       }
       const json = await res.json() as { ok: boolean; result?: TelegramUpdate[] };
-      for (const update of json.result ?? []) {
+      const updates = json.result ?? [];
+      if (updates.length) logger.info({ count: updates.length, offset: this.offset }, "Telegram updates received");
+      for (const update of updates) {
         this.offset = Math.max(this.offset, update.update_id + 1);
+        this.processedUpdates += 1;
+        this.lastUpdateAt = new Date().toISOString();
         if (update.callback_query) {
           const chatId = String(update.callback_query.message?.chat?.id ?? "");
           if (chatId !== String(config.TELEGRAM_CHAT_ID)) continue;
+          this.handledCallbacks += 1;
           logger.info({ data: update.callback_query.data }, "Telegram callback received");
           await this.handleCallback(update.callback_query.id, update.callback_query.data ?? "");
           continue;
@@ -71,6 +106,7 @@ export class TelegramCommandCenter {
         if (chatId !== String(config.TELEGRAM_CHAT_ID)) continue;
         const text = update.message?.text?.trim();
         if (text) {
+          this.handledMessages += 1;
           logger.info({ text }, "Telegram message received");
           await this.handle(text);
         }
@@ -122,6 +158,11 @@ export class TelegramCommandCenter {
     if (button === "new_tokens") return this.sendNewTokens();
     if (button === "watch_status") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
     if (button === "monitoring") return this.sendMonitoring();
+    if (button === "intelligence") return this.notifier.send(intelligenceText("overview"), intelligenceKeyboard());
+    if (button === "pump_detector") return this.notifier.send(intelligenceText("pump"), intelligenceKeyboard());
+    if (button === "whale_bias") return this.notifier.send(intelligenceText("whale"), intelligenceKeyboard());
+    if (button === "liquidation_status") return this.notifier.send(intelligenceText("liq"), intelligenceKeyboard());
+    if (button === "market_regime") return this.notifier.send(intelligenceText("market"), intelligenceKeyboard());
     if (button === "market") return this.notifier.send(marketText(), marketActionsKeyboard());
     if (button === "btc") return this.notifier.send(btcText(), marketActionsKeyboard());
     if (button === "diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
@@ -137,6 +178,7 @@ export class TelegramCommandCenter {
     if (command === "/status") return this.notifier.send(statusText(), mainMenuKeyboard());
     if (command === "/diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
     if (command === "/market") return this.notifier.send(marketText(), marketActionsKeyboard());
+    if (command === "/intelligence") return this.notifier.send(intelligenceText("overview"), intelligenceKeyboard());
     if (command === "/markethealth") return this.notifier.send(marketHealthText(), marketActionsKeyboard());
     if (command === "/btc") return this.notifier.send(btcText(), marketActionsKeyboard());
     if (command === "/positions") return this.sendPositions();
@@ -315,6 +357,11 @@ export class TelegramCommandCenter {
     if (button === "new_tokens") return this.sendNewTokens();
     if (button === "watch_status") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
     if (button === "monitoring") return this.sendMonitoring();
+    if (button === "intelligence") return this.notifier.send(intelligenceText("overview"), intelligenceKeyboard());
+    if (button === "pump_detector") return this.notifier.send(intelligenceText("pump"), intelligenceKeyboard());
+    if (button === "whale_bias") return this.notifier.send(intelligenceText("whale"), intelligenceKeyboard());
+    if (button === "liquidation_status") return this.notifier.send(intelligenceText("liq"), intelligenceKeyboard());
+    if (button === "market_regime") return this.notifier.send(intelligenceText("market"), intelligenceKeyboard());
     if (button === "market") return this.notifier.send(marketText(), marketActionsKeyboard());
     if (button === "btc") return this.notifier.send(btcText(), marketActionsKeyboard());
     if (button === "diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
@@ -354,9 +401,10 @@ function mainMenuKeyboard(): TelegramReplyMarkup {
     inline_keyboard: [
       [uiButton("📊 Сигнали", "signals"), uiButton("👀 Watchlist", "watchlist")],
       [uiButton("📈 Ринок", "market"), uiButton("₿ BTC Фільтр", "btc")],
-      [uiButton("🔥 Топ Сетапи", "top"), uiButton("📂 Позиції", "positions")],
-      [uiButton("🪙 New Tokens", "new_tokens"), uiButton("📊 Статистика", "stats")],
-      [uiButton("🧪 Діагностика", "diagnostics"), uiButton("⚙️ Налаштування", "settings")]
+      [uiButton("🔥 Топ Сетапи", "top"), uiButton("📡 Intelligence", "intelligence")],
+      [uiButton("📂 Позиції", "positions"), uiButton("🪙 New Tokens", "new_tokens")],
+      [uiButton("📊 Статистика", "stats"), uiButton("⚙️ Налаштування", "settings")],
+      [uiButton("🧪 Діагностика", "diagnostics")]
     ]
   };
 }
@@ -397,6 +445,7 @@ function marketActionsKeyboard(): TelegramReplyMarkup {
   return {
     inline_keyboard: [
       [uiButton("🔄 Оновити Ринок", "market")],
+      [uiButton("📡 Intelligence", "intelligence"), uiButton("Market Regime", "market_regime")],
       [uiButton("📊 Сигнали", "signals"), uiButton("🔥 Топ Сетапи", "top")],
       [uiButton("₿ BTC Фільтр", "btc"), uiButton("🔙 Назад", "back")]
     ]
@@ -461,6 +510,16 @@ function leverageKeyboard(): TelegramReplyMarkup {
 
 function riskModeKeyboard(): TelegramReplyMarkup {
   return { inline_keyboard: [[uiButton("Conservative", "conservative"), uiButton("Balanced", "balanced")], [uiButton("Aggressive", "aggressive")], [uiButton("🔙 Назад", "back")]] };
+}
+
+function intelligenceKeyboard(): TelegramReplyMarkup {
+  return {
+    inline_keyboard: [
+      [uiButton("Pump Detector", "pump_detector"), uiButton("Whale Bias", "whale_bias")],
+      [uiButton("Liquidation Status", "liquidation_status"), uiButton("Market Regime", "market_regime")],
+      [uiButton("🔙 Назад", "back")]
+    ]
+  };
 }
 
 function backKeyboard(): TelegramReplyMarkup {
@@ -528,6 +587,7 @@ function helpText() {
     "/newsignal TOKENUSDT — аналіз нового futures токена",
     "/newwatch — якісні нові лістинги під моніторингом",
     "/market — стан ринку",
+    "/intelligence — Pump Detector, Whale Bias, Liquidation Status, Market Regime",
     "/markethealth — режим, агресивність і активні пороги",
     "/btc — BTC фільтр",
     "/status — статус сканера",
@@ -814,6 +874,32 @@ function marketText() {
   ].join("\n");
 }
 
+function intelligenceText(section: "overview" | "pump" | "whale" | "liq" | "market") {
+  const latest = latestIntelligence();
+  if (!latest) return ["📡 Intelligence", "", "Дані ще формуються.", "Live scanner має завершити хоча б один futures scan."].join("\n");
+  const [symbol, intel] = latest;
+  const header = ["📡 Intelligence", "", `Pair: ${symbol}`, `Updated: ${new Date(intel.updatedAt).toLocaleTimeString()}`, ""];
+  if (section === "pump") return [...header, "Pump Detector", ...intel.pump.reasons, `Score: ${intel.pump.pumpScore}/100`, `Momentum: ${intel.pump.momentumStrength}/100`, `Breakout: ${intel.pump.breakoutProbability}/100`, `Timing: ${intel.pump.entryTiming}`].join("\n");
+  if (section === "whale") return [...header, "Whale Bias", ...intel.whale.reasons, `Bias: ${intel.whale.whaleBias}`, `Smart money: ${intel.whale.smartMoneyScore}/100`, `Confidence: ${intel.whale.whaleConfidence}/100`, `Trap risk: ${intel.whale.trapRisk}/100`].join("\n");
+  if (section === "liq") return [...header, "Liquidation Status", ...intel.liq.reasons, `Strength: ${intel.liq.liqSignalStrength}/100`, `Sweep: ${intel.liq.sweepDirection}`, `Entry quality: ${intel.liq.entryQuality}/100`, `Trap: ${intel.liq.trapProbability}/100`].join("\n");
+  if (section === "market") return [...header, "Market Regime", ...intel.market.reasons, `Regime: ${intel.market.marketRegime}`, `Risk: ${intel.market.riskScore}/100`, `Aggression: ${intel.market.marketAggression}/100`, `BTC bias: ${intel.market.btcBias}`].join("\n");
+  return [
+    ...header,
+    `Pump Detector: ${intel.pump.pumpScore}/100 (${intel.pump.entryTiming})`,
+    `Whale Bias: ${intel.whale.whaleBias} ${intel.whale.smartMoneyScore}/100`,
+    `Liquidation: ${intel.liq.sweepDirection} ${intel.liq.entryQuality}/100`,
+    `Market Regime: ${intel.market.marketRegime}, risk ${intel.market.riskScore}/100`,
+    "",
+    "Авто-пуші вимкнені для intelligence. Це тільки on-demand меню."
+  ].join("\n");
+}
+
+function latestIntelligence() {
+  const entries = Object.entries(state.intelligence.latestBySymbol);
+  if (!entries.length) return null;
+  return entries.sort((a, b) => Date.parse(b[1].updatedAt) - Date.parse(a[1].updatedAt))[0];
+}
+
 function fundingText(signal: Signal) {
   const funding = signal.scoreBreakdown.fundingConfirmation ?? 0;
   if (funding >= 70) return "Нормальний";
@@ -843,7 +929,7 @@ function isMenuButton(text: string) {
   return buttonAction(text) !== null;
 }
 
-type ButtonAction = "menu" | "back" | "signals" | "watchlist" | "settings" | "signal_pair" | "watch_add" | "watch_remove" | "top" | "signals_refresh" | "positions" | "stats" | "new_tokens" | "watch_status" | "monitoring" | "market" | "btc" | "diagnostics" | "balance" | "leverage" | "x2" | "x3" | "notifications" | "telegram_ux" | "risk_mode" | "conservative" | "balanced" | "aggressive";
+type ButtonAction = "menu" | "back" | "signals" | "watchlist" | "settings" | "signal_pair" | "watch_add" | "watch_remove" | "top" | "signals_refresh" | "positions" | "stats" | "new_tokens" | "watch_status" | "monitoring" | "intelligence" | "pump_detector" | "whale_bias" | "liquidation_status" | "market_regime" | "market" | "btc" | "diagnostics" | "balance" | "leverage" | "x2" | "x3" | "notifications" | "telegram_ux" | "risk_mode" | "conservative" | "balanced" | "aggressive";
 
 function buttonAction(text: string): ButtonAction | null {
   const normalized = normalizeButtonText(text).toLowerCase();
@@ -864,6 +950,11 @@ function buttonAction(text: string): ButtonAction | null {
     ["new_tokens", ["new tokens"]],
     ["watch_status", ["watch status"]],
     ["monitoring", ["моніторинг", "monitoring"]],
+    ["intelligence", ["intelligence", "інтелект"]],
+    ["pump_detector", ["pump detector", "pump"]],
+    ["whale_bias", ["whale bias", "whale"]],
+    ["liquidation_status", ["liquidation status", "liquidation"]],
+    ["market_regime", ["market regime"]],
     ["market", ["ринок", "оновити ринок", "market"]],
     ["btc", ["btc", "btc фільтр", "₿ btc фільтр", "btc filter"]],
     ["diagnostics", ["діагностика", "оновити статус", "diagnostics"]],

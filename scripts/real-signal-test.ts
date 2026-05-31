@@ -2,12 +2,17 @@ import { ExchangeClient } from "../src/local/exchanges";
 import { btcStable, buildSignal, regimeFrom } from "../src/local/scoring";
 import { isRealEntrySignal, TelegramNotifier } from "../src/local/telegram";
 import type { Candle, ExchangeConfirmations, MarketSnapshot, Signal } from "../src/local/types";
+import { LiqBot, MarketReportBot, PumpDetectorBot, WhaleTrackerBot } from "../src/local/bots";
 
 const client = new ExchangeClient();
 const notifier = new TelegramNotifier();
 const symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
-const tfs = ["5", "15", "60"];
+const tfs = ["1", "5", "15", "60", "240"];
 const bybitOnly = process.env.BYBIT_ONLY === "1";
+const pumpDetector = new PumpDetectorBot();
+const whaleTracker = new WhaleTrackerBot();
+const liqBot = new LiqBot();
+const marketReportBot = new MarketReportBot();
 
 async function main() {
   let btcCandles: Record<string, Candle[]>;
@@ -28,15 +33,25 @@ async function main() {
       console.error(`Bybit ${symbol} failed; continuing safely: ${message}`);
       continue;
     }
-    const [okx, kucoin, kraken, binance, imbalance, funding, oi] = await Promise.all([
+    const [okx, kucoin, kraken, binance, orderBook, funding, oi] = await Promise.all([
       bybitOnly ? Promise.resolve(emptyCandles()) : loadOkx(symbol),
       bybitOnly ? Promise.resolve(emptyCandles()) : loadKucoin(symbol),
       bybitOnly ? Promise.resolve(emptyCandles()) : loadKraken(symbol),
       bybitOnly ? Promise.resolve(emptyCandles()) : loadBinance(symbol),
-      client.orderBookImbalance(symbol).catch(() => 0),
+      client.bybitOrderBookStats(symbol).catch(() => ({ spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false })),
       client.fundingRate(symbol).catch(() => 0),
       client.openInterestChange(symbol).catch(() => 0)
     ]);
+    const liquidityScore = liquidity(candles["15"]);
+    const regime = regimeFrom(candles);
+    const intelligenceInput = { symbol, candles, orderBook, fundingRate: funding, openInterestChange: oi, liquidityScore, btcStable: symbol === "BTCUSDT" ? true : btcOk, regime };
+    const intelligence = {
+      pump: pumpDetector.analyze(intelligenceInput),
+      whale: whaleTracker.analyze(intelligenceInput),
+      liq: liqBot.analyze(intelligenceInput),
+      market: marketReportBot.analyze(intelligenceInput),
+      updatedAt: new Date().toISOString()
+    };
     const snapshot: MarketSnapshot = {
       symbol,
       mode: "futures",
@@ -45,14 +60,15 @@ async function main() {
       kucoinCandles: kucoin,
       krakenCandles: kraken,
       binanceCandles: binance,
-      orderBookImbalance: imbalance,
+      orderBookImbalance: orderBook.imbalance,
       fundingRate: funding,
       openInterestChange: oi,
-      liquidityScore: liquidity(candles["15"]),
-      whaleScore: Math.min(100, Math.max(0, Math.abs(oi) * 2500 + Math.abs(imbalance) * 120)),
+      liquidityScore,
+      whaleScore: intelligence.whale.smartMoneyScore,
       btcStable: symbol === "BTCUSDT" ? true : btcOk,
-      regime: regimeFrom(candles),
-      confirmations: confirmations(candles, okx, kucoin, kraken, binance)
+      regime,
+      confirmations: confirmations(candles, okx, kucoin, kraken, binance),
+      intelligence
     };
     signals.push(buildSignal(snapshot));
   }
