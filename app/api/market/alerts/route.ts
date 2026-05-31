@@ -2,6 +2,7 @@ import { localState } from "@/lib/localApi";
 import { marketRegistry } from "@/src/local/marketRegistry";
 
 export const dynamic = "force-dynamic";
+export const preferredRegion = "fra1";
 
 type BinanceTicker = {
   symbol: string;
@@ -54,7 +55,7 @@ type EngineSignal = {
 };
 
 const notified = new Map<string, number>();
-const bybitRestUrl = process.env.BYBIT_REST_URL ?? (process.env.VERCEL ? "https://api.bybit.kz" : "https://api.bybit.com");
+const bybitRestUrl = process.env.BYBIT_REST_URL ?? "https://api.bybit.com";
 
 export async function GET() {
   try {

@@ -1,6 +1,7 @@
 import { analyzeFutures } from "@/src/local/marketAnalysis";
 
 export const dynamic = "force-dynamic";
+export const preferredRegion = "fra1";
 
 export async function GET(request: Request) {
   const q = new URL(request.url).searchParams.get("q") ?? "";
