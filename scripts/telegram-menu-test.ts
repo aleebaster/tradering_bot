@@ -13,7 +13,7 @@ class CaptureNotifier extends TelegramNotifier {
 
 const notifier = new CaptureNotifier();
 
-const mainMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("📊 Сигнали", "signals"), btn("👀 Watchlist", "watchlist")], [btn("📈 Ринок", "market"), btn("₿ BTC Фільтр", "btc")], [btn("🔥 Топ Сетапи", "top"), btn("📂 Позиції", "positions")], [btn("🧪 Діагностика", "diagnostics"), btn("⚙️ Налаштування", "settings")]] };
+const mainMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("📊 Сигнали", "signals"), btn("👀 Watchlist", "watchlist")], [btn("📈 Ринок", "market"), btn("₿ BTC Фільтр", "btc")], [btn("🔥 Топ Сетапи", "top"), btn("🔍 Пошук по парах", "search_pair")], [btn("🧪 Діагностика", "diagnostics"), btn("⚙️ Налаштування", "settings")]] };
 
 const signalActions: TelegramReplyMarkup = {
   inline_keyboard: [
@@ -22,7 +22,7 @@ const signalActions: TelegramReplyMarkup = {
   ]
 };
 
-const signalMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("🔍 Аналіз пари", "signal_pair")], [btn("🔥 Найкращі сигнали", "top"), btn("🟢 Активні угоди", "positions")], [btn("🔙 Назад", "back")]] };
+const signalMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("🔍 Аналіз пари", "signal_pair")], [btn("🔥 Найкращі сигнали", "top"), btn("🔍 Пошук по парах", "search_pair")], [btn("🔙 Назад", "back")]] };
 const watchlistMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("➕ Додати пару", "watch_add"), btn("📄 Мій список", "watchlist")], [btn("❌ Видалити пару", "watch_remove"), btn("🔴 Моніторинг", "monitoring")], [btn("🔙 Назад", "back")]] };
 const settingsMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("💰 Баланс", "balance"), btn("⚡ Плече", "leverage")], [btn("🔔 Сповіщення", "notifications"), btn("📱 Telegram UX", "telegram_ux")], [btn("🎯 Risk mode", "risk_mode")], [btn("🔙 Назад", "back")]] };
 const leverageMenu: TelegramReplyMarkup = { inline_keyboard: [[btn("x2", "x2"), btn("x3", "x3")], [btn("🔙 Назад", "back")]] };
@@ -51,7 +51,7 @@ async function main() {
       inlineMenuRows: mainMenu.inline_keyboard?.length,
       inlineKeyboardRows: signalActions.inline_keyboard?.length,
       noLiveTelegramSpam: notifier.messages.length === 13,
-      buttons: ["📊 Сигнали", "🔍 Аналіз пари", "🔥 Найкращі сигнали", "🟢 Активні угоди", "👀 Watchlist", "➕ Додати пару", "📄 Мій список", "❌ Видалити пару", "🔴 Моніторинг", "📈 Ринок", "🔄 Оновити Ринок", "₿ BTC Фільтр", "📂 Позиції", "🧪 Діагностика", "⚙️ Налаштування", "💰 Баланс", "⚡ Плече", "x2", "x3", "🔔 Сповіщення", "🎯 Risk mode", "Conservative", "Balanced", "Aggressive", "🟢 Моніторити", "🔄 Оновити Аналіз", "❌ Видалити", "📊 Повний Аналіз"]
+      buttons: ["📊 Сигнали", "🔍 Аналіз пари", "🔥 Найкращі сигнали", "🔍 Пошук по парах", "👀 Watchlist", "➕ Додати пару", "📄 Мій список", "❌ Видалити пару", "🔴 Моніторинг", "📈 Ринок", "🔄 Оновити Ринок", "₿ BTC Фільтр", "🧪 Діагностика", "⚙️ Налаштування", "💰 Баланс", "⚡ Плече", "x2", "x3", "🔔 Сповіщення", "🎯 Risk mode", "Conservative", "Balanced", "Aggressive", "🟢 Моніторити", "🔄 Оновити Аналіз", "❌ Видалити", "📊 Повний Аналіз"]
     }
   }, null, 2));
 }
@@ -66,7 +66,7 @@ function realTopText() {
 }
 
 function realPositionsText() {
-  return state.activeSignals.length ? ["📂 Позиції", "", ...state.activeSignals.slice(0, 5).map((signal) => `${signal.side} ${signal.symbol} — ${signal.score}%\nEntry: ${signal.entry[0]}-${signal.entry[1]}\nSL: ${signal.stopLoss}\nTP: ${signal.takeProfit.join(" / ")}`)].join("\n\n") : "📂 Активних угод немає.";
+  return "🔍 Пошук по парах\n\nВведи пару для професійного аналізу, наприклад BTCUSDT або btc.";
 }
 
 function realWatchlistText() {
