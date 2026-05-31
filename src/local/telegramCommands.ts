@@ -45,6 +45,7 @@ export class TelegramCommandCenter {
   private processedUpdates = 0;
   private handledCallbacks = 0;
   private handledMessages = 0;
+  private offsetInitialized = false;
 
   constructor(notifier: TelegramCommandHandler = new TelegramNotifier()) {
     this.notifier = notifier;
@@ -56,8 +57,6 @@ export class TelegramCommandCenter {
       logger.info(this.status(), "Telegram command center already running");
       return;
     }
-    if (!this.acquirePollingLock()) return;
-    await this.resetPollingOffset();
     this.startedAt = new Date().toISOString();
     logger.info("Telegram command center started");
     void this.poll();
@@ -87,18 +86,21 @@ export class TelegramCommandCenter {
       handledMessages: this.handledMessages,
       pendingAction: this.pendingAction,
       lastPollingError: this.lastPollingError,
-      lockAcquired: this.lockAcquired
+      lockAcquired: this.lockAcquired,
+      offsetInitialized: this.offsetInitialized,
+      lock: readPollingLock()
     };
   }
 
   private acquirePollingLock() {
     const now = Date.now();
     const current = readPollingLock();
-    if (current && current.pid !== process.pid && now - current.updatedAt < 20_000) {
+    if (current && current.pid !== process.pid && isProcessAlive(current.pid) && now - current.updatedAt < 20_000) {
       this.lastPollingError = `Polling already owned by pid ${current.pid}`;
       logger.warn({ lock: current }, "Telegram polling lock is active; skipping duplicate listener");
       return false;
     }
+    if (current && current.pid !== process.pid) logger.warn({ lock: current }, "Telegram polling lock is stale; taking over");
     writePollingLock();
     this.lockAcquired = true;
     this.lockTimer = setInterval(writePollingLock, 5_000);
@@ -114,6 +116,8 @@ export class TelegramCommandCenter {
 
   private async poll() {
     if (this.polling || !config.TELEGRAM_BOT_TOKEN) return;
+    if (!this.lockAcquired && !this.acquirePollingLock()) return;
+    if (!this.offsetInitialized) await this.resetPollingOffset();
     this.polling = true;
     this.lastPollAt = new Date().toISOString();
     try {
@@ -175,6 +179,7 @@ export class TelegramCommandCenter {
         body: JSON.stringify({ drop_pending_updates: false })
       }).catch((error) => logger.warn({ err: error }, "Telegram deleteWebhook timed out; continuing with polling"));
       this.offset = 0;
+      this.offsetInitialized = true;
       logger.info({ offset: this.offset }, "Telegram polling initialized without discarding pending updates");
     } catch (err) {
       logger.warn({ err }, "Telegram polling offset initialization failed");
@@ -185,6 +190,7 @@ export class TelegramCommandCenter {
     const cleanText = normalizeButtonText(text);
     const button = buttonAction(cleanText);
     if (this.pendingAction && !cleanText.startsWith("/") && (!button || isPairQueryText(cleanText))) return this.handlePendingInput(cleanText);
+    if (this.pendingAction && button) this.pendingAction = null;
     const [rawCommand, rawPair] = cleanText.split(/\s+/, 2);
     const command = rawCommand.split("@")[0].toLowerCase();
     const pair = rawPair ? normalizePriorityPair(rawPair) : "";
@@ -397,6 +403,7 @@ export class TelegramCommandCenter {
   private async handleUiCallback(action: string): Promise<void> {
     const button = buttonAction(action);
     if (!button) return this.notifier.send(mainMenuText(), mainMenuKeyboard());
+    if (this.pendingAction) this.pendingAction = null;
     if (button === "menu" || button === "back") return this.notifier.send(mainMenuText(), mainMenuKeyboard());
     if (button === "signals") return this.sendTopSetups();
     if (button === "search_pair") return this.askPair("search");
@@ -492,6 +499,16 @@ function readPollingLock(): { pid: number; updatedAt: number } | null {
 
 function writePollingLock() {
   writeFileSync(telegramLockPath(), JSON.stringify({ pid: process.pid, updatedAt: Date.now() }));
+}
+
+function isProcessAlive(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function startOneShotAnalysis(pair: string) {

@@ -25,6 +25,7 @@ async function main() {
   await click(center, checks, "🔥 Найкращі сигнали", "Топ Сетапи");
   await click(center, checks, "🔍 Пошук по парах", "Введіть пару");
   await click(center, checks, "📊 Статистика", "Trading Stats");
+  checks["pending_search_does_not_block_stats"] = center.status().pendingAction === null;
   await click(center, checks, "🚀 New Tokens", "NEW TOKENS WATCH");
   await click(center, checks, "/newsignal AIGENSYNUSDT", "NEW TOKEN ANALYSIS");
   await click(center, checks, "/learning", "Learning Mode");
