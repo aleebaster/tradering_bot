@@ -6,6 +6,7 @@ import { config } from "./config";
 import { state } from "./state";
 import { Scanner } from "./scanner";
 import { logger } from "./logger";
+import { TelegramCommandCenter } from "./telegramCommands";
 
 const app = express();
 app.use(cors({ origin: true }));
@@ -29,13 +30,16 @@ function broadcast(payload: unknown) {
 wss.on("connection", (socket) => socket.send(JSON.stringify({ type: "state", state })));
 
 const scanner = new Scanner(broadcast);
+const telegramCommands = new TelegramCommandCenter();
 server.listen(config.LOCAL_API_PORT, () => {
   logger.info(`Локальний API слухає http://localhost:${config.LOCAL_API_PORT}`);
   if (config.warning) logger.warn(config.warning);
+  telegramCommands.start();
   void scanner.start();
 });
 
 process.on("SIGINT", () => {
+  telegramCommands.stop();
   scanner.stop();
   server.close(() => process.exit(0));
 });

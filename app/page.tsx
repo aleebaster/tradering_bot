@@ -88,6 +88,7 @@ export default function Dashboard() {
         <div>
           <p className="text-sm uppercase tracking-[0.35em] text-slate-400">Локальний ШІ-термінал сигналів</p>
           <h1 className="mt-2 text-3xl font-black md:text-5xl">Командний центр криптосигналів</h1>
+          <a href="/live" className="mt-3 inline-flex rounded-full border border-cyan-300/30 px-4 py-2 text-sm font-bold text-cyan-200 transition hover:bg-cyan-300/10">Відкрити новий crypto alerts сайт</a>
         </div>
         <div className={`rounded-full border px-4 py-2 text-sm ${connectionMode === "local" || connectionMode === "remote" ? "border-profit/50 text-profit" : connectionMode === "engine-required" ? "border-warning/50 text-warning" : "border-edge text-slate-300"}`}>
           {connectionTitle(connectionMode)}

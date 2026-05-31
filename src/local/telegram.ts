@@ -72,8 +72,6 @@ function formatSignal(signal: Signal) {
   return [
     `${icon} ${direction} — ${signal.symbol}`,
     "",
-    signal.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : "⏳ ЧЕКАТИ ЗОНУ ВХОДУ",
-    "",
     "📍 Вхід:",
     `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
     "",
@@ -92,14 +90,8 @@ function formatSignal(signal: Signal) {
     "⚡ Плече:",
     leverageText(signal),
     "",
-    "💰 Баланс:",
-    `${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT`,
-    "",
-    "📦 Розмір позиції:",
-    sizing ? `${sizing.positionSizeUsdt} USDT` : "тільки після підтвердження входу",
-    "",
-    `📌 Скільки ${direction === "SHORT" ? "шортити" : "купити"}:`,
-    sizing ? `${formatQuantity(sizing.quantity)} ${sizing.baseAsset}` : "очікуємо підтвердження",
+    `💰 Position size for ${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT:`,
+    sizing ? `${sizing.positionSizeUsdt} USDT` : "після підтвердження входу",
     "",
     "🟠 Беззбиток:",
     "Перенести Stop Loss після TP1"
@@ -116,12 +108,6 @@ function formatNoTrade(signal: Signal) {
 
 function fmt(n: number) {
   return n >= 100 ? n.toFixed(2) : n.toFixed(5);
-}
-
-function formatQuantity(value: number) {
-  if (value >= 1000) return String(Math.floor(value));
-  if (value >= 1) return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
-  return value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function leverageText(signal: Signal) {

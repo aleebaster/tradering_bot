@@ -7,6 +7,7 @@ import type { Candle, MarketSnapshot, Signal } from "./types";
 import { logger } from "./logger";
 import { TelegramNotifier } from "./telegram";
 import { recordLearningOutcome } from "./learning";
+import { loadPriorityWatchlist } from "./watchlistStore";
 
 type Broadcast = (payload: unknown) => void;
 
@@ -99,6 +100,7 @@ export class Scanner {
 
   private async scan() {
     if (this.scanning) return;
+    this.syncPriorityWatchlistSymbols();
     if (Date.now() < this.bybitCooldownUntil) {
       state.diagnostics.apiStatus.bybit = `ліміт запитів; пауза до ${new Date(this.bybitCooldownUntil).toLocaleTimeString()}`;
       state.marketCondition = "Активна пауза через ліміт Bybit; сканер автоматично продовжить роботу";
@@ -157,6 +159,17 @@ export class Scanner {
       logger.error({ err }, "Помилка сканування");
     } finally {
       this.scanning = false;
+    }
+  }
+
+  private syncPriorityWatchlistSymbols() {
+    const priority = loadPriorityWatchlist();
+    if (!priority.length) return;
+    const merged = [...new Set([...this.symbols, ...priority])];
+    if (merged.length !== this.symbols.length) {
+      this.symbols = merged;
+      state.diagnostics.validSymbols = [...new Set([...(state.diagnostics.validSymbols ?? []), ...priority])];
+      logger.info({ priority }, "priority watchlist restored into scanner symbols");
     }
   }
 

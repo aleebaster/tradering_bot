@@ -237,8 +237,6 @@ function conciseTradeMessage(symbol: string, side: "LONG" | "SHORT", levels: Ret
   return [
     `${icon} ${side} — ${symbol}`,
     "",
-    "✅ ЗАХОДИТИ ЗАРАЗ",
-    "",
     "📍 Вхід:",
     `${fmt(levels.entry[0])}–${fmt(levels.entry[1])}`,
     "",
@@ -257,14 +255,8 @@ function conciseTradeMessage(symbol: string, side: "LONG" | "SHORT", levels: Ret
     "⚡ Плече:",
     sizing?.leverage ?? leverage,
     "",
-    "💰 Баланс:",
-    `${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT`,
-    "",
-    "📦 Розмір позиції:",
-    sizing ? `${sizing.positionSizeUsdt} USDT` : "тільки після підтвердження входу",
-    "",
-    `📌 Скільки ${side === "SHORT" ? "шортити" : "купити"}:`,
-    sizing ? `${formatQuantity(sizing.quantity)} ${sizing.baseAsset}` : "очікуємо підтвердження",
+    `💰 Position size for ${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT:`,
+    sizing ? `${sizing.positionSizeUsdt} USDT` : "після підтвердження входу",
     "",
     "🟠 Беззбиток:",
     "Перенести Stop Loss після TP1"
@@ -273,12 +265,6 @@ function conciseTradeMessage(symbol: string, side: "LONG" | "SHORT", levels: Ret
 
 function conciseNoTrade(symbol: string) {
   return [`❌ NO TRADE — ${symbol}`, "", "Причина:", "", "Слабкий сигнал.", "", "Чекаємо кращу точку входу."].join("\n");
-}
-
-function formatQuantity(value: number) {
-  if (value >= 1000) return String(Math.floor(value));
-  if (value >= 1) return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
-  return value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 function mtfDirection(candles: Record<string, Candle[]>, direction: 1 | -1) {

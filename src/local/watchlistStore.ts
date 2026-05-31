@@ -32,6 +32,16 @@ export function addPriorityPair(pair: string) {
   return savePriorityWatchlist([...pairs, normalized]);
 }
 
+export function removePriorityPair(pair: string) {
+  const normalized = normalizePair(pair);
+  if (!normalized) return loadPriorityWatchlist();
+  return savePriorityWatchlist(loadPriorityWatchlist().filter((item) => item !== normalized));
+}
+
+export function normalizePriorityPair(pair: string) {
+  return normalizePair(pair);
+}
+
 function normalizePair(pair: string) {
   return pair.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }

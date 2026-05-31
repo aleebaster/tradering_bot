@@ -5,9 +5,49 @@
 :root { color-scheme: dark; }
 body {
   margin: 0;
-  background: radial-gradient(circle at top left, #172044 0, #070912 34%, #05060c 100%);
+  background: #070912;
   color: #edf3ff;
   font-family: Arial, Helvetica, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+::selection {
+  background: rgba(0, 229, 255, 0.28);
+  color: #fff;
+}
+
+.theme-day {
+  color: #101827;
+  background: radial-gradient(circle at top left, #dff8ff 0, #f4f7fb 35%, #e8edf7 100%);
+}
+
+.theme-day section,
+.theme-day nav,
+.theme-day article,
+.theme-day div {
+  border-color: rgba(15, 23, 42, 0.14);
+}
+
+.theme-day .text-slate-100,
+.theme-day .text-slate-200,
+.theme-day .text-slate-300,
+.theme-day .text-white {
+  color: #172033;
+}
+
+.theme-day .text-slate-400,
+.theme-day .text-slate-500 {
+  color: #64748b;
+}
+
+.theme-day .bg-black\/20,
+.theme-day .bg-black\/25,
+.theme-day .bg-black\/30,
+.theme-day .bg-white\/\[\.035\],
+.theme-day .bg-white\/\[\.04\],
+.theme-day .bg-white\/\[\.045\] {
+  background-color: rgba(255, 255, 255, 0.68);
 }
 
 .glass {

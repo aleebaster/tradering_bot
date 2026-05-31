@@ -16,6 +16,8 @@
     "aigensyn:bybit": "chcp 65001 >nul && tsx scripts/manual-aigensyn-bybit.ts",
     "aigensyn:watch": "chcp 65001 >nul && set WATCH_AIGENSYN=1&& tsx scripts/manual-aigensyn-bybit.ts",
     "priority:watch": "chcp 65001 >nul && set PRIORITY_WATCH=1&& tsx scripts/manual-aigensyn-bybit.ts",
+    "priority:watchers": "chcp 65001 >nul && tsx scripts/priority-watchers.ts",
+    "startup:notify": "chcp 65001 >nul && tsx scripts/startup-notify.ts",
     "telegram:format-test": "chcp 65001 >nul && tsx scripts/telegram-format-test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
