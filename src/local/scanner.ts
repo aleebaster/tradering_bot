@@ -51,7 +51,7 @@ export class Scanner {
     this.connectKrakenTicker();
     await this.scan();
     this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
-    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 12_000);
+    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 5 * 60_000);
   }
 
   stop() {
@@ -373,7 +373,7 @@ export class Scanner {
   }
 
   private async trackWatchlist(signal: Signal) {
-    if (signal.mode !== "futures" || signal.score < 80 || signal.score >= 85) return;
+    if (signal.mode !== "futures" || signal.score < 80 || signal.score >= 90) return;
     const key = watchKey(signal.symbol, signal.mode);
     if (this.watchlistSent.has(key)) return;
     this.watchlistSent.add(key);
@@ -382,7 +382,7 @@ export class Scanner {
   }
 
   private async monitorWatchlist() {
-    const items = state.watchlist.filter((signal) => signal.mode === "futures" && signal.score >= 80 && signal.score < 85);
+    const items = state.watchlist.filter((signal) => signal.mode === "futures" && signal.score >= 80 && signal.score < 90);
     if (!items.length || Date.now() < this.bybitCooldownUntil) return;
     let btcCandles: Record<string, Candle[]>;
     try {
@@ -400,7 +400,7 @@ export class Scanner {
         const snapshot = await this.snapshot(item.symbol, "futures", candles, btcOk, btcCandles);
         const signal = buildSignal(snapshot);
         logger.info({ symbol: item.symbol, score: signal.score, side: signal.side, scoreBreakdown: signal.scoreBreakdown }, "watchlist recheck");
-        if (signal.score >= 85 && activationConfirmed(signal)) {
+        if (signal.score >= 90 && activationConfirmed(signal)) {
           const activated = { ...signal, entryStatus: "ENTER_NOW" as const };
           this.activatedWatchlist.add(key);
           recordSignal(activated);

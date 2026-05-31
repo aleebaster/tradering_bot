@@ -68,8 +68,8 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const a = atr(candles);
   const sr = supportResistance(candles);
   const execution = executionDirection(snapshot.candles, snapshot.mode);
-  const trendUp = execution.direction === 1 || e20 > e50 && e50 > e200 && last.close > vw;
-  const trendDown = execution.direction === -1 || e20 < e50 && e50 < e200 && last.close < vw;
+  const trendUp = execution.direction === 1 || e20 > e50 && last.close > e20 || snapshot.regime === "TRENDING" && e20 > e50 && last.close > vw;
+  const trendDown = execution.direction === -1 || e20 < e50 && last.close < e20 || snapshot.regime === "TRENDING" && e20 < e50 && last.close < vw;
   const side: Side = snapshot.mode === "spot" ? (trendUp ? "BUY" : "NO_TRADE") : execution.direction === 1 ? "LONG" : execution.direction === -1 ? "SHORT" : trendUp ? "LONG" : trendDown ? "SHORT" : "NO_TRADE";
   const direction = side === "SHORT" ? -1 : side === "NO_TRADE" ? 0 : 1;
   const trendStrength = clamp(Math.abs(e20 - e50) / Math.max(a, 1e-9) * 25);
@@ -103,12 +103,12 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   let score = clamp(weighted - confirmationPenalty);
   const weakMomentum = direction !== 0 && momentum < 55;
   const hardBlock = accuracyHardBlock(snapshot, { side, direction, session, newsRisk, htf, liquidity, orderFlow, oiAnalysis, fakeBreakout, fastMove, correlation });
-  if (snapshot.regime === "CHOPPY" || snapshot.regime === "MANIPULATION_RISK" || side === "NO_TRADE") score = Math.min(score, 55);
-  if (snapshot.regime === "LOW_VOLATILITY" && !sniper.ready) score = Math.min(score, 79);
-  if (snapshot.regime === "SIDEWAYS" && liquidity.score < 65) score = Math.min(score, 79);
-  if (coinQuality.tier === "C-TIER" && score < 90) score = Math.min(score, 84);
-  if (weakMomentum) score = Math.min(score, 69);
-  if (!confirmationProfile.allowed) score = Math.min(score, 69);
+  if (snapshot.regime === "MANIPULATION_RISK" || side === "NO_TRADE") score = Math.min(score, 55);
+  if (snapshot.regime === "LOW_VOLATILITY" && !sniper.ready) score = Math.min(score, 84);
+  if (snapshot.regime === "SIDEWAYS" && liquidity.score < 65) score = Math.min(score, 84);
+  if (coinQuality.tier === "C-TIER" && score < 90) score = Math.min(score, 89);
+  if (weakMomentum) score = Math.min(score, 84);
+  if (!confirmationProfile.allowed) score = Math.min(score, confirmationProfile.reason === "exchange conflict" ? 79 : 84);
   if (confirmationProfile.smallAltStrict && score < 90) score = Math.min(score, 84);
   if (hardBlock.blocked) score = Math.min(score, hardBlock.maxScore);
   const levels = professionalTradeLevels(candles, precisionCandles, oneHourCandles, direction, a, sr);
@@ -117,9 +117,11 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const takeProfit = levels.takeProfit;
   const rrValue = riskRewardValue(entry, stopLoss, takeProfit[2], direction);
   if (rrValue < 2) score = Math.min(score, 69);
+  score = Math.max(score, earlySetupFloor(snapshot, { side, executionAligned: execution.aligned, htfScore: htf.score, trendStrength, mtf, volume, orderFlowScore: orderFlow.score, liquidityScore: liquidity.score, funding, fakeBreakoutRisk: fakeBreakout.risk, newsBlocked: newsRisk.blocked, rrValue }));
   const roundedScore = Math.round(score);
-  const entryThreshold = Math.max(confirmationProfile.smallAltStrict ? 90 : 85, coinQuality.entryThreshold);
-  const qualifiedSide: Side = roundedScore >= entryThreshold ? side : roundedScore >= 80 && snapshot.mode === "futures" && side !== "NO_TRADE" ? "WATCHLIST" : "NO_TRADE";
+  const entryThreshold = 90;
+  const watchThreshold = coinQuality.watchThreshold;
+  const qualifiedSide: Side = roundedScore >= entryThreshold ? side : roundedScore >= watchThreshold && snapshot.mode === "futures" && side !== "NO_TRADE" ? "WATCHLIST" : "NO_TRADE";
   const entryStatus = qualifiedSide === "NO_TRADE" || qualifiedSide === "WATCHLIST" ? "NO_TRADE" : last.close >= Math.min(...entry) && last.close <= Math.max(...entry) && sniper.ready ? "ENTER_NOW" : "WAIT_FOR_ENTRY";
   const riskReward = riskRewardRatio(rrValue);
   const grade = gradeFrom(roundedScore, hardBlock.blocked, qualifiedSide);
@@ -250,7 +252,7 @@ function marketQualityProfile(snapshot: MarketSnapshot, quality: { trendStrength
     SIDEWAYS: { penalty: 22, trendWeight: 0.05, momentumWeight: 0.06, score: 55 },
     LOW_VOLATILITY: { penalty: 18, trendWeight: 0.06, momentumWeight: 0.06, score: 60 },
     HIGH_VOLATILITY: { penalty: 26, trendWeight: 0.08, momentumWeight: 0.07, score: 45 },
-    CHOPPY: { penalty: 42, trendWeight: 0.04, momentumWeight: 0.04, score: 25 },
+    CHOPPY: { penalty: quality.volume >= 65 && quality.momentum >= 65 ? 18 : 28, trendWeight: 0.06, momentumWeight: 0.07, score: quality.volume >= 65 && quality.momentum >= 65 ? 55 : 35 },
     RANGING: { penalty: 28, trendWeight: 0.05, momentumWeight: 0.06, score: 50 },
     EXPANSION: { penalty: 2, trendWeight: 0.12, momentumWeight: 0.1, score: 80 },
     COMPRESSION: { penalty: 18, trendWeight: 0.06, momentumWeight: 0.06, score: 55 },
@@ -269,9 +271,9 @@ function coinQualityProfile(snapshot: MarketSnapshot, quality: { volume: number;
   const stableVolume = quality.volume >= 55;
   const orderbookOk = quality.orderbook >= 50;
   const volatilityQuality = quality.volatilityPct >= 0.0025 && quality.volatilityPct <= 0.018;
-  if (major && liquidity >= 55 && availability >= 2) return { tier: "A-TIER" as const, penalty: 0, entryThreshold: 85 };
-  if (liquidity >= 50 && availability >= 2 && stableVolume && orderbookOk && volatilityQuality && !quality.fakeBreakoutRisk) return { tier: "B-TIER" as const, penalty: 5, entryThreshold: 87 };
-  return { tier: "C-TIER" as const, penalty: 14, entryThreshold: 90 };
+  if (major && liquidity >= 55 && availability >= 2) return { tier: "A-TIER" as const, penalty: 0, watchThreshold: 80 };
+  if (liquidity >= 50 && availability >= 2 && stableVolume && orderbookOk && volatilityQuality && !quality.fakeBreakoutRisk) return { tier: "B-TIER" as const, penalty: 4, watchThreshold: 80 };
+  return { tier: "C-TIER" as const, penalty: 8, watchThreshold: 80 };
 }
 
 function btcAltRiskPenalty(snapshot: MarketSnapshot, direction: number, correlation: CorrelationContext) {
@@ -282,6 +284,17 @@ function btcAltRiskPenalty(snapshot: MarketSnapshot, direction: number, correlat
   if (correlation.btcDirection !== 0 && direction !== 0 && correlation.btcDirection !== direction) penalty += 10;
   if (correlation.aligned && direction !== 0) penalty -= 4;
   return Math.max(0, penalty);
+}
+
+function earlySetupFloor(snapshot: MarketSnapshot, quality: { side: Side; executionAligned: boolean; htfScore: number; trendStrength: number; mtf: number; volume: number; orderFlowScore: number; liquidityScore: number; funding: number; fakeBreakoutRisk: boolean; newsBlocked: boolean; rrValue: number }) {
+  if (snapshot.mode !== "futures" || quality.side === "NO_TRADE" || quality.newsBlocked || quality.fakeBreakoutRisk || quality.rrValue < 2) return 0;
+  if (quality.funding < 70 || quality.trendStrength < 20 || !snapshot.btcStable) return 0;
+  const structureReady = quality.executionAligned || quality.htfScore >= 55 || quality.mtf >= 67;
+  if (!structureReady) return 0;
+  const confirmations = [quality.executionAligned, quality.htfScore >= 55, quality.mtf >= 67, quality.volume >= 50, quality.orderFlowScore >= 80, quality.liquidityScore >= 70, snapshot.btcStable].filter(Boolean).length;
+  if (confirmations >= 5) return 85;
+  if (confirmations >= 4) return 80;
+  return 0;
 }
 
 function leverageRecommendation(score: number, volatility: number, momentum: number, regime: MarketRegime) {
@@ -589,17 +602,18 @@ function accuracyHardBlock(snapshot: MarketSnapshot, input: { side: Side; direct
   if (!input.session.active) return { blocked: true, maxScore: 79, reason: input.session.message };
   if (!input.htf.executionAligned && input.direction !== 0) return { blocked: true, maxScore: 79, reason: "1H/15M/5M execution alignment не підтверджений" };
   if (input.fakeBreakout.risk) return { blocked: true, maxScore: 79, reason: input.fakeBreakout.message };
-  if (config.smallBalanceGrowthMode && !input.fastMove.clean) return { blocked: true, maxScore: 79, reason: input.fastMove.message };
-  if (input.orderFlow.trapRisk) return { blocked: true, maxScore: 79, reason: "CVD показує trap risk, вхід заблоковано" };
-  if (snapshot.symbol !== "BTCUSDT" && input.direction === 1 && (input.correlation.riskOff || !input.correlation.aligned)) return { blocked: true, maxScore: 79, reason: "Кореляційний фільтр не підтвердив altcoin LONG" };
-  if (snapshot.symbol !== "BTCUSDT" && input.direction === -1 && input.correlation.aligned && !input.correlation.riskOff) return { blocked: true, maxScore: 79, reason: "Кореляційний фільтр не підтвердив altcoin SHORT" };
-  if ((snapshot.regime === "SIDEWAYS" || snapshot.regime === "RANGING" || snapshot.regime === "CHOPPY") && input.side !== "WATCHLIST") return { blocked: true, maxScore: 79, reason: "SIDEWAYS/CHOPPY market: trend breakout entries заблоковані" };
+  if (config.smallBalanceGrowthMode && !input.fastMove.clean) return { blocked: true, maxScore: 84, reason: input.fastMove.message };
+  if (input.orderFlow.trapRisk) return { blocked: true, maxScore: 84, reason: "CVD показує trap risk, потрібне підтвердження без пастки" };
+  if (snapshot.symbol !== "BTCUSDT" && input.direction === 1 && (input.correlation.riskOff || !input.correlation.aligned)) return { blocked: true, maxScore: 84, reason: "Кореляційний фільтр ще не підтвердив altcoin LONG" };
+  if (snapshot.symbol !== "BTCUSDT" && input.direction === -1 && input.correlation.aligned && !input.correlation.riskOff) return { blocked: true, maxScore: 84, reason: "Кореляційний фільтр ще не підтвердив altcoin SHORT" };
+  if ((snapshot.regime === "SIDEWAYS" || snapshot.regime === "RANGING" || snapshot.regime === "CHOPPY") && input.side !== "WATCHLIST") return { blocked: true, maxScore: 84, reason: "SIDEWAYS/CHOPPY market: потрібен retest/liquidity sweep перед входом" };
   return { blocked: false, maxScore: 100, reason: undefined };
 }
 
 function gradeFrom(score: number, blocked: boolean, side: Side): SignalGrade {
-  if (blocked || side === "NO_TRADE") return "D";
-  if (side === "WATCHLIST") return "C";
+  if (side === "NO_TRADE") return "D";
+  if (side === "WATCHLIST") return score >= 85 ? "B" : "C";
+  if (blocked && score < 90) return "D";
   if (score >= 92) return "A+";
   if (score >= 85) return "A";
   if (score >= 80) return "B";

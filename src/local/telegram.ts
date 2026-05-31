@@ -117,7 +117,7 @@ function formatSignal(signal: Signal) {
 }
 
 function formatWatchlist(signal: Signal) {
-  return formatWaitingSignal(signal, "⚠️ WATCHLIST ONLY");
+  return formatWaitingSignal(signal, signal.score >= 85 ? "🟡 WATCHLIST" : "⚡ EARLY SETUP");
 }
 
 function formatNoTrade(signal: Signal) {
@@ -128,7 +128,9 @@ function formatWaitingSignal(signal: Signal, label: string) {
   const direction = potentialDirection(signal);
   const trigger = waitingTriggers(signal, direction);
   return [
-    `🚨 СИГНАЛ: ${label}`,
+    `${label} — ${signal.symbol}`,
+    "",
+    `Score: ${signal.score}/100`,
     "",
     "📊 Обґрунтування:",
     waitingReason(signal, direction),
@@ -157,7 +159,9 @@ function formatWaitingSignal(signal: Signal, label: string) {
     `${signal.confidence}%`,
     "",
     "💰 Risk/Reward:",
-    signal.riskReward
+    signal.riskReward,
+    "",
+    "Наступна перевірка: 5 хв"
   ].join("\n");
 }
 

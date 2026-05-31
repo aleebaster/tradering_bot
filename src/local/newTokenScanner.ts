@@ -93,11 +93,12 @@ export async function analyzeBybitNewToken(symbol: string): Promise<NewTokenOppo
   const confirmations = [volume >= 65, oiScore >= 58, momentum >= 65, liquidityScore >= 70, retest.confirmed, btcOk, orderbookScore >= 80, !fakeBreakoutRisk, sniper.confirmed].filter(Boolean).length;
   let score = clamp(volume * 0.12 + oiScore * 0.1 + fundingScore * 0.08 + momentum * 0.14 + liquidityScore * 0.16 + orderbookScore * 0.14 + retest.score * 0.12 + sniper.score * 0.08 + smc.score * 0.06 - (fakeBreakoutRisk ? 28 : 0));
   if (ticker.turnover24h < MIN_TURNOVER || orderbook.spreadPct > MAX_SPREAD || orderbook.depthUsdt < MIN_DEPTH || Math.abs(orderbook.imbalance) > 0.65) score = Math.min(score, 55);
-  if (!btcOk || recentPump > 0.2 || impulse > 0.15 || volatilityPct > 0.035) score = Math.min(score, 55);
-  if (confirmations < 4) score = Math.min(score, 79);
+  if (recentPump > 0.2 || impulse > 0.15 || volatilityPct > 0.035) score = Math.min(score, 55);
+  if (!btcOk) score = Math.min(score, 84);
+  if (confirmations < 4) score = Math.min(score, 84);
   if (!retest.confirmed || !sniper.confirmed) score = Math.min(score, 89);
   const side = direction === 1 ? "LONG" : direction === -1 ? "SHORT" : "WAIT";
-  const status: NewTokenStatus = score >= 92 && confirmations >= 6 && retest.confirmed && sniper.confirmed && side !== "WAIT" ? "SIGNAL" : score >= 80 && confirmations >= 4 ? "WATCHLIST" : fakeBreakoutRisk || score < 65 ? "REJECTED" : "WAIT";
+  const status: NewTokenStatus = score >= 92 && confirmations >= 6 && retest.confirmed && sniper.confirmed && side !== "WAIT" ? "SIGNAL" : score >= 80 ? "WATCHLIST" : score >= 65 ? "WAIT" : "REJECTED";
   const entry = entryZone(last.close, atr(c15), direction || 1);
   const stopLoss = direction === -1 ? Math.min(sr.resistance, last.close + atr(c15) * 1.5) : Math.max(sr.support, last.close - atr(c15) * 1.5);
   const takeProfit = targets(last.close, atr(c15), direction || 1);
@@ -129,7 +130,7 @@ export function formatNewTokenWatch(items: NewTokenOpportunity[]) {
 }
 
 export function formatNewTokenCard(item: NewTokenOpportunity) {
-  const header = item.status === "SIGNAL" ? `🟢 ${item.side} — ${item.symbol}` : item.status === "WATCHLIST" ? `🚀 HIGH POTENTIAL — ${item.symbol}` : `⏳ WAIT — ${item.symbol}`;
+  const header = item.status === "SIGNAL" ? `🟢 ${item.side} — ${item.symbol}` : item.score >= 85 ? `🟡 WATCHLIST — ${item.symbol}` : item.status === "WATCHLIST" ? `⚡ EARLY SETUP — ${item.symbol}` : `⏳ WAIT — ${item.symbol}`;
   return [
     header,
     "",
@@ -143,6 +144,7 @@ export function formatNewTokenCard(item: NewTokenOpportunity) {
     "",
     item.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : "Чекаємо:",
     ...(item.entryStatus === "ENTER_NOW" ? [] : item.waitingFor.slice(0, 5).map((reason) => `• ${reason}`)),
+    item.entryStatus === "ENTER_NOW" ? "" : "Наступна перевірка: 5 хв",
     "",
     `📍 Вхід: ${fmt(item.entry[0])}-${fmt(item.entry[1])}`,
     `🛑 SL: ${fmt(item.stopLoss)}`,
