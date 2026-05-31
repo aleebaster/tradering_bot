@@ -62,6 +62,10 @@ export class TelegramNotifier {
     const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error(`Помилка Telegram ${res.status}: ${(await res.text()).slice(0, 180)}`);
   }
+
+  isEnabled() {
+    return this.enabled;
+  }
 }
 
 export function signalQuickActions(symbol: string): TelegramReplyMarkup {

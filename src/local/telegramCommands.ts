@@ -5,6 +5,7 @@ import { signalQuickActions, TelegramNotifier, type TelegramReplyMarkup } from "
 import { paperStatsText, setPaperMode } from "./paperTrading";
 import { addPriorityPair, loadPriorityWatchlist, normalizePriorityPair, removePriorityPair } from "./watchlistStore";
 import { loadTelegramSettings, updateTelegramSettings, type MaxLeverage, type RiskMode } from "./telegramSettings";
+import { logger } from "./logger";
 import type { Signal } from "./types";
 
 type PendingAction = "signal" | "watch" | "unwatch" | "balance";
@@ -14,16 +15,26 @@ type TelegramUpdate = {
   callback_query?: { id: string; data?: string; message?: { chat?: { id?: number | string } } };
 };
 
+export interface TelegramCommandHandler {
+  send(text: string, replyMarkup?: TelegramReplyMarkup): Promise<void>;
+}
+
 export class TelegramCommandCenter {
   private enabled = Boolean(config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID);
-  private notifier = new TelegramNotifier();
+  private notifier: TelegramCommandHandler;
   private offset = 0;
   private polling = false;
   private timer: NodeJS.Timeout | null = null;
   private pendingAction: PendingAction | null = null;
 
-  start() {
+  constructor(notifier: TelegramCommandHandler = new TelegramNotifier()) {
+    this.notifier = notifier;
+  }
+
+  async start() {
     if (!this.enabled) return;
+    await this.resetPollingOffset();
+    logger.info("Telegram command center started");
     void this.poll();
     this.timer = setInterval(() => void this.poll(), 2500);
   }
@@ -38,56 +49,86 @@ export class TelegramCommandCenter {
     try {
       const url = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/getUpdates?timeout=1&offset=${this.offset}`;
       const res = await fetch(url);
-      if (!res.ok) return;
+      if (!res.ok) {
+        logger.warn({ status: res.status, body: await res.text().catch(() => "") }, "Telegram getUpdates failed");
+        return;
+      }
       const json = await res.json() as { ok: boolean; result?: TelegramUpdate[] };
       for (const update of json.result ?? []) {
         this.offset = Math.max(this.offset, update.update_id + 1);
         if (update.callback_query) {
           const chatId = String(update.callback_query.message?.chat?.id ?? "");
           if (chatId !== String(config.TELEGRAM_CHAT_ID)) continue;
+          logger.info({ data: update.callback_query.data }, "Telegram callback received");
           await this.handleCallback(update.callback_query.id, update.callback_query.data ?? "");
           continue;
         }
         const chatId = String(update.message?.chat?.id ?? "");
         if (chatId !== String(config.TELEGRAM_CHAT_ID)) continue;
         const text = update.message?.text?.trim();
-        if (text) await this.handle(text);
+        if (text) {
+          logger.info({ text }, "Telegram message received");
+          await this.handle(text);
+        }
       }
-    } catch {
-      // Internet/API outages are expected on laptops. Next poll will retry.
+    } catch (err) {
+      logger.warn({ err }, "Telegram polling error");
     } finally {
       this.polling = false;
     }
   }
 
+  async handleForTest(text: string): Promise<void> {
+    return this.handle(text);
+  }
+
+  async handleCallbackForTest(data: string): Promise<void> {
+    return this.handleCallback("test", data, false);
+  }
+
+  private async resetPollingOffset() {
+    if (!config.TELEGRAM_BOT_TOKEN) return;
+    try {
+      await fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/deleteWebhook`, { method: "POST" }).catch(() => undefined);
+      const res = await fetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/getUpdates?timeout=0`);
+      const json = await res.json() as { ok: boolean; result?: TelegramUpdate[] };
+      const latest = Math.max(0, ...(json.result ?? []).map((update) => update.update_id));
+      this.offset = latest ? latest + 1 : 0;
+      logger.info({ offset: this.offset }, "Telegram polling offset initialized");
+    } catch (err) {
+      logger.warn({ err }, "Telegram polling offset initialization failed");
+    }
+  }
+
   private async handle(text: string): Promise<void> {
-    if (this.pendingAction && !text.startsWith("/") && !isMenuButton(text)) return this.handlePendingInput(text);
-    const [rawCommand, rawPair] = text.split(/\s+/, 2);
+    const cleanText = normalizeButtonText(text);
+    if (this.pendingAction && !cleanText.startsWith("/") && !isMenuButton(cleanText)) return this.handlePendingInput(cleanText);
+    const [rawCommand, rawPair] = cleanText.split(/\s+/, 2);
     const command = rawCommand.split("@")[0].toLowerCase();
     const pair = rawPair ? normalizePriorityPair(rawPair) : "";
 
-    if (["/start", "/menu", "/help"].includes(command) || text === "📋 Меню" || text === "🔙 Назад") return this.notifier.send(mainMenuText(), mainMenuKeyboard());
-    if (text === "📊 Сигнали") return this.notifier.send(signalMenuText(), signalMenuKeyboard());
-    if (text === "👀 Watchlist") return this.notifier.send(watchlistMenuText(), watchlistMenuKeyboard());
-    if (text === "⚙️ Налаштування") return this.notifier.send(settingsText(), settingsKeyboard());
-    if (text === "🔍 Аналіз пари") return this.askPair("signal");
-    if (text === "➕ Додати пару") return this.askPair("watch");
-    if (text === "❌ Видалити пару") return this.askPair("unwatch");
-    if (text === "🔥 Найкращі сигнали" || text === "🔥 Топ Сетапи" || text === "🔄 Оновити Сигнали") return this.sendTopSetups();
-    if (text === "🟢 Активні угоди" || text === "📂 Позиції" || text === "🔄 Оновити Позиції") return this.sendPositions();
-    if (text === "📄 Мій список") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
-    if (text === "🔴 Моніторинг") return this.sendMonitoring();
-    if (text === "📈 Ринок" || text === "🔄 Оновити Ринок") return this.notifier.send(marketText(), marketActionsKeyboard());
-    if (text === "₿ BTC Фільтр") return this.notifier.send(btcText(), marketActionsKeyboard());
-    if (text === "🧪 Діагностика" || text === "🔄 Оновити Статус") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
-    if (text === "📊 Аналіз") return this.askPair("signal");
-    if (text === "💰 Баланс") return this.askPair("balance");
-    if (text === "⚡ Плече") return this.notifier.send(leverageText(), leverageKeyboard());
-    if (text === "x2" || text === "x3" || text === "x5") return this.setLeverage(text);
-    if (text === "🔔 Сповіщення") return this.toggleNotifications();
-    if (text === "📱 Telegram UX") return this.notifier.send(settingsDetailText(text), settingsKeyboard());
-    if (text === "🎯 Risk mode") return this.notifier.send(riskModeText(), riskModeKeyboard());
-    if (text === "Conservative" || text === "Balanced" || text === "Aggressive") return this.setRiskMode(text);
+    if (["/start", "/menu", "/help"].includes(command) || sameButton(cleanText, "📋 Меню") || sameButton(cleanText, "🔙 Назад")) return this.notifier.send(mainMenuText(), mainMenuKeyboard());
+    if (sameButton(cleanText, "📊 Сигнали")) return this.notifier.send(signalMenuText(), signalMenuKeyboard());
+    if (sameButton(cleanText, "👀 Watchlist")) return this.notifier.send(watchlistMenuText(), watchlistMenuKeyboard());
+    if (sameButton(cleanText, "⚙️ Налаштування")) return this.notifier.send(settingsText(), settingsKeyboard());
+    if (sameButton(cleanText, "🔍 Аналіз пари")) return this.askPair("signal");
+    if (sameButton(cleanText, "➕ Додати пару")) return this.askPair("watch");
+    if (sameButton(cleanText, "❌ Видалити пару")) return this.askPair("unwatch");
+    if (sameButton(cleanText, "🔥 Найкращі сигнали") || sameButton(cleanText, "🔥 Топ Сетапи") || sameButton(cleanText, "🔄 Оновити Сигнали")) return this.sendTopSetups();
+    if (sameButton(cleanText, "🟢 Активні угоди") || sameButton(cleanText, "📂 Позиції") || sameButton(cleanText, "🔄 Оновити Позиції")) return this.sendPositions();
+    if (sameButton(cleanText, "📄 Мій список")) return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
+    if (sameButton(cleanText, "🔴 Моніторинг")) return this.sendMonitoring();
+    if (sameButton(cleanText, "📈 Ринок") || sameButton(cleanText, "🔄 Оновити Ринок")) return this.notifier.send(marketText(), marketActionsKeyboard());
+    if (sameButton(cleanText, "₿ BTC Фільтр")) return this.notifier.send(btcText(), marketActionsKeyboard());
+    if (sameButton(cleanText, "🧪 Діагностика") || sameButton(cleanText, "🔄 Оновити Статус")) return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
+    if (sameButton(cleanText, "📊 Аналіз")) return this.askPair("signal");
+    if (sameButton(cleanText, "💰 Баланс")) return this.askPair("balance");
+    if (sameButton(cleanText, "⚡ Плече")) return this.notifier.send(leverageText(), leverageKeyboard());
+    if (sameButton(cleanText, "x2") || sameButton(cleanText, "x3") || sameButton(cleanText, "x5")) return this.setLeverage(cleanText as MaxLeverage);
+    if (sameButton(cleanText, "🔔 Сповіщення")) return this.toggleNotifications();
+    if (sameButton(cleanText, "📱 Telegram UX")) return this.notifier.send(settingsDetailText(cleanText), settingsKeyboard());
+    if (sameButton(cleanText, "🎯 Risk mode")) return this.notifier.send(riskModeText(), riskModeKeyboard());
+    if (sameButton(cleanText, "Conservative") || sameButton(cleanText, "Balanced") || sameButton(cleanText, "Aggressive")) return this.setRiskMode(cleanText as RiskMode);
 
     if (command === "/help") return this.notifier.send(helpText(), mainMenuKeyboard());
     if (command === "/status") return this.notifier.send(statusText(), mainMenuKeyboard());
@@ -125,6 +166,7 @@ export class TelegramCommandCenter {
       return this.notifier.send(signalAnalysisText(pair), signalQuickActions(pair));
     }
 
+    logger.warn({ text, cleanText }, "Unhandled Telegram button text");
     return this.notifier.send("Невідома дія. Натисни 📋 Меню", mainMenuKeyboard());
   }
 
@@ -190,8 +232,8 @@ export class TelegramCommandCenter {
     return this.notifier.send(["✅ Risk mode оновлено", "", `Поточний режим: ${settings.riskMode}`].join("\n"), settingsKeyboard());
   }
 
-  private async handleCallback(id: string, data: string): Promise<void> {
-    await answerCallback(id);
+  private async handleCallback(id: string, data: string, answer = true): Promise<void> {
+    if (answer) await answerCallback(id);
     const [action, rawSymbol] = data.split(":", 2);
     const pair = normalizePriorityPair(rawSymbol ?? "");
     if (!pair) return this.notifier.send("Пара не розпізнана", mainMenuKeyboard());
@@ -212,6 +254,7 @@ async function answerCallback(callbackQueryId: string) {
 }
 
 function startOneShotAnalysis(pair: string) {
+  if (process.env.TELEGRAM_HANDLER_TEST === "1") return;
   const child = spawn(process.execPath, ["./node_modules/tsx/dist/cli.mjs", "scripts/manual-aigensyn-bybit.ts", pair], {
     cwd: process.cwd(),
     env: { ...process.env, PAIR: pair },
@@ -603,7 +646,20 @@ function isMenuButton(text: string) {
     "🔍 Аналіз пари", "🔥 Найкращі сигнали", "🟢 Активні угоди", "➕ Додати пару", "📄 Мій список", "❌ Видалити пару", "🔴 Моніторинг",
     "🔄 Оновити Ринок", "🔄 Оновити Статус", "🔄 Оновити Сигнали", "🔄 Оновити Позиції", "📊 Аналіз",
     "💰 Баланс", "⚡ Плече", "🔔 Сповіщення", "📱 Telegram UX", "🎯 Risk mode", "x2", "x3", "x5", "Conservative", "Balanced", "Aggressive"
-  ]).has(text);
+  ].map(normalizeButtonText)).has(normalizeButtonText(text));
+}
+
+function sameButton(actual: string, expected: string) {
+  return normalizeButtonText(actual) === normalizeButtonText(expected);
+}
+
+function normalizeButtonText(text: string) {
+  return text
+    .normalize("NFC")
+    .replace(/[\uFE0E\uFE0F]/g, "")
+    .replace(/[\u200B-\u200D\u2060]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function fmt(n: number) {

@@ -1,0 +1,72 @@
+import { TelegramCommandCenter, type TelegramCommandHandler } from "../src/local/telegramCommands";
+import { loadTelegramSettings, updateTelegramSettings } from "../src/local/telegramSettings";
+import type { TelegramReplyMarkup } from "../src/local/telegram";
+
+class CaptureNotifier implements TelegramCommandHandler {
+  messages: { text: string; replyMarkup?: TelegramReplyMarkup }[] = [];
+
+  async send(text: string, replyMarkup?: TelegramReplyMarkup) {
+    this.messages.push({ text, replyMarkup });
+  }
+}
+
+async function main() {
+  process.env.TELEGRAM_HANDLER_TEST = "1";
+  const originalSettings = loadTelegramSettings();
+  const notifier = new CaptureNotifier();
+  const center = new TelegramCommandCenter(notifier);
+
+  const checks: Record<string, boolean> = {};
+  await click(center, checks, "📊 Сигнали", "📊 Сигнали");
+  await click(center, checks, "🔍 Аналіз пари", "Введіть пару");
+  await click(center, checks, "BTCUSDT", "Аналіз");
+  await click(center, checks, "🔥 Найкращі сигнали", "Топ Сетапи");
+  await click(center, checks, "📂 Позиції", "Активних угод");
+  await click(center, checks, "👀 Watchlist", "Watchlist");
+  await click(center, checks, "➕ Додати пару", "Введіть пару");
+  await click(center, checks, "AIGENSYNUSDT", "додано до Watchlist");
+  await click(center, checks, "📄 Мій список", "Watchlist");
+  await click(center, checks, "❌ Видалити пару", "Яку пару видалити");
+  await click(center, checks, "AIGENSYNUSDT", "Видалено");
+  await click(center, checks, "📈 Ринок", "Ринок");
+  await click(center, checks, "₿ BTC Фільтр", "BTC Фільтр");
+  await click(center, checks, "🧪 Діагностика", "Діагностика");
+  await click(center, checks, "⚙️ Налаштування", "Налаштування");
+  await click(center, checks, "💰 Баланс", "Поточний баланс");
+  await click(center, checks, String(originalSettings.balanceUsdt), "Баланс оновлено");
+  await click(center, checks, "⚡ Плече", "Плече");
+  await click(center, checks, originalSettings.maxLeverage, "Поточний ліміт");
+  await click(center, checks, "🎯 Risk mode", "Risk mode");
+  await click(center, checks, originalSettings.riskMode, "Risk mode оновлено");
+  await center.handleCallbackForTest("watch:BTCUSDT");
+  checks["inline_watch"] = notifier.messages.slice(-2).some((message) => message.text.includes("додано до Watchlist"));
+  await center.handleCallbackForTest("refresh:BTCUSDT");
+  checks["inline_refresh"] = notifier.messages.some((message) => message.text.includes("Аналізую BTCUSDT"));
+  await center.handleCallbackForTest("full:BTCUSDT");
+  checks["inline_full"] = last(notifier).includes("Повний аналіз");
+  await center.handleCallbackForTest("remove:BTCUSDT");
+  checks["inline_remove"] = last(notifier).includes("Видалено");
+
+  updateTelegramSettings(originalSettings);
+
+  const failed = Object.entries(checks).filter(([, ok]) => !ok);
+  console.log(JSON.stringify({ ok: failed.length === 0, checks, sentMessages: notifier.messages.length, failed }, null, 2));
+  if (failed.length) process.exit(1);
+}
+
+async function click(center: TelegramCommandCenter, checks: Record<string, boolean>, text: string, expected: string) {
+  const key = text.replace(/\s+/g, "_");
+  const before = (center as unknown as { notifier: CaptureNotifier }).notifier.messages.length;
+  await center.handleForTest(text);
+  const after = (center as unknown as { notifier: CaptureNotifier }).notifier.messages.slice(before).map((message) => message.text).join("\n---\n");
+  checks[key] = after.includes(expected);
+}
+
+function last(notifier: CaptureNotifier) {
+  return notifier.messages.at(-1)?.text ?? "";
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});

@@ -20,6 +20,7 @@
     "startup:notify": "chcp 65001 >nul && tsx scripts/startup-notify.ts",
     "telegram:format-test": "chcp 65001 >nul && tsx scripts/telegram-format-test.ts",
     "telegram:menu-test": "chcp 65001 >nul && tsx scripts/telegram-menu-test.ts",
+    "telegram:button-test": "chcp 65001 >nul && tsx scripts/telegram-button-handler-test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "next lint"
   },
