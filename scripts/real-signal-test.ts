@@ -1,6 +1,7 @@
 import { ExchangeClient } from "../src/local/exchanges";
 import { btcStable, buildSignal, regimeFrom } from "../src/local/scoring";
 import { TelegramNotifier } from "../src/local/telegram";
+import { config } from "../src/local/config";
 import type { Candle, ExchangeConfirmations, MarketSnapshot, Signal } from "../src/local/types";
 
 const client = new ExchangeClient();
@@ -13,17 +14,8 @@ async function main() {
   let btcCandles: Record<string, Candle[]>;
   try {
     btcCandles = await loadBybit("BTCUSDT");
-  } catch (error) {
-    const raw = error instanceof Error ? error.message : String(error);
-    const message = [
-      "❌ NO TRADE BTCUSDT / ETHUSDT / SOLUSDT",
-      "",
-      "Причини:",
-      "• головне джерело Bybit тимчасово недоступне",
-      `• raw Bybit error: ${raw}`,
-      "• без Bybit як головного джерела production-сигнал заборонено",
-      "• якість важливіша за кількість"
-    ].join("\n");
+  } catch {
+    const message = conciseNoTrade("BTCUSDT");
     await notifier.send(message);
     console.log(message);
     return;
@@ -68,7 +60,7 @@ async function main() {
     signals.push(buildSignal(snapshot));
   }
   if (!signals.length) {
-    const message = ["❌ NO TRADE BTCUSDT / ETHUSDT / SOLUSDT", "", "Причини:", "• Bybit futures не повернув валідних свічок для жодного символу", "• scanner safe mode: падіння немає, аналіз пропущено", "• якість важливіша за кількість"].join("\n");
+    const message = conciseNoTrade("BTCUSDT");
     await notifier.send(message);
     console.log(message);
     return;
@@ -139,76 +131,62 @@ function direction(candles?: Candle[]) {
 }
 
 function formatSignal(signal: Signal) {
+  const direction = signal.side === "SHORT" ? "SHORT" : "LONG";
+  const icon = direction === "SHORT" ? "🔴" : "🟢";
+  const sizing = signal.positionSizing;
   return [
-    `🚀 ${signal.side} ${signal.symbol}`,
+    `${icon} ${direction} — ${signal.symbol}`,
     "",
-    `📍 Зона входу: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
-    ...positionSizingLines(signal),
-    `🛑 Стоп-лосс: ${fmt(signal.stopLoss)}`,
-    `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
-    `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
-    `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
+    signal.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : "⏳ ЧЕКАТИ ЗОНУ ВХОДУ",
     "",
-    `⚡ Плече: ${signal.leverage ?? "не використовується"} MAX x5`,
+    "📍 Вхід:",
+    `${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`,
     "",
-    `📊 Впевненість: ${signal.confidence}%`,
-    `📈 Ймовірність успіху: ${signal.winProbability}%`,
+    "🛑 Stop Loss:",
+    fmt(signal.stopLoss),
     "",
-    "📡 Підтверджено:",
-    ...confirmationLines(signal),
+    "🎯 TP1:",
+    fmt(signal.takeProfit[0]),
     "",
-    "Причини входу:",
-    ...signal.reasons.map((reason) => `✅ ${reason}`),
+    "🎯 TP2:",
+    fmt(signal.takeProfit[1]),
     "",
-    "Супровід угоди:",
-    "• ENTER NOW: коли ціна всередині зони входу",
-    "• WAIT: коли ціна поза зоною входу",
-    "• MOVE SL TO BREAKEVEN: після TP1",
-    "• TAKE PARTIAL PROFIT: на TP1/TP2",
-    "• EXIT TRADE NOW: при SL, TP3, нестабільності BTC або розвороті тренду"
+    "🎯 TP3:",
+    fmt(signal.takeProfit[2]),
+    "",
+    "⚡ Плече:",
+    sizing?.leverage ?? signal.leverage ?? "x2",
+    "",
+    "💰 Баланс:",
+    `${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT`,
+    "",
+    "📦 Розмір позиції:",
+    sizing ? `${sizing.positionSizeUsdt} USDT` : "тільки після підтвердження входу",
+    "",
+    `📌 Скільки ${direction === "SHORT" ? "шортити" : "купити"}:`,
+    sizing ? `${formatQuantity(sizing.quantity)} ${sizing.baseAsset}` : "очікуємо підтвердження",
+    "",
+    "🟠 Беззбиток:",
+    "Перенести Stop Loss після TP1"
   ].join("\n");
 }
 
 function formatNoTrade(signals: Signal[]) {
-  const lines = [bybitOnly ? "❌ BYBIT FUTURES ONLY: НЕМАЄ ВАЛІДНОЇ УГОДИ З ВИСОКОЮ ЙМОВІРНІСТЮ" : "❌ НЕМАЄ ВАЛІДНОЇ УГОДИ З ВИСОКОЮ ЙМОВІРНІСТЮ", ""];
-  for (const signal of signals) {
-    lines.push(`❌ NO TRADE ${signal.symbol}`, "", "Причини:", `• ${signal.rejectionReason}`, ...signal.reasons.map((reason) => `• ${reason}`), `• Підтверджень бірж: ${signal.confirmations.alignedCount}/${bybitOnly ? 1 : 5}`, `• Оцінка: ${signal.score}/100`, "");
-  }
-  lines.push("Чесний висновок: сканер зараз не бачить валідної high-probability угоди. Якість важливіша за кількість.");
-  return lines.join("\n");
-}
-
-function confirmationLines(signal: Signal) {
-  if (bybitOnly) return [signal.confirmations.bybit ? "✅ Bybit Futures" : "❌ Bybit Futures"];
-  return [signal.confirmations.bybit ? "✅ Bybit" : "❌ Bybit", signal.confirmations.okx ? "✅ OKX" : "❌ OKX", signal.confirmations.kucoin ? "✅ KuCoin" : "❌ KuCoin", signal.confirmations.kraken ? "✅ Kraken" : "❌ Kraken", signal.confirmations.binance ? "✅ Binance market confirmation" : "❌ Binance market confirmation"];
+  return conciseNoTrade(signals[0]?.symbol ?? "BTCUSDT");
 }
 
 function fmt(value: number) {
   return value >= 100 ? value.toFixed(2) : value.toFixed(5);
 }
 
-function positionSizingLines(signal: Signal) {
-  const sizing = signal.positionSizing;
-  if (!sizing) return [];
-  const action = signal.side === "SHORT" ? "Шортити" : "Купувати";
-  return [
-    `💰 Баланс: ${sizing.balanceUsdt} USDT`,
-    `⚡ Плече: ${sizing.leverage}`,
-    `💵 По скільки входити: ${sizing.marginUsdt} USDT маржа / ${sizing.positionSizeUsdt} USDT позиція`,
-    `📍 ${action} по: ${fmt(sizing.entryRange[0])}–${fmt(sizing.entryRange[1])}`,
-    `📦 Взяти: ${formatQuantity(sizing.quantity)} ${sizing.baseAsset}`,
-    `📉 Максимальний ризик: ${sizing.accountRiskPercent}% від балансу (ліміт ${sizing.maxRiskPercent}%)`,
-    `💸 Потенційний збиток: $${sizing.potentialLossUsdt}`,
-    `💰 Потенційний прибуток: TP1 $${sizing.potentialProfitUsdt[0]} / TP2 $${sizing.potentialProfitUsdt[1]} / TP3 $${sizing.potentialProfitUsdt[2]}`,
-    `🛡 Liquidation safety: ${sizing.liquidationSafety}`,
-    ""
-  ];
-}
-
 function formatQuantity(value: number) {
   if (value >= 1000) return String(Math.floor(value));
   if (value >= 1) return value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
   return value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function conciseNoTrade(symbol: string) {
+  return [`❌ NO TRADE — ${symbol}`, "", "Причина:", "", "Слабкий сигнал.", "", "Чекаємо кращу точку входу."].join("\n");
 }
 
 main().catch((err) => {

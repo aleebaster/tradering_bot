@@ -5,6 +5,7 @@ import { btcStable, regimeFrom } from "../src/local/scoring";
 import { TelegramNotifier } from "../src/local/telegram";
 import { calculatePositionSizing } from "../src/local/positionSizing";
 import { addPriorityPair } from "../src/local/watchlistStore";
+import { config } from "../src/local/config";
 import type { Candle, MarketRegime, PositionSizing } from "../src/local/types";
 
 const client = new ExchangeClient();
@@ -90,48 +91,11 @@ async function analyzeAndSend(sendWatchlist: boolean, priorityMode: boolean, can
   const invalidated = priorityMode && canInvalidate && selected.score < 80 && (!confirmations.momentum || !confirmations.volume || !confirmations.btc || !confirmations.breakout);
   const positionSizing = calculatePositionSizing({ symbol, mode: "futures", side, score: selected.score, entry: levels.entry, stopLoss: levels.stopLoss, takeProfit: levels.takeProfit, marketRegime: regime, volatilityPct, momentumScore: selected.parts.momentum });
   const leverage = positionSizing?.leverage ?? leverageFor(selected.score, volatilityPct);
-  const icon = side === "SHORT" ? "🔴" : "🟢";
-  const title = qualified ? `${icon} ${side} ACTIVATED — ${symbol}` : watchlist ? `⚠️ WATCHLIST ONLY — ${symbol}` : invalidated ? `❌ SETUP INVALIDATED — ${symbol}` : `❌ НЕ ВХОДИТИ — ${symbol}`;
-  const probability = selected.score;
-  const activationMessage = [
-    title,
-    "",
-    "Статус:",
-    qualified ? "✅ ЗАХОДИТИ ЗАРАЗ" : watchlist ? "⚠️ WATCHLIST ONLY" : "❌ НЕ ВХОДИТИ",
-    "",
-    "📌 Коротко:",
-    "",
-    `📍 Вхід: ${fmt(levels.entry[0])}–${fmt(levels.entry[1])}`,
-    ...(positionSizing ? positionSizingLines(positionSizing, side, qualified) : watchlist ? ["💰 Розмір позиції:", "WATCHLIST ONLY — точний вхід і кількість монет будуть розраховані після score >= 85"] : []),
-    `🛑 SL: ${fmt(levels.stopLoss)}`,
-    `🎯 TP1: ${fmt(levels.takeProfit[0])}`,
-    `🎯 TP2: ${fmt(levels.takeProfit[1])}`,
-    `🎯 TP3: ${fmt(levels.takeProfit[2])}`,
-    `⚡ Плече: ${positionSizing ? leverage : qualified ? leverage : "AUTO (MAX x5)"}`,
-    "",
-    "Ймовірність:",
-    `${probability}%`,
-    "",
-    "Confidence:",
-    `${selected.score}%`,
-    "",
-    "Risk/Reward:",
-    levels.riskReward,
-    "",
-    "Причина:",
-    "",
-    ...(qualified ? activationReasons(confirmations) : invalidated ? invalidationReasons(confirmations) : selected.reasons.map((reason) => `✅ ${reason}`)),
-    ...(watchlist ? ["✅ priority watchlist active", "✅ бот продовжує пошук best entry кожні 10–15 секунд"] : []),
-    ...(!qualified && !watchlist ? [`✅ quality filter active: немає входу при ${selected.score}/100`] : []),
-    "",
-    "Супровід угоди:",
-    "",
-    "🟢 ENTER NOW",
-    "🟡 HOLD POSITION",
-    "🟠 MOVE STOP LOSS TO BREAKEVEN",
-    "🟠 TAKE PARTIAL PROFIT",
-    "🔴 EXIT TRADE NOW"
-  ].join("\n");
+  const activationMessage = qualified
+    ? conciseTradeMessage(symbol, side, levels, leverage, positionSizing)
+    : watchlist
+      ? [`⚠️ WATCHLIST ONLY — ${symbol}`, "", "Чекаємо кращу точку входу.", "Сигнал ще не готовий."].join("\n")
+      : conciseNoTrade(symbol);
   const raw = [
     activationMessage,
     "",
@@ -152,7 +116,7 @@ async function analyzeAndSend(sendWatchlist: boolean, priorityMode: boolean, can
     "",
     "Probability logic:",
     `• Confidence = final score = ${selected.score}%`,
-    `• Win probability = capped final score = ${probability}%`,
+    `• Win probability = capped final score = ${selected.score}%`,
     "• Стару формулу 48 + score * 0.48 прибрано, бо вона завищувала ймовірність",
     "",
     "Raw analysis:",
@@ -193,7 +157,7 @@ async function monitorActivatedTrade(analysis: ActiveAnalysis) {
     const action = hitSl || hitTp3 || !btcOk ? "🔴 EXIT TRADE NOW" : hitTp2 ? "🟠 MOVE STOP LOSS TO BREAKEVEN" : hitTp1 ? "🟠 TAKE PARTIAL PROFIT" : "🟡 HOLD POSITION";
     if (sent.has(action)) continue;
     sent.add(action);
-    await notifier.send([action, "", `${analysis.side} — ${analysis.symbol}`, "", `Поточна ціна: ${fmt(current)}`, ...(analysis.positionSizing ? positionSizingLines(analysis.positionSizing, analysis.side) : []), `SL: ${fmt(analysis.levels.stopLoss)}`, `TP1: ${fmt(analysis.levels.takeProfit[0])}`, `TP2: ${fmt(analysis.levels.takeProfit[1])}`, `TP3: ${fmt(analysis.levels.takeProfit[2])}`, `Плече: ${analysis.leverage}`, "", "Причина:", hitSl ? "• stop loss / invalidation reached" : hitTp3 ? "• TP3 reached" : !btcOk ? "• BTC instability" : hitTp2 ? "• TP2 reached; protect profit" : hitTp1 ? "• TP1 reached; partial profit" : "• position conditions remain valid"].join("\n"));
+    await notifier.send([action, "", `${analysis.side} — ${analysis.symbol}`, "", `Поточна ціна: ${fmt(current)}`, `TP1: ${fmt(analysis.levels.takeProfit[0])}`, `TP2: ${fmt(analysis.levels.takeProfit[1])}`, `TP3: ${fmt(analysis.levels.takeProfit[2])}`, "", "🟠 Беззбиток:", "Перенести Stop Loss після TP1"].join("\n"));
     if (action === "🔴 EXIT TRADE NOW") return;
   }
 }
@@ -261,27 +225,6 @@ function confirmationFlags(selected: ReturnType<typeof scoreSide>, btcOk: boolea
   };
 }
 
-function activationReasons(flags: ReturnType<typeof confirmationFlags>) {
-  return [
-    flags.volume ? "✅ volume confirmed" : "❌ volume not confirmed",
-    flags.momentum ? "✅ momentum confirmed" : "❌ momentum not confirmed",
-    flags.smc ? "✅ SMC confirmed" : "❌ SMC not confirmed",
-    flags.orderbook ? "✅ order book confirmed" : "❌ order book not confirmed",
-    flags.btc ? "✅ BTC stable" : "❌ BTC unstable"
-  ].filter((line) => line.startsWith("✅"));
-}
-
-function invalidationReasons(flags: ReturnType<typeof confirmationFlags>) {
-  const reasons = [];
-  if (!flags.momentum) reasons.push("• weak momentum");
-  if (!flags.volume) reasons.push("• volume faded");
-  if (!flags.btc) reasons.push("• BTC instability");
-  if (!flags.breakout) reasons.push("• fake breakout risk");
-  if (!flags.smc) reasons.push("• SMC trigger missing");
-  if (!flags.orderbook) reasons.push("• order book confirmation missing");
-  return reasons.length ? reasons : ["• setup quality dropped below priority threshold"];
-}
-
 function leverageFor(score: number, volatilityPct: number) {
   let leverage = score >= 90 ? 5 : score >= 87 ? 3 : 2;
   if (volatilityPct > 0.018) leverage = Math.min(leverage, 2);
@@ -289,44 +232,47 @@ function leverageFor(score: number, volatilityPct: number) {
   return `x${leverage}`;
 }
 
-function positionSizingLines(sizing: PositionSizing, side: "LONG" | "SHORT", active = true) {
-  const action = side === "SHORT" ? "Шортити" : "Купувати";
+function conciseTradeMessage(symbol: string, side: "LONG" | "SHORT", levels: ReturnType<typeof tradeLevels>, leverage: string, sizing?: PositionSizing) {
+  const icon = side === "SHORT" ? "🔴" : "🟢";
   return [
-    active ? "" : "⚠️ Розрахунок позиції:",
-    active ? "" : "НЕ ВХОДИТИ ЗАРАЗ — використовувати тільки якщо сетап отримає всі підтвердження",
-    active ? "" : "",
-    "💰 Баланс:",
-    `${sizing.balanceUsdt} USDT`,
+    `${icon} ${side} — ${symbol}`,
+    "",
+    "✅ ЗАХОДИТИ ЗАРАЗ",
+    "",
+    "📍 Вхід:",
+    `${fmt(levels.entry[0])}–${fmt(levels.entry[1])}`,
+    "",
+    "🛑 Stop Loss:",
+    fmt(levels.stopLoss),
+    "",
+    "🎯 TP1:",
+    fmt(levels.takeProfit[0]),
+    "",
+    "🎯 TP2:",
+    fmt(levels.takeProfit[1]),
+    "",
+    "🎯 TP3:",
+    fmt(levels.takeProfit[2]),
     "",
     "⚡ Плече:",
-    sizing.leverage,
+    sizing?.leverage ?? leverage,
     "",
-    "💵 По скільки входити:",
-    `${sizing.marginUsdt} USDT маржа / ${sizing.positionSizeUsdt} USDT позиція`,
+    "💰 Баланс:",
+    `${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT`,
     "",
-    `📍 ${action} по:`,
-    `${fmt(sizing.entryRange[0])}–${fmt(sizing.entryRange[1])}`,
+    "📦 Розмір позиції:",
+    sizing ? `${sizing.positionSizeUsdt} USDT` : "тільки після підтвердження входу",
     "",
-    "📦 Взяти:",
-    `${formatQuantity(sizing.quantity)} ${sizing.baseAsset}`,
+    `📌 Скільки ${side === "SHORT" ? "шортити" : "купити"}:`,
+    sizing ? `${formatQuantity(sizing.quantity)} ${sizing.baseAsset}` : "очікуємо підтвердження",
     "",
-    "📉 Максимальний ризик:",
-    `${sizing.accountRiskPercent}% від балансу (ліміт ${sizing.maxRiskPercent}%)`,
-    "",
-    "💸 Потенційний збиток:",
-    money(sizing.potentialLossUsdt),
-    "",
-    "💰 Потенційний прибуток:",
-    `TP1 ${money(sizing.potentialProfitUsdt[0])} / TP2 ${money(sizing.potentialProfitUsdt[1])} / TP3 ${money(sizing.potentialProfitUsdt[2])}`,
-    "",
-    "🛡 Liquidation safety:",
-    sizing.liquidationSafety,
-    ""
-  ];
+    "🟠 Беззбиток:",
+    "Перенести Stop Loss після TP1"
+  ].join("\n");
 }
 
-function money(value: number) {
-  return `$${value.toFixed(4).replace(/\.0+$/, "")}`;
+function conciseNoTrade(symbol: string) {
+  return [`❌ NO TRADE — ${symbol}`, "", "Причина:", "", "Слабкий сигнал.", "", "Чекаємо кращу точку входу."].join("\n");
 }
 
 function formatQuantity(value: number) {
