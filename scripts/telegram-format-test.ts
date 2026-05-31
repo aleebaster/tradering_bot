@@ -3,59 +3,53 @@ import { TelegramNotifier } from "../src/local/telegram";
 const notifier = new TelegramNotifier();
 
 const longMessage = [
-  "🟢 LONG — BTCUSDT",
+  "🚨 SIGNAL: LONG",
   "",
-  "✅ ЗАХОДИТИ ЗАРАЗ",
+  "📊 Reason:",
+  "RSI momentum aligned; MACD impulse confirmed; SMA trend aligned; sniper + volume + BTC stable.",
   "",
-  "📍 Вхід:",
+  "🎯 Entry:",
   "104250–104400",
   "",
-  "🛑 SL:",
+  "🛡 Stop Loss:",
   "103780",
   "",
-  "🎯 TP1:",
-  "105100",
+  "💰 Take Profit:",
+  "TP1 105100 / TP2 106000 / TP3 107200",
   "",
-  "🎯 TP2:",
-  "106000",
+  "⚡ Leverage:",
+  "x2",
   "",
-  "🎯 TP3:",
-  "107200",
+  "📈 Confidence:",
+  "94%",
   "",
-  "⚡ x3",
-  "",
-  "💰 5 USDT → 15 USDT",
-  "",
-  "🟠 Беззбиток:",
-  "Після TP1"
+  "💵 Estimated profit/risk:",
+  "risk 0.08 USDT; TP 0.12 / 0.20 / 0.34 USDT; RR 1:3.1"
 ].join("\n");
 
 const shortMessage = [
-  "🔴 SHORT — BTCUSDT",
+  "🚨 SIGNAL: SHORT",
   "",
-  "✅ ЗАХОДИТИ ЗАРАЗ",
+  "📊 Reason:",
+  "RSI momentum aligned; MACD confirms direction; SMA trend aligned; sniper + volume + BTC stable.",
   "",
-  "📍 Вхід:",
+  "🎯 Entry:",
   "104250–104400",
   "",
-  "🛑 SL:",
+  "🛡 Stop Loss:",
   "104900",
   "",
-  "🎯 TP1:",
-  "103800",
+  "💰 Take Profit:",
+  "TP1 103800 / TP2 103100 / TP3 102400",
   "",
-  "🎯 TP2:",
-  "103100",
+  "⚡ Leverage:",
+  "x3",
   "",
-  "🎯 TP3:",
-  "102400",
+  "📈 Confidence:",
+  "97%",
   "",
-  "⚡ x3",
-  "",
-  "💰 5 USDT → 15 USDT",
-  "",
-  "🟠 Беззбиток:",
-  "Після TP1"
+  "💵 Estimated profit/risk:",
+  "risk 0.07 USDT; TP 0.11 / 0.22 / 0.36 USDT; RR 1:3.4"
 ].join("\n");
 
 async function main() {
@@ -64,13 +58,12 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     sent: [
-      { type: "LONG", icon: "🟢", symbol: "BTCUSDT" },
-      { type: "SHORT", icon: "🔴", symbol: "BTCUSDT" }
+      { type: "LONG", header: "🚨 SIGNAL: LONG", symbol: "BTCUSDT" },
+      { type: "SHORT", header: "🚨 SIGNAL: SHORT", symbol: "BTCUSDT" }
     ],
     checks: {
       telegramDelivery: true,
-      emojis: "🟢 🔴 ✅ 📌 📍 🛑 🎯 ⚡",
-      ukrainianText: "Вхід / SL / Плече / Баланс / Беззбиток / quick format",
+      requiredFields: "Reason / Entry / Stop Loss / TP1-TP3 / Leverage / Confidence / Estimated profit-risk",
       readableInSeconds: "3-5"
     }
   }, null, 2));

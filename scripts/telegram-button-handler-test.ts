@@ -40,7 +40,10 @@ async function main() {
   await click(center, checks, "💰 Баланс", "Поточний баланс");
   await click(center, checks, String(originalSettings.balanceUsdt), "Баланс оновлено");
   await click(center, checks, "⚡ Плече", "Плече");
-  await click(center, checks, originalSettings.maxLeverage, "Поточний ліміт");
+  await click(center, checks, originalSettings.maxLeverage === "x5" ? "x2" : originalSettings.maxLeverage, "Поточний ліміт");
+  await click(center, checks, "Conservative", "Risk mode оновлено");
+  await click(center, checks, "Balanced", "Risk mode оновлено");
+  await click(center, checks, "Aggressive", "Risk mode оновлено");
   await click(center, checks, "🎯 Risk mode", "Risk mode");
   await click(center, checks, originalSettings.riskMode, "Risk mode оновлено");
   await center.handleCallbackForTest("watch:BTCUSDT");

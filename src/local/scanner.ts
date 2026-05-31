@@ -5,7 +5,7 @@ import { btcStable, buildSignal, regimeFrom } from "./scoring";
 import { recordSignal, state } from "./state";
 import type { Candle, MarketSnapshot, Signal } from "./types";
 import { logger } from "./logger";
-import { TelegramNotifier } from "./telegram";
+import { isRealEntrySignal, TelegramNotifier } from "./telegram";
 import { recordLearningOutcome } from "./learning";
 import { loadPriorityWatchlist } from "./watchlistStore";
 import { recordPaperClose, recordPaperOpen, recordPaperSetup, updatePaperTradeMemory } from "./paperTrading";
@@ -171,6 +171,7 @@ export class Scanner {
   }
 
   private canSendSignal(signal: Signal) {
+    if (!isRealEntrySignal(signal)) return false;
     if (signalsPaused()) return false;
     const key = signalCooldownKey(signal);
     const prev = this.signalCooldown.get(key);
@@ -417,7 +418,7 @@ export class Scanner {
           state.watchlist = [signal, ...state.watchlist.filter((x) => watchKey(x.symbol, x.mode) !== key)].slice(0, 30);
           continue;
         }
-        if (signal.score >= entryThreshold && activationConfirmed(signal, evolution)) {
+        if (signal.score >= entryThreshold && activationConfirmed(signal, evolution) && isRealEntrySignal(signal)) {
           const activated = signal;
           this.activatedWatchlist.add(key);
           recordSignal(activated);
