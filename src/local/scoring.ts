@@ -80,7 +80,8 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const learned = adaptiveWeights();
   const regimePenalty = snapshot.regime === "TRENDING" || snapshot.regime === "EXPANSION" ? 0 : snapshot.regime === "COMPRESSION" ? 12 : snapshot.regime === "RANGING" ? 28 : snapshot.regime === "VOLATILE" ? 22 : 40;
   const btcPenalty = snapshot.symbol === "BTCUSDT" || snapshot.btcStable ? 0 : 24;
-  const confirmationPenalty = snapshot.confirmations.alignedCount >= 2 && !snapshot.confirmations.conflict ? 0 : 35;
+  const confirmationProfile = adaptiveConfirmationProfile(snapshot, { volume, momentum, liquidityScore: snapshot.liquidityScore, orderbook, fastMoveScore: fastMove.score });
+  const confirmationPenalty = confirmationProfile.allowed ? confirmationProfile.penalty : 35;
   const advancedBonus = htf.score * 0.15 * learned.htf + liquidity.score * 0.08 * learned.liquidity + orderFlow.score * 0.1 * learned.orderFlow + oiAnalysis.score * 0.08 * learned.oi + fakeBreakout.score * 0.11 + fastMove.score * 0.08 + (correlation.aligned ? 8 : correlation.riskOff ? -18 : 0) + session.confidenceAdjustment + htf.confidenceAdjustment;
   const weighted = trendStrength * 0.12 + snapshot.liquidityScore * 0.06 + volume * 0.1 * learned.volume + smc.score * 0.13 * learned.smc + mtf * 0.1 + snapshot.whaleScore * 0.05 + funding * 0.05 + oi * 0.04 + momentum * 0.09 * learned.macd + orderbook * 0.06 + advancedBonus - regimePenalty - btcPenalty;
   let score = clamp(weighted - confirmationPenalty);
@@ -88,7 +89,8 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const hardBlock = accuracyHardBlock(snapshot, { side, direction, session, newsRisk, htf, liquidity, orderFlow, oiAnalysis, fakeBreakout, fastMove, correlation });
   if (snapshot.regime === "MANIPULATION_RISK" || side === "NO_TRADE") score = Math.min(score, 55);
   if (weakMomentum) score = Math.min(score, 69);
-  if (snapshot.confirmations.conflict || snapshot.confirmations.alignedCount < 2) score = Math.min(score, 69);
+  if (!confirmationProfile.allowed) score = Math.min(score, 69);
+  if (confirmationProfile.smallAltStrict && score < 90) score = Math.min(score, 84);
   if (hardBlock.blocked) score = Math.min(score, hardBlock.maxScore);
   const levels = professionalTradeLevels(candles, precisionCandles, oneHourCandles, direction, a, sr);
   const entry = levels.entry;
@@ -97,7 +99,8 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const rrValue = riskRewardValue(entry, stopLoss, takeProfit[2], direction);
   if (rrValue < 2) score = Math.min(score, 69);
   const roundedScore = Math.round(score);
-  const qualifiedSide: Side = roundedScore >= 85 ? side : roundedScore >= 80 && snapshot.mode === "futures" && side !== "NO_TRADE" ? "WATCHLIST" : "NO_TRADE";
+  const entryThreshold = confirmationProfile.smallAltStrict ? 90 : 85;
+  const qualifiedSide: Side = roundedScore >= entryThreshold ? side : roundedScore >= 80 && snapshot.mode === "futures" && side !== "NO_TRADE" ? "WATCHLIST" : "NO_TRADE";
   const entryStatus = qualifiedSide === "NO_TRADE" || qualifiedSide === "WATCHLIST" ? "NO_TRADE" : last.close >= Math.min(...entry) && last.close <= Math.max(...entry) ? "ENTER_NOW" : "WAIT_FOR_ENTRY";
   const riskReward = riskRewardRatio(rrValue);
   const grade = gradeFrom(roundedScore, hardBlock.blocked, qualifiedSide);
@@ -149,7 +152,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
     btcStable: snapshot.btcStable,
     confirmations: snapshot.confirmations,
     reasons: reasons(snapshot, { trendStrength, volume, mtf, smc: smc.score, momentum, funding, oi, orderbook, rs }, { session, newsRisk, htf, liquidity, orderFlow, oiAnalysis, fakeBreakout, fastMove, correlation }),
-    rejectionReason: rejectionReason(qualifiedSide, roundedScore, snapshot, weakMomentum, rrValue, hardBlock.reason),
+    rejectionReason: rejectionReason(qualifiedSide, roundedScore, snapshot, weakMomentum, rrValue, entryThreshold, hardBlock.reason),
     scoreBreakdown: {
       trendStrength: Math.round(trendStrength),
       liquidity: Math.round(snapshot.liquidityScore),
@@ -172,17 +175,19 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
       sessionQuality: session.confidenceAdjustment,
       regimePenalty: Math.round(regimePenalty),
       btcPenalty: Math.round(btcPenalty),
-      exchangeConfirmationPenalty: Math.round(confirmationPenalty)
+      exchangeConfirmationPenalty: Math.round(confirmationPenalty),
+      adaptiveConfirmationRequired: entryThreshold,
+      smallAltStrictConfirmation: confirmationProfile.smallAltStrict ? 100 : 0
     },
     tradeManagementActions: tradeManagementActions(qualifiedSide, entryStatus),
     management
   };
 }
 
-function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, weakMomentum: boolean, rrValue: number, hardBlockReason?: string) {
+function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, weakMomentum: boolean, rrValue: number, entryThreshold: number, hardBlockReason?: string) {
   if (side !== "NO_TRADE") return "Прийнятий сетап з високою ймовірністю";
   if (hardBlockReason) return hardBlockReason;
-  if (score >= 80 && score < 85 && snapshot.mode === "futures") return "WATCHLIST ONLY: сетап близько до порогу, потрібне покращення підтверджень";
+  if (score >= 80 && score < entryThreshold && snapshot.mode === "futures") return "WATCHLIST ONLY: сетап близько до порогу, потрібне покращення підтверджень";
   if (snapshot.regime === "MANIPULATION_RISK") return "Виявлено ризик маніпуляції";
   if (!snapshot.btcStable && snapshot.symbol !== "BTCUSDT") return "BTC нестабільний, агресивні угоди по альткоїнах заблоковані";
   if (snapshot.confirmations.conflict) return "Біржові підтвердження конфліктують, угоду пропущено";
@@ -192,7 +197,20 @@ function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, we
   if (snapshot.regime === "RANGING") return "Боковий/шумний ринок, немає сильного трендового сетапу";
   if (snapshot.regime === "COMPRESSION") return "COMPRESSION режим: ринок стислий, breakout ще не підтверджений";
   if (snapshot.regime === "VOLATILE" || snapshot.regime === "NEWS_DRIVEN") return "Волатильний або новинний ринок, ризик хибного сигналу занадто високий";
-  return `Оцінка ${Math.round(score)} нижче порогу високої якості 85`;
+  return `Оцінка ${Math.round(score)} нижче порогу високої якості ${entryThreshold}`;
+}
+
+function adaptiveConfirmationProfile(snapshot: MarketSnapshot, quality: { volume: number; momentum: number; liquidityScore: number; orderbook: number; fastMoveScore: number }) {
+  if (snapshot.confirmations.conflict) return { allowed: false, penalty: 35, smallAltStrict: false, reason: "exchange conflict" };
+  const topCoin = ["BTCUSDT", "ETHUSDT", "SOLUSDT"].includes(snapshot.symbol);
+  const bybitBinanceOnly = snapshot.confirmations.bybit && snapshot.confirmations.binance && !snapshot.confirmations.okx && !snapshot.confirmations.kucoin && !snapshot.confirmations.kraken;
+  if (topCoin) return { allowed: snapshot.confirmations.alignedCount >= 2, penalty: snapshot.confirmations.alignedCount >= 2 ? 0 : 35, smallAltStrict: false, reason: "top coin requires 2+ exchanges" };
+  if (bybitBinanceOnly) {
+    const strongInternal = quality.volume >= 72 && quality.momentum >= 76 && quality.liquidityScore >= 58 && quality.orderbook >= 60 && quality.fastMoveScore >= 60;
+    return { allowed: strongInternal, penalty: strongInternal ? 6 : 35, smallAltStrict: true, reason: strongInternal ? "Bybit+Binance with strict internal validation" : "small alt internal validation too weak" };
+  }
+  if (snapshot.confirmations.alignedCount >= 2) return { allowed: true, penalty: 0, smallAltStrict: false, reason: "2+ exchanges confirmed" };
+  return { allowed: false, penalty: 35, smallAltStrict: false, reason: "small alt needs Bybit+Binance or 2+ exchanges" };
 }
 
 function leverageRecommendation(score: number, volatility: number, momentum: number, regime: MarketRegime) {
