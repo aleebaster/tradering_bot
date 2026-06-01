@@ -64,9 +64,15 @@ async function throttle(url: string) {
 }
 
 function cacheTtl(url: string) {
-  if (url.includes("/v5/market/kline")) return 90_000;
+  if (url.includes("/v5/market/kline")) {
+    const interval = new URL(url).searchParams.get("interval");
+    if (interval === "5") return 7_000;
+    if (interval === "15") return 15_000;
+    if (interval === "60") return 30_000;
+    return 60_000;
+  }
   if (url.includes("/v5/market/instruments-info")) return 15 * 60_000;
-  if (url.includes("/v5/market/tickers")) return 60_000;
+  if (url.includes("/v5/market/tickers")) return 3_000;
   if (url.includes("/v5/market/orderbook")) return 20_000;
   if (url.includes("/v5/market/funding")) return 5 * 60_000;
   if (url.includes("/v5/market/open-interest")) return 60_000;

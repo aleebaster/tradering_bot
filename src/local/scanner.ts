@@ -13,7 +13,7 @@ import { notificationsEnabled } from "./telegramSettings";
 import { recordTradeMemory } from "./tradeMemory";
 import { recordProtectionOutcome, signalsPaused } from "./lossProtection";
 import { LiqBot, MarketReportBot, PumpDetectorBot, WhaleTrackerBot } from "./bots";
-import { formatMomentumAlert, momentumActionsKeyboard, MomentumScanner } from "./momentumScanner";
+import { formatAutoEntrySignal, momentumActionsKeyboard, MomentumScanner } from "./momentumScanner";
 
 type Broadcast = (payload: unknown) => void;
 
@@ -67,10 +67,11 @@ export class Scanner {
     this.connectBinanceTicker();
     this.connectKucoinTicker();
     this.connectKrakenTicker();
-    await this.scan();
     this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
     this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 120_000);
-    this.momentumTimer = setInterval(() => void this.scanMomentumMoves(), 90_000);
+    void this.scanMomentumMoves();
+    this.momentumTimer = setInterval(() => void this.scanMomentumMoves(), 7_000);
+    void this.scan();
   }
 
   stop() {
@@ -488,18 +489,29 @@ export class Scanner {
   private async scanMomentumMoves() {
     if (this.momentumScanning || Date.now() < this.bybitCooldownUntil || !notificationsEnabled()) return;
     this.momentumScanning = true;
+    const startedAt = Date.now();
     try {
-      const moves = await this.momentumScanner.scan("strongest", 3);
+      const moves = await this.momentumScanner.scanAutoSignals(3);
       for (const move of moves) {
-        if (move.score < 78 || !this.momentumScanner.shouldSendAlert(move)) continue;
-        await this.notifier.send(formatMomentumAlert(move), momentumActionsKeyboard()).catch((err) => logger.warn({ err, symbol: move.symbol }, "Momentum alert Telegram send failed"));
+        if (move.score < 70 || !this.momentumScanner.shouldSendAlert(move, smartCooldownMinutes(move.score))) continue;
+        await this.notifier.send(formatAutoEntrySignal(move), momentumActionsKeyboard()).catch((err) => logger.warn({ err, symbol: move.symbol }, "Auto entry Telegram send failed"));
       }
+      state.diagnostics.apiStatus.autoSignals = `active; cycle ${Date.now() - startedAt}ms; candidates ${moves.length}`;
     } catch (err) {
-      logger.warn({ err }, "Momentum scanner skipped");
+      state.diagnostics.apiStatus.autoSignals = "skipped; market data unavailable";
+      logger.warn({ err }, "Auto signal scanner skipped");
     } finally {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed > 10_000) logger.warn({ elapsed }, "Auto signal scan exceeded target cycle time");
       this.momentumScanning = false;
     }
   }
+}
+
+function smartCooldownMinutes(score: number) {
+  if (score >= 90) return 30;
+  if (score >= 80) return 45;
+  return 75;
 }
 
 export function activationConfirmed(signal: Signal, evolution: WatchlistEvolution) {
