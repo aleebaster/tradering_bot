@@ -87,24 +87,24 @@ export function learningStatusText() {
   const best = rankedPattern(state, true);
   const worst = rankedPattern(state, false);
   return [
-    "🧠 Learning Mode",
+    "🧠 Режим навчання",
     "",
-    "Mode: SAFE / CONTROLLED",
-    `Completed trades: ${state.total}`,
-    `Adaptation: ${state.total >= minTradesToAdapt ? "ON" : `OFF until ${minTradesToAdapt} trades`}`,
-    "Limits: ±10% per rolling 50 trades",
-    "Old trades: decay-weighted",
-    "Validation: only Tier 1/2 quality setups affect weights",
+    "Режим: БЕЗПЕЧНИЙ / КОНТРОЛЬОВАНИЙ",
+    `Завершені угоди: ${state.total}`,
+    `Адаптація: ${state.total >= minTradesToAdapt ? "увімкнено" : `вимкнено до ${minTradesToAdapt} угод`}`,
+    "Ліміти: ±10% на rolling 50 угод",
+    "Старі угоди: з decay-вагою",
+    "Валідація: тільки якісні Tier 1/2 сетапи впливають на ваги",
     "",
-    `MACD modifier: ${modifier(state.weights.macd)}`,
-    `Volume modifier: ${modifier(state.weights.volume)}`,
-    `SMC modifier: ${modifier(state.weights.smc)}`,
-    `BTC filter modifier: ${modifier(state.weights.btc)}`,
+    `MACD модифікатор: ${modifier(state.weights.macd)}`,
+    `Volume модифікатор: ${modifier(state.weights.volume)}`,
+    `SMC модифікатор: ${modifier(state.weights.smc)}`,
+    `BTC filter модифікатор: ${modifier(state.weights.btc)}`,
     "",
-    `Best-performing setup: ${best}`,
-    `Worst-performing setup: ${worst}`,
+    `Найкращий сетап: ${best}`,
+    `Найгірший сетап: ${worst}`,
     "",
-    "Regime modifiers:",
+    "Модифікатори режимів:",
     ...Object.entries(state.regimeModifiers).map(([regime, weights]) => `${regime}: MACD ${modifier(weights.macd)}, VOL ${modifier(weights.volume)}, LIQ ${modifier(weights.liquidity)}`)
   ].join("\n");
 }

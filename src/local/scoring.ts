@@ -297,20 +297,20 @@ function professionalIntelligenceAdjustment(snapshot: MarketSnapshot, intel: Ret
 }
 
 function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, weakMomentum: boolean, rrValue: number, entryThreshold: number, hardBlockReason?: string) {
-  if (side === "WATCHLIST") return score >= 82 ? "WATCHLIST ONLY: сетап близько до порогу, потрібне покращення підтверджень" : "EARLY SETUP: цікава структура, моніторинг без входу до retest/sniper підтвердження";
+  if (side === "WATCHLIST") return score >= 82 ? "ТІЛЬКИ МОНІТОРИНГ: сетап близько до порогу, потрібне покращення підтверджень" : "РАННІЙ СЕТАП: цікава структура, моніторинг без входу до retest/sniper підтвердження";
   if (side !== "NO_TRADE") return "Прийнятий сетап з високою ймовірністю";
   if (hardBlockReason) return hardBlockReason;
-  if (score >= 82 && score < entryThreshold && snapshot.mode === "futures") return "WATCHLIST ONLY: сетап близько до порогу, потрібне покращення підтверджень";
-  if (score >= 72 && score < 82 && snapshot.mode === "futures") return "EARLY SETUP: цікава структура, моніторинг без входу до retest/sniper підтвердження";
-  if (snapshot.regime === "MANIPULATION_RISK" || snapshot.regime === "CHOPPY") return "CHOPPY / noise market: немає чистого retest або якісного імпульсу";
+  if (score >= 82 && score < entryThreshold && snapshot.mode === "futures") return "ТІЛЬКИ МОНІТОРИНГ: сетап близько до порогу, потрібне покращення підтверджень";
+  if (score >= 72 && score < 82 && snapshot.mode === "futures") return "РАННІЙ СЕТАП: цікава структура, моніторинг без входу до retest/sniper підтвердження";
+  if (snapshot.regime === "MANIPULATION_RISK" || snapshot.regime === "CHOPPY") return "CHOPPY / шумний ринок: немає чистого retest або якісного імпульсу";
   if (!snapshot.btcStable && snapshot.symbol !== "BTCUSDT") return "BTC нестабільний, агресивні угоди по альткоїнах заблоковані";
   if (snapshot.confirmations.conflict) return "Біржові підтвердження конфліктують, угоду пропущено";
   if (snapshot.confirmations.alignedCount < 2) return "Недостатньо підтверджень з бірж, потрібно мінімум 2 джерела";
   if (weakMomentum) return "Слабкий імпульс, угоду пропущено";
   if (rrValue < 2) return `Співвідношення ризик/прибуток ${riskRewardRatio(rrValue)} нижче мінімуму 1:2.0`;
   if (snapshot.regime === "SIDEWAYS" || snapshot.regime === "RANGING") return "SIDEWAYS: потрібен liquidity sweep або mean-reversion setup, trend entry заблоковано";
-  if (snapshot.regime === "LOW_VOLATILITY" || snapshot.regime === "COMPRESSION") return "LOW VOLATILITY: чекаємо breakout з volume або clean retest";
-  if (snapshot.regime === "HIGH_VOLATILITY" || snapshot.regime === "VOLATILE" || snapshot.regime === "NEWS_DRIVEN") return "HIGH VOLATILITY / event risk: leverage entry заблоковано до стабілізації";
+  if (snapshot.regime === "LOW_VOLATILITY" || snapshot.regime === "COMPRESSION") return "НИЗЬКА ВОЛАТИЛЬНІСТЬ: чекаємо breakout з volume або clean retest";
+  if (snapshot.regime === "HIGH_VOLATILITY" || snapshot.regime === "VOLATILE" || snapshot.regime === "NEWS_DRIVEN") return "ВИСОКА ВОЛАТИЛЬНІСТЬ / event risk: leverage entry заблоковано до стабілізації";
   return `Оцінка ${Math.round(score)} нижче порогу високої якості ${entryThreshold}`;
 }
 
@@ -478,14 +478,14 @@ function professionalTradeLevels(primary: Candle[], precision: Candle[], oneHour
 
 function managementText(side: Side, entryStatus: Signal["entryStatus"]) {
   if (side === "NO_TRADE") return "❌ НЕ ВХОДИТИ";
-  if (side === "WATCHLIST") return "⚠️ WATCHLIST ONLY";
+  if (side === "WATCHLIST") return "⚠️ ТІЛЬКИ МОНІТОРИНГ";
   if (entryStatus === "WAIT_FOR_ENTRY") return "⏳ ЧЕКАТИ ЗОНУ ВХОДУ";
   return "✅ ЗАХОДИТИ ЗАРАЗ; після TP1 перенести SL у беззбиток, на TP2 зафіксувати частину, залишок вести трейлінгом ATR";
 }
 
 function tradeManagementActions(side: Side, entryStatus: Signal["entryStatus"]) {
   if (side === "NO_TRADE") return ["❌ НЕ ВХОДИТИ"];
-  if (side === "WATCHLIST") return ["⚠️ WATCHLIST ONLY"];
+  if (side === "WATCHLIST") return ["⚠️ ТІЛЬКИ МОНІТОРИНГ"];
   if (entryStatus === "WAIT_FOR_ENTRY") return ["⏳ ЧЕКАТИ ЗОНУ ВХОДУ"];
   return ["🟢 ЗАХОДИТИ ЗАРАЗ", "🟡 ТРИМАТИ ПОЗИЦІЮ", "🟠 ЗАФІКСУВАТИ ЧАСТИНУ ПРИБУТКУ", "🟠 ПЕРЕНЕСТИ STOP LOSS У БЕЗЗБИТОК", "🟠 АКТИВОВАНО ТРЕЙЛІНГ-СТОП", "🔴 ВИЙТИ З УГОДИ ЗАРАЗ", "⚠️ ВИЯВЛЕНО РОЗВОРОТ ТРЕНДУ"];
 }
@@ -564,7 +564,7 @@ function highImpactNewsRisk(snapshot: MarketSnapshot, last: Candle, a: number): 
   if (a / last.close > 0.035) reasons.push("macro volatility spike за ATR");
   const nfpWindow = isFirstFridayNfpWindow(new Date());
   if (nfpWindow) reasons.push("можливе NFP/Fed macro window");
-  return { blocked: reasons.length > 0, severity: reasons.length ? "HIGH" : "LOW", message: reasons.length ? "⚠️ HIGH IMPACT NEWS RISK — NO TRADE" : "✅ Немає активного high-impact news block", reasons };
+  return { blocked: reasons.length > 0, severity: reasons.length ? "HIGH" : "LOW", message: reasons.length ? "⚠️ ВИСОКИЙ НОВИННИЙ РИЗИК — НЕ ВХОДИТИ" : "✅ Немає активного high-impact news block", reasons };
 }
 
 function isFirstFridayNfpWindow(now: Date) {
@@ -607,8 +607,8 @@ function higherTimeframeBias(candles: Record<string, Candle[]>, direction: numbe
     confidenceAdjustment: contextAdjustment,
     score: executionScore + contextScore,
     details: [
-      ...dirs.map(([tf, dir]) => `${tf}: ${dir > 0 ? "LONG" : dir < 0 ? "SHORT" : "NEUTRAL"}`),
-      counterTrend ? "4H/Daily context mismatch: counter-trend penalty only" : "4H/Daily context supportive or neutral"
+      ...dirs.map(([tf, dir]) => `${tf}: ${dir > 0 ? "LONG" : dir < 0 ? "SHORT" : "нейтрально"}`),
+      counterTrend ? "4H/Daily контекст конфліктує: штраф за контртренд" : "4H/Daily контекст підтримує або нейтральний"
     ]
   };
 }
@@ -634,7 +634,7 @@ function liquidityIntelligence(candles: Candle[], direction: number): LiquidityI
   const sweptBelow = last.low < liquidityPoolBelow && last.close > liquidityPoolBelow;
   const sweepDirection = sweptAbove ? -1 : sweptBelow ? 1 : 0;
   const score = sweepDirection === direction ? 100 : sweepDirection === 0 ? 45 : 0;
-  const message = sweptAbove ? "✅ Liquidity above swept: SHORT confirmation" : sweptBelow ? "✅ Liquidity below swept: LONG confirmation" : "⚠️ Немає чистого liquidity sweep confirmation";
+  const message = sweptAbove ? "✅ Ліквідність зверху знята: SHORT підтвердження" : sweptBelow ? "✅ Ліквідність знизу знята: LONG підтвердження" : "⚠️ Немає чистого liquidity sweep confirmation";
   return { direction: sweepDirection, score, sweptAbove, sweptBelow, liquidityPoolAbove, liquidityPoolBelow, message };
 }
 
@@ -646,16 +646,16 @@ function orderFlowAnalysis(candles: Candle[], direction: number): OrderFlowAnaly
   const priceDirection = priceChange > 0 ? 1 : priceChange < 0 ? -1 : 0;
   const trapRisk = priceDirection !== 0 && cvdDirection !== 0 && priceDirection !== cvdDirection;
   const score = trapRisk ? 0 : cvdDirection === direction ? 100 : cvdDirection === 0 ? 45 : 20;
-  return { cvd, direction: cvdDirection, score, trapRisk, message: trapRisk ? "⚠️ CVD divergence: trap risk" : cvdDirection === direction ? "✅ CVD/order flow підтримує напрямок" : "⚠️ CVD не дає сильного підтвердження" };
+  return { cvd, direction: cvdDirection, score, trapRisk, message: trapRisk ? "⚠️ Дивергенція CVD: ризик пастки" : cvdDirection === direction ? "✅ CVD/order flow підтримує напрямок" : "⚠️ CVD не дає сильного підтвердження" };
 }
 
 function openInterestAnalysis(oiChange: number, last: Candle, previous: Candle | undefined, direction: number): OpenInterestAnalysis {
   const priceDir = previous ? (last.close > previous.close ? 1 : last.close < previous.close ? -1 : 0) : direction;
   const oiDir = oiChange > 0.001 ? 1 : oiChange < -0.001 ? -1 : 0;
-  if (priceDir === 1 && oiDir === 1) return { direction: 1, score: direction === 1 ? 100 : 10, message: "✅ Price ↑ + OI ↑: strong long continuation" };
-  if (priceDir === 1 && oiDir === -1) return { direction: 0, score: 35, message: "⚠️ Price ↑ + OI ↓: short covering / weak move" };
-  if (priceDir === -1 && oiDir === 1) return { direction: -1, score: direction === -1 ? 100 : 10, message: "✅ Price ↓ + OI ↑: strong short pressure" };
-  if (priceDir === -1 && oiDir === -1) return { direction: 0, score: 35, message: "⚠️ Price ↓ + OI ↓: weak bearish move" };
+  if (priceDir === 1 && oiDir === 1) return { direction: 1, score: direction === 1 ? 100 : 10, message: "✅ Ціна ↑ + OI ↑: сильне LONG продовження" };
+  if (priceDir === 1 && oiDir === -1) return { direction: 0, score: 35, message: "⚠️ Ціна ↑ + OI ↓: short covering / слабкий рух" };
+  if (priceDir === -1 && oiDir === 1) return { direction: -1, score: direction === -1 ? 100 : 10, message: "✅ Ціна ↓ + OI ↑: сильний SHORT тиск" };
+  if (priceDir === -1 && oiDir === -1) return { direction: 0, score: 35, message: "⚠️ Ціна ↓ + OI ↓: слабкий bearish рух" };
   return { direction: 0, score: 50, message: "⚠️ OI neutral: немає сильного підтвердження" };
 }
 
@@ -674,7 +674,7 @@ function fakeBreakoutAnalysis(candles: Candle[], direction: number, volumeScore:
   if (!btcOk) reasons.push("BTC instability");
   if (regime === "MANIPULATION_RISK" || regime === "CHOPPY") reasons.push("manipulated/choppy move risk");
   const risk = reasons.length >= 2;
-  return { risk, score: risk ? 0 : 85, reasons, message: risk ? "⚠️ FAKE BREAKOUT RISK — WAIT" : "✅ Fake breakout risk low" };
+  return { risk, score: risk ? 0 : 85, reasons, message: risk ? "⚠️ РИЗИК FAKE BREAKOUT — ЧЕКАТИ" : "✅ Ризик fake breakout низький" };
 }
 
 function fastMoveQuality(precision: Candle[], setup: Candle[], direction: number, volumeScore: number, orderFlow: OrderFlowAnalysis, regime: MarketRegime): FastMoveQuality {
@@ -692,7 +692,7 @@ function fastMoveQuality(precision: Candle[], setup: Candle[], direction: number
   if (orderFlow.score < 60) reasons.push("order flow/CVD не підтверджує чистий рух");
   const clean = reasons.length === 0;
   const score = clean ? 100 : Math.max(0, 80 - reasons.length * 18);
-  return { clean, score, reasons, message: clean ? "✅ Small balance mode: fast clean move confirmed" : `⚠️ SMALL BALANCE MODE — WAIT: ${reasons.join("; ")}` };
+  return { clean, score, reasons, message: clean ? "✅ Режим малого банку: швидкий чистий рух підтверджено" : `⚠️ РЕЖИМ МАЛОГО БАНКУ — ЧЕКАТИ: ${reasons.join("; ")}` };
 }
 
 function accuracyHardBlock(snapshot: MarketSnapshot, input: { side: Side; direction: number; session: AccuracySession; newsRisk: AccuracyRisk; htf: HigherTimeframeBias; liquidity: LiquidityIntelligence; orderFlow: OrderFlowAnalysis; oiAnalysis: OpenInterestAnalysis; fakeBreakout: FakeBreakoutAnalysis; fastMove: FastMoveQuality; correlation: CorrelationContext }) {
@@ -704,7 +704,7 @@ function accuracyHardBlock(snapshot: MarketSnapshot, input: { side: Side; direct
   if (input.orderFlow.trapRisk) return { blocked: true, maxScore: 84, reason: "CVD показує trap risk, потрібне підтвердження без пастки" };
   if (snapshot.symbol !== "BTCUSDT" && input.direction === 1 && (input.correlation.riskOff || !input.correlation.aligned)) return { blocked: true, maxScore: 84, reason: "Кореляційний фільтр ще не підтвердив altcoin LONG" };
   if (snapshot.symbol !== "BTCUSDT" && input.direction === -1 && input.correlation.aligned && !input.correlation.riskOff) return { blocked: true, maxScore: 84, reason: "Кореляційний фільтр ще не підтвердив altcoin SHORT" };
-  if ((snapshot.regime === "SIDEWAYS" || snapshot.regime === "RANGING" || snapshot.regime === "CHOPPY") && input.side !== "WATCHLIST") return { blocked: true, maxScore: 84, reason: "SIDEWAYS/CHOPPY market: потрібен retest/liquidity sweep перед входом" };
+  if ((snapshot.regime === "SIDEWAYS" || snapshot.regime === "RANGING" || snapshot.regime === "CHOPPY") && input.side !== "WATCHLIST") return { blocked: true, maxScore: 84, reason: "SIDEWAYS/CHOPPY ринок: потрібен retest/liquidity sweep перед входом" };
   return { blocked: false, maxScore: 100, reason: undefined };
 }
 

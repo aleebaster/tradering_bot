@@ -196,12 +196,12 @@ export class MomentumScanner {
       volumeSpike,
       oiLabel,
       oiChange,
-      whaleLabel: whaleScore >= 72 ? `Accumulation ${Math.round(whaleScore)}%` : whaleScore <= 35 ? `Distribution ${Math.round(100 - whaleScore)}%` : `Neutral ${Math.round(whaleScore)}%`,
+      whaleLabel: whaleScore >= 72 ? `Накопичення ${Math.round(whaleScore)}%` : whaleScore <= 35 ? `Розподіл ${Math.round(100 - whaleScore)}%` : `Нейтрально ${Math.round(whaleScore)}%`,
       whaleScore,
       setupType: setupTypeFor(direction, score, whaleScore, oiChange, volumeSpike, marketEntry, trigger.movePct),
       momentum: score >= 90 ? "Extreme" : score >= 80 ? "Very Strong" : "Strong",
       entryType: marketEntry ? "MARKET ENTRY" : "LIMIT ENTRY",
-      entryReason: marketEntry ? "Breakout confirmed" : `Retest: ${fmt(retest[0])} - ${fmt(retest[1])}`,
+      entryReason: marketEntry ? "Пробій підтверджено" : `Ретест: ${fmt(retest[0])} - ${fmt(retest[1])}`,
       retest,
       potential: score >= 88 ? "VERY HIGH" : score >= 76 ? "HIGH" : "MEDIUM",
       risk: fake.warning || !oiConfirms(direction, oiChange) ? "High" : volumeSpike >= 2.4 && whaleScore >= 65 ? "Medium" : "Medium",
@@ -216,43 +216,43 @@ export function formatAutoEntrySignal(move: MomentumMove) {
   const plan = smallBalancePlan(move);
   return [
     "━━━━━━━━━━",
-    "🚨 AUTO ENTRY SIGNAL",
+    "🚨 Автоматичний сигнал входу",
     "",
-    `🪙 COIN: ${move.symbol}`,
+    `🪙 Монета: ${move.symbol}`,
     "",
     "📍 НАПРЯМОК:",
     `${icon} ${move.direction}`,
     "",
     "✅ МОЖНА ВХОДИТИ",
     "",
-    `🔥 Тип: ${move.setupType}`,
-    `Confidence: ${move.score}%`,
-    `Whale score: ${Math.round(move.whaleScore)}/100`,
+    `🔥 Тип: ${setupTypeUa(move.setupType)}`,
+    `Впевненість входу: ${move.score}/100`,
+    `Оцінка китів: ${Math.round(move.whaleScore)}/100`,
     "",
     "📈 Що підтверджує:",
-    `• Price ${signed(move.movePct)}% / ${move.timeframe}`,
+    `• Ціна ${signed(move.movePct)}% / ${timeframeUa(move.timeframe)}`,
     `• OI ${move.oiChange >= 0 ? "↑" : "↓"} ${(Math.abs(move.oiChange) * 100).toFixed(2)}%`,
-    `• volume anomaly ${move.volumeSpike.toFixed(1)}x`,
-    ...move.reasons.slice(0, 4).map((reason) => `• ${reason}`),
+    `• Аномальний обсяг ${move.volumeSpike.toFixed(1)}x`,
+    ...move.reasons.slice(0, 4).map((reason) => `• ${reasonUa(reason)}`),
     "",
-    "⚡ EXECUTION:",
-    move.entryType === "MARKET ENTRY" ? "MARKET" : "LIMIT WAIT",
+    "⚡ Виконання:",
+    move.entryType === "MARKET ENTRY" ? "Вхід по ринку" : "Очікуємо лімітний вхід",
     "",
-    `📍 Entry: ${fmt(plan.entryLow)}–${fmt(plan.entryHigh)}`,
+    `📍 Вхід: ${fmt(plan.entryLow)}–${fmt(plan.entryHigh)}`,
     "",
     `🛑 SL: ${fmt(plan.stopLoss)}`,
     "",
-    `🎯 TP1: ${fmt(plan.tp[0])} (+${formatAmount(plan.profits[0])} USDT profit)`,
-    `🎯 TP2: ${fmt(plan.tp[1])} (+${formatAmount(plan.profits[1])} USDT profit)`,
-    `🎯 TP3: ${fmt(plan.tp[2])} (+${formatAmount(plan.profits[2])} USDT profit)`,
+    `🎯 TP1: ${fmt(plan.tp[0])} (+${formatAmount(plan.profits[0])} USDT прибутку)`,
+    `🎯 TP2: ${fmt(plan.tp[1])} (+${formatAmount(plan.profits[1])} USDT прибутку)`,
+    `🎯 TP3: ${fmt(plan.tp[2])} (+${formatAmount(plan.profits[2])} USDT прибутку)`,
     "",
-    `💰 Small balance mode ($${formatAmount(plan.balance)}):`,
-    `Qty: ${formatQty(plan.qty)} ${baseAsset(move.symbol)}`,
-    `Position size: ${formatAmount(plan.positionSize)} USDT (${plan.leverage}x)`,
-    `Risk USDT: ${formatAmount(plan.maxLoss)}`,
-    `Potential profit USDT: ${plan.profits.map(formatAmount).join(" / ")}`,
-    `Max loss: -${formatAmount(plan.maxLoss)} USDT`,
-    `Liquidation safety: ${plan.liquidationSafety}`,
+    `💰 Режим малого банку (${formatAmount(plan.balance)} USDT):`,
+    `Кількість: ${formatQty(plan.qty)} ${baseAsset(move.symbol)}`,
+    `Розмір позиції: ${formatAmount(plan.positionSize)} USDT (${plan.leverage}x)`,
+    `Ризик: ${formatAmount(plan.maxLoss)} USDT`,
+    `Потенційний прибуток: ${plan.profits.map(formatAmount).join(" / ")} USDT`,
+    `Максимальний збиток: -${formatAmount(plan.maxLoss)} USDT`,
+    `Запас до ліквідації: ${liquidationSafetyUa(plan.liquidationSafety)}`,
     "",
     `⚖️ RR: 1:${plan.rr.toFixed(1)}`,
     "━━━━━━━━━━"
@@ -264,7 +264,7 @@ export function formatMomentumAlert(move: MomentumMove) {
   return [
     `🚨 ВЕЛИКИЙ РУХ — ${move.symbol}`,
     "",
-    `${icon} Рух: ${signed(move.movePct)}% за ${move.timeframe.replace("m", " хв").replace("1h", "1 год")}`,
+    `${icon} Рух: ${signed(move.movePct)}% за ${timeframeUa(move.timeframe)}`,
     "",
     "💰 Ціна:",
     `${fmt(move.fromPrice)} → ${fmt(move.toPrice)}`,
@@ -278,29 +278,29 @@ export function formatMomentumAlert(move: MomentumMove) {
     "🐋 Кити:",
     move.whaleLabel,
     "",
-    "🔥 Momentum:",
-    `${move.momentum} / ${move.setupType}`,
+    "🔥 Імпульс:",
+    `${momentumUa(move.momentum)} / ${setupTypeUa(move.setupType)}`,
     "",
     "📍 Потенційний напрямок:",
     `${icon} ${move.direction}`,
     "",
-    "⚡ ENTRY:",
-    `${move.entryType === "MARKET ENTRY" ? "🟢" : "🟡"} ${move.entryType}`,
+    "⚡ Вхід:",
+    `${move.entryType === "MARKET ENTRY" ? "🟢 Вхід по ринку" : "🟡 Очікуємо лімітний вхід"}`,
     move.entryReason,
     "",
     "🎯 Потенціал:",
-    move.potential,
+    potentialUa(move.potential),
     "",
-    "⚠️ Risk:",
-    move.risk,
+    "⚠️ Ризик:",
+    riskUa(move.risk),
     "",
     "Причина:",
-    ...move.reasons.slice(0, 6).map((reason) => `• ${reason}`)
+    ...move.reasons.slice(0, 6).map((reason) => `• ${reasonUa(reason)}`)
   ].join("\n");
 }
 
-export function formatMomentumList(rows: MomentumMove[], title = "🚨 Великі рухи / Momentum Scanner") {
-  if (!rows.length) return [title, "", "Сильних clean momentum moves зараз немає.", "Фільтр відсікає low liquidity, fake pumps, weak OI та BTC-conflict."].join("\n");
+export function formatMomentumList(rows: MomentumMove[], title = "🚨 Сканер сильних рухів") {
+  if (!rows.length) return [title, "", "Сильних чистих імпульсних рухів зараз немає.", "Фільтр відсікає низьку ліквідність, fake pump, слабкий OI та конфлікт із BTC."].join("\n");
   return [title, "", ...rows.map(formatMomentumAlert)].join("\n\n");
 }
 
@@ -308,7 +308,7 @@ export function momentumActionsKeyboard() {
   return {
     inline_keyboard: [
       [{ text: "🔄 Оновити", callback_data: "ui:momentum" }],
-      [{ text: "📈 LONG movers", callback_data: "ui:momentum_long" }, { text: "📉 SHORT movers", callback_data: "ui:momentum_short" }],
+      [{ text: "📈 Лідери LONG", callback_data: "ui:momentum_long" }, { text: "📉 Лідери SHORT", callback_data: "ui:momentum_short" }],
       [{ text: "🔥 Найсильніші рухи", callback_data: "ui:momentum_strongest" }, { text: "🔍 Перевірити монету", callback_data: "ui:momentum_check" }],
       [{ text: "🔙 Назад", callback_data: "ui:back" }]
     ]
@@ -460,12 +460,12 @@ function retestZone(direction: Direction, price: number, range: number): [number
 }
 
 function reasonsFor(volumeSpike: number, oiLabel: string, whaleScore: number, spotConfirm: boolean, fakeReasons: string[]) {
-  const reasons = [`volume spike ${volumeSpike.toFixed(1)}x`, oiLabel.includes("neutral") ? "OI neutral" : "OI confirmation"];
-  if (whaleScore >= 65) reasons.push("whale accumulation");
-  if (whaleScore <= 35) reasons.push("whale distribution");
-  if (spotConfirm) reasons.push("spot confirms futures move");
-  reasons.push("breakout structure");
-  return [...reasons, ...fakeReasons.map((reason) => `risk checked: ${reason}`)];
+  const reasons = [`Аномальний обсяг ${volumeSpike.toFixed(1)}x`, oiLabel.includes("neutral") ? "OI нейтральний" : "OI підтверджує"];
+  if (whaleScore >= 65) reasons.push("кити набирають позицію");
+  if (whaleScore <= 35) reasons.push("кити розвантажують позицію");
+  if (spotConfirm) reasons.push("Spot підтверджує futures рух");
+  reasons.push("структура пробою");
+  return [...reasons, ...fakeReasons.map((reason) => `ризик перевірено: ${reasonUa(reason)}`)];
 }
 
 function spread(ticker: Ticker) {
@@ -507,6 +507,62 @@ function formatQty(value: number) {
 
 function baseAsset(symbol: string) {
   return symbol.replace(/USDT$/, "");
+}
+
+function setupTypeUa(value: SetupType) {
+  if (value === "Momentum breakout") return "Імпульсний пробій";
+  if (value === "Whale accumulation") return "Накопичення китів";
+  if (value === "Whale distribution") return "Розподіл китів";
+  if (value === "Sniper retest") return "Sniper-ретест";
+  return "Розворотний squeeze";
+}
+
+function momentumUa(value: MomentumMove["momentum"]) {
+  if (value === "Extreme") return "екстремальний";
+  if (value === "Very Strong") return "дуже сильний";
+  return "сильний";
+}
+
+function potentialUa(value: MomentumMove["potential"]) {
+  if (value === "VERY HIGH") return "дуже високий";
+  if (value === "HIGH") return "високий";
+  return "середній";
+}
+
+function riskUa(value: MomentumMove["risk"]) {
+  if (value === "High") return "підвищений";
+  if (value === "Low") return "низький";
+  return "середній";
+}
+
+function liquidationSafetyUa(value: string) {
+  if (value === "OK") return "достатній";
+  if (value === "MEDIUM") return "середній";
+  return "тісний";
+}
+
+function timeframeUa(value: MomentumMove["timeframe"]) {
+  if (value === "5m") return "5 хв";
+  if (value === "15m") return "15 хв";
+  return "1 год";
+}
+
+function reasonUa(reason: string) {
+  return reason
+    .replace(/volume spike/gi, "Аномальний обсяг")
+    .replace(/volume anomaly too weak/gi, "аномальний обсяг слабкий")
+    .replace(/OI confirmation/gi, "OI підтверджує")
+    .replace(/OI neutral/gi, "OI нейтральний")
+    .replace(/whale accumulation/gi, "накопичення китів")
+    .replace(/whale distribution/gi, "розподіл китів")
+    .replace(/spot confirms futures move/gi, "Spot підтверджує futures рух")
+    .replace(/breakout structure/gi, "структура пробою")
+    .replace(/low orderbook depth/gi, "низька глибина стакана")
+    .replace(/wide spread \/ low liquidity/gi, "широкий spread / низька ліквідність")
+    .replace(/orderbook spoof risk/gi, "ризик spoof у стакані")
+    .replace(/spot market does not confirm futures move/gi, "Spot не підтверджує futures рух")
+    .replace(/BTC dumping, fake LONG blocked/gi, "BTC падає, fake LONG заблоковано")
+    .replace(/rejection wick against direction/gi, "сильна тінь проти напрямку");
 }
 
 function signalDedupeDecision(move: MomentumMove, cooldownMinutes = DEFAULT_HARD_COOLDOWN_MINUTES): SignalDedupeDecision {

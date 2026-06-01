@@ -80,7 +80,7 @@ export function signalQuickActions(symbol: string): TelegramReplyMarkup {
   return {
     inline_keyboard: [
       [{ text: "🟢 Моніторити", callback_data: `watch:${symbol}` }, { text: "🔄 Оновити Аналіз", callback_data: `refresh:${symbol}` }],
-      [{ text: "📖 Детальний аналіз", callback_data: `analyze_futures:${symbol}` }, { text: "🛠 Raw Technical Data", callback_data: `raw_futures:${symbol}` }],
+      [{ text: "📖 Детальний аналіз", callback_data: `analyze_futures:${symbol}` }, { text: "🛠 Сирі технічні дані", callback_data: `raw_futures:${symbol}` }],
       [{ text: "❌ Видалити", callback_data: `remove:${symbol}` }]
     ]
   };
@@ -106,40 +106,40 @@ function potentialSignalText(signal: Signal, direction: ReturnType<typeof setupD
   const balance = loadTelegramSettings().balanceUsdt;
   const plan = positionPlan(signal, balance);
   return [
-    `⚪ SIGNAL — ${signal.symbol}`,
+    `⚪ СИГНАЛ — ${signal.symbol}`,
     "",
-    `⚪ ПОТЕНЦІЙНИЙ ${direction.label}`,
+    "📍 ПОТЕНЦІЙНИЙ НАПРЯМОК:",
+    `${direction.icon} ${direction.label}`,
+    "",
     "❌ ЩЕ НЕ ВХОДИТИ",
     "",
-    `📍 ПОТЕНЦІЙНИЙ НАПРЯМОК: ${direction.label} ${direction.icon}`,
+    `Оцінка сетапу: ${signal.score}/100`,
+    `Впевненість входу: ${entryConfidence}/100`,
     "",
-    `SETUP SCORE: ${signal.score}%`,
-    `ENTRY CONFIDENCE: ${entryConfidence}%`,
-    "",
-    `⚡ EXECUTION: ${execution.label}`,
+    `⚡ Виконання: ${executionLabelUa(execution.label)}`,
     executionExplanationLine(execution),
     "",
-    `📍 Entry: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
+    `📍 Зона входу: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
     `🛑 SL: ${fmt(signal.stopLoss)}`,
     "",
     ...smallBalanceLines(plan),
     "",
-    `⚙️ Margin: Isolated ${plan.leverage}x`,
-    `📦 Position size: $${formatAmount(plan.positionSizeUsdt)}`,
-    `🪙 Qty: ~${formatQty(plan.qty)} ${baseAsset(signal.symbol)}`,
+    `⚙️ Маржа: ізольована ${plan.leverage}x`,
+    `📦 Розмір позиції: ${formatAmount(plan.positionSizeUsdt)} USDT`,
+    `🪙 Кількість: ~${formatQty(plan.qty)} ${baseAsset(signal.symbol)}`,
     "",
-    "📌 ENTRY TYPE:",
+    "📌 Тип входу:",
     entryTypeLine(execution),
     "",
-    "📈 TP PLAN:",
+    "📈 План TP:",
     "",
     ...tpPlanLines(signal, plan),
     "",
-    "🛑 MAX LOSS:",
-    `≈ -$${formatAmount(plan.maxLossUsdt)}`,
-    `ROI at max loss: -${formatPercent(plan.maxLossRoi)}%`,
+    "🛑 Максимальний збиток:",
+    `≈ -${formatAmount(plan.maxLossUsdt)} USDT`,
+    `ROI при стопі: -${formatPercent(plan.maxLossRoi)}%`,
     "",
-    "⚠️ Risk: inactive",
+    "⚠️ Ризик: вхід неактивний",
     "",
     "Причина:",
     `${direction.label}: ${executionReasons(signal, false).join(" + ")}`,
@@ -152,32 +152,33 @@ function confirmedSignalText(signal: Signal, direction: ReturnType<typeof setupD
   const balance = loadTelegramSettings().balanceUsdt;
   const plan = positionPlan(signal, balance);
   return [
-    `${direction.icon} SIGNAL — ${signal.symbol}`,
+    `🚨 СИГНАЛ — ${signal.symbol}`,
     "",
-    `${direction.icon} ${direction.label} — МОЖНА ВХОДИТИ`,
+    "📍 НАПРЯМОК:",
+    `${direction.icon} ${direction.label}`,
     "",
-    `📍 НАПРЯМОК: ${direction.label} ${direction.icon}`,
+    "✅ МОЖНА ВХОДИТИ",
     "",
-    `SETUP SCORE: ${signal.score}%`,
-    `ENTRY CONFIDENCE: ${entryConfidence}%`,
+    `Оцінка сетапу: ${signal.score}/100`,
+    `Впевненість входу: ${entryConfidence}/100`,
     "",
-    `⚡ EXECUTION: ${execution.label}`,
+    `⚡ Виконання: ${executionLabelUa(execution.label)}`,
     executionExplanationLine(execution),
     "",
-    execution.label === "LIMIT ENTRY" ? "📍 Place limit:" : "📍 Entry:",
+    execution.label === "LIMIT ENTRY" ? "📍 Лімітна заявка:" : "📍 Вхід:",
     `${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
     "",
-    `Qty: ~${formatQty(plan.qty)} ${baseAsset(signal.symbol)} (auto from $${formatAmount(balance)} balance)`,
-    `⚙️ Margin: Isolated ${plan.leverage}x`,
-    `📦 Position size: $${formatAmount(plan.positionSizeUsdt)}`,
+    `Кількість: ~${formatQty(plan.qty)} ${baseAsset(signal.symbol)} (від банку ${formatAmount(balance)} USDT)`,
+    `⚙️ Маржа: ізольована ${plan.leverage}x`,
+    `📦 Розмір позиції: ${formatAmount(plan.positionSizeUsdt)} USDT`,
     "",
     `🛑 SL: ${fmt(signal.stopLoss)}`,
     "",
     ...tpPlanLines(signal, plan),
     "",
     ...smallBalanceLines(plan),
-    `⚠️ Risk: ~${formatAmount(plan.maxLossUsdt)} USDT`,
-    `🛑 Max loss: -$${formatAmount(plan.maxLossUsdt)} (${formatPercent(plan.maxLossRoi)}% ROI)`,
+    `⚠️ Ризик: ~${formatAmount(plan.maxLossUsdt)} USDT`,
+    `🛑 Максимальний збиток: -${formatAmount(plan.maxLossUsdt)} USDT (${formatPercent(plan.maxLossRoi)}% ROI)`,
     `⚖️ RR: ${signal.riskReward}`,
     "",
     "Причина:",
@@ -232,14 +233,14 @@ function entryConfidenceScore(signal: Signal, canEnter: boolean) {
 
 function executionPlan(signal: Signal, canEnter: boolean, entryConfidence: number) {
   const breakdown = signal.scoreBreakdown ?? {};
-  if (!canEnter) return { label: "WAIT FOR RETEST", action: "➡️ зараз НЕ заходити", explanation: "entry ще не підтверджений: чекаємо ретест/volume/sniper confirmation" } as const;
+  if (!canEnter) return { label: "WAIT FOR RETEST", action: "➡️ зараз НЕ заходити", explanation: "вхід ще не підтверджений: чекаємо ретест, обсяг і sniper-підтвердження" } as const;
   const market = (breakdown.fastMoveQuality ?? signal.fastMoveQuality?.score ?? 0) >= 78
     && (breakdown.momentumQuality ?? 0) >= 82
     && (breakdown.volumeConfirmation ?? 0) >= 80
     && (breakdown.entrySniper ?? 0) >= 85
     && entryConfidence >= 85;
-  if (market) return { label: "MARKET ENTRY", action: "➡️ заходити по ринку", explanation: "сильний імпульс + volume + sniper, ціна вже в entry zone" } as const;
-  return { label: "LIMIT ENTRY", action: "➡️ поставити лімітний ордер", explanation: "setup підтверджений, але краще забрати відкат у заданому entry range" } as const;
+  if (market) return { label: "MARKET ENTRY", action: "➡️ заходити по ринку", explanation: "сильний імпульс + обсяг + sniper, ціна вже в зоні входу" } as const;
+  return { label: "LIMIT ENTRY", action: "➡️ поставити лімітний ордер", explanation: "сетап підтверджений, але краще забрати відкат у заданій зоні входу" } as const;
 }
 
 function setupDirection(signal: Signal) {
@@ -254,22 +255,22 @@ function setupDirection(signal: Signal) {
 function executionReasons(signal: Signal, canEnter: boolean) {
   const breakdown = signal.scoreBreakdown;
   const positive = [
-    (breakdown.momentumQuality ?? 0) >= 70 ? "momentum confirm" : null,
-    (breakdown.openInterestConfirmation ?? 0) >= 65 ? "OI confirm" : null,
-    (breakdown.volumeConfirmation ?? 0) >= 65 ? "volume confirm" : null,
-    (breakdown.entrySniper ?? 0) >= 70 ? "sniper trigger" : null,
-    signal.btcStable || signal.symbol === "BTCUSDT" ? "BTC stable" : null,
-    (breakdown.liquiditySweep ?? 0) >= 65 ? "retest confirm" : null
+    (breakdown.momentumQuality ?? 0) >= 70 ? "імпульс підтверджений" : null,
+    (breakdown.openInterestConfirmation ?? 0) >= 65 ? "OI підтверджує" : null,
+    (breakdown.volumeConfirmation ?? 0) >= 65 ? "обсяг підтверджує" : null,
+    (breakdown.entrySniper ?? 0) >= 70 ? "sniper-тригер" : null,
+    signal.btcStable || signal.symbol === "BTCUSDT" ? "BTC стабільний" : null,
+    (breakdown.liquiditySweep ?? 0) >= 65 ? "ретест підтверджений" : null
   ].filter(Boolean) as string[];
   const blockers = [
-    signal.entryStatus !== "ENTER_NOW" ? "waiting confirmation" : null,
-    !canEnter ? "execution not confirmed" : null,
-    (breakdown.volumeConfirmation ?? 0) < 65 ? "weak volume" : null,
-    (breakdown.entrySniper ?? 0) < 70 ? "no sniper trigger" : null,
-    (breakdown.liquiditySweep ?? 0) < 65 ? "no retest confirmation" : null,
-    !signal.btcStable && signal.symbol !== "BTCUSDT" ? "BTC not stable" : null,
-    signal.fakeBreakout.risk ? "fake breakout risk" : null,
-    signal.confidence < 60 ? "confidence below 60%" : null
+    signal.entryStatus !== "ENTER_NOW" ? "очікування підтвердження" : null,
+    !canEnter ? "виконання не підтверджене" : null,
+    (breakdown.volumeConfirmation ?? 0) < 65 ? "слабкий обсяг" : null,
+    (breakdown.entrySniper ?? 0) < 70 ? "немає sniper-тригера" : null,
+    (breakdown.liquiditySweep ?? 0) < 65 ? "немає підтвердження ретесту" : null,
+    !signal.btcStable && signal.symbol !== "BTCUSDT" ? "BTC нестабільний" : null,
+    signal.fakeBreakout.risk ? "ризик fake breakout" : null,
+    signal.confidence < 60 ? "впевненість нижче 60%" : null
   ].filter(Boolean) as string[];
   if (!canEnter) return blockers.slice(0, 5);
   return [...positive, ...blockers.filter((reason) => !positive.includes(reason))].slice(0, 5);
@@ -312,7 +313,7 @@ function tpPlanLines(signal: Signal, plan: ReturnType<typeof positionPlan>) {
   return signal.takeProfit.flatMap((tp, index) => {
     const pct = plan.split[index] ?? 0;
     const profit = plan.tpProfits[index] ?? tpProfitUsdt(signal, plan.qty, pct, tp);
-    return [`🎯 TP${index + 1}: ${fmt(tp)}`, `Закрити: ${pct}%`, `≈ +$${formatAmount(profit)} (${formatPercent(plan.roiByTp[index] ?? 0)}% ROI)`, ""];
+    return [`🎯 TP${index + 1}: ${fmt(tp)}`, `Закрити: ${pct}%`, `≈ +${formatAmount(profit)} USDT (${formatPercent(plan.roiByTp[index] ?? 0)}% ROI)`, ""];
   }).slice(0, -1);
 }
 
@@ -327,9 +328,15 @@ function maxLossUsdt(signal: Signal, qty: number) {
 }
 
 function entryTypeLine(execution: ReturnType<typeof executionPlan>) {
-  if (execution.label === "MARKET ENTRY") return "🟢 MARKET ENTRY";
-  if (execution.label === "LIMIT ENTRY") return "🟡 LIMIT ENTRY";
-  return "⚪ WAIT FOR RETEST";
+  if (execution.label === "MARKET ENTRY") return "🟢 Вхід по ринку";
+  if (execution.label === "LIMIT ENTRY") return "🟡 Очікуємо лімітний вхід";
+  return "⚪ Очікування ретесту";
+}
+
+function executionLabelUa(label: ReturnType<typeof executionPlan>["label"]) {
+  if (label === "MARKET ENTRY") return "Вхід по ринку";
+  if (label === "LIMIT ENTRY") return "Очікуємо лімітний вхід";
+  return "Очікування ретесту";
 }
 
 function executionExplanationLine(execution: ReturnType<typeof executionPlan>) {
@@ -338,12 +345,12 @@ function executionExplanationLine(execution: ReturnType<typeof executionPlan>) {
 
 function smallBalanceLines(plan: ReturnType<typeof positionPlan>) {
   return [
-    `💰 Bank: $${formatAmount(plan.balance)} USDT`,
-    `💵 Margin used: $${formatAmount(plan.marginUsdt)} USDT`,
-    `📦 Position size: $${formatAmount(plan.positionSizeUsdt)} USDT`,
-    `🪙 Coin qty: ~${formatQty(plan.qty)}`,
-    `⚠️ Risk: $${formatAmount(plan.maxLossUsdt)} USDT`,
-    `📊 ROI risk: ${formatPercent(plan.maxLossRoi)}%`
+    `💰 Режим малого банку: ${formatAmount(plan.balance)} USDT`,
+    `💵 Маржа: ${formatAmount(plan.marginUsdt)} USDT`,
+    `📦 Розмір позиції: ${formatAmount(plan.positionSizeUsdt)} USDT`,
+    `🪙 Кількість монет: ~${formatQty(plan.qty)}`,
+    `⚠️ Ризик: ${formatAmount(plan.maxLossUsdt)} USDT`,
+    `📊 ROI ризик: ${formatPercent(plan.maxLossRoi)}%`
   ];
 }
 

@@ -67,22 +67,22 @@ export function tradeStatsText() {
   const avgConfidence = avg(closed.map((trade) => trade.confidence));
   const avgRr = avg(closed.map((trade) => resultRank(trade.result)));
   return [
-    "📊 Trading Stats",
+    "📊 Торгова статистика",
     "",
-    `Trades: ${closed.length}`,
+    `Угоди: ${closed.length}`,
     `Win rate: ${closed.length ? Math.round(wins.length / closed.length * 100) : 0}%`,
-    `Profit: ${profit.toFixed(2)}%`,
-    `Wins: ${wins.length}`,
-    `Losses: ${losses.length}`,
-    `Average RR: ${avgRr.toFixed(2)}R`,
-    `Average confidence: ${avgConfidence.toFixed(0)}%`,
+    `Прибуток: ${profit.toFixed(2)}%`,
+    `Перемоги: ${wins.length}`,
+    `Збитки: ${losses.length}`,
+    `Середній RR: ${avgRr.toFixed(2)}R`,
+    `Середня впевненість: ${avgConfidence.toFixed(0)}%`,
     "",
-    `Best setup: ${rankBy(closed, "setupType", true)}`,
-    `Best pair: ${rankBy(closed, "pair", true)}`,
-    `Worst pair: ${rankBy(closed, "pair", false)}`,
-    `Best timeframe: ${rankBy(closed, "timeframeCombo", true)}`,
+    `Найкращий сетап: ${rankBy(closed, "setupType", true)}`,
+    `Найкраща пара: ${rankBy(closed, "pair", true)}`,
+    `Найгірша пара: ${rankBy(closed, "pair", false)}`,
+    `Найкращий timeframe: ${rankBy(closed, "timeframeCombo", true)}`,
     "",
-    "Last 10 trades:",
+    "Останні 10 угод:",
     ...(closed.slice(0, 10).map((trade) => `${trade.pair} ${trade.direction} ${trade.result} ${trade.profitPercent.toFixed(2)}% · ${trade.confidence}%`))
   ].join("\n");
 }

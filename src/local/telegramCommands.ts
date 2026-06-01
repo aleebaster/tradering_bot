@@ -293,7 +293,7 @@ export class TelegramCommandCenter {
     if (command === "/unwatch") {
       if (!pair) return this.askPair("unwatch");
       const pairs = removePriorityPair(pair);
-      return this.notifier.send(["✅ Видалено з моніторингу", "", pair, "", pairs.length ? `Активний watchlist: ${pairs.join(", ")}` : "Watchlist порожній"].join("\n"), watchlistMenuKeyboard());
+      return this.notifier.send(["✅ Видалено з моніторингу", "", pair, "", pairs.length ? `Активний список моніторингу: ${pairs.join(", ")}` : "Список моніторингу порожній"].join("\n"), watchlistMenuKeyboard());
     }
 
     if (command === "/signal") {
@@ -334,7 +334,7 @@ export class TelegramCommandCenter {
   }
 
   private async sendNewTokens(): Promise<void> {
-    if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send("🚀 NEW TOKENS WATCH\n\nТестовий режим: Bybit scan skipped.", signalActionsKeyboard());
+    if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send("🚀 НОВІ МОНЕТИ\n\nТестовий режим: Bybit scan пропущено.", signalActionsKeyboard());
     const items = await scanBybitNewTokens(5).catch((error) => {
       logger.warn({ err: error }, "Bybit new token scan failed");
       return [];
@@ -343,7 +343,7 @@ export class TelegramCommandCenter {
   }
 
   private async sendNewSignal(pair: string): Promise<void> {
-    if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send(`🚀 NEW TOKEN ANALYSIS\n\n${pair}\n\nТестовий режим: Bybit scan skipped.`, signalQuickActions(pair));
+    if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send(`🚀 АНАЛІЗ НОВОЇ МОНЕТИ\n\n${pair}\n\nТестовий режим: Bybit scan пропущено.`, signalQuickActions(pair));
     const item = await analyzeBybitNewToken(pair).catch((error) => ({
       symbol: pair,
       status: "REJECTED" as const,
@@ -383,7 +383,7 @@ export class TelegramCommandCenter {
 
   private async sendWhaleScanner(filter: WhaleFilter): Promise<void> {
     if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send(formatWhaleScanner(sampleWhaleRows(), filter), whaleActionsKeyboard());
-    await this.notifier.send("⏳ Сканую whale flow: Futures + Spot...", whaleActionsKeyboard());
+    await this.notifier.send("⏳ Сканую рух китів: Futures + Spot...", whaleActionsKeyboard());
     const rows = await scanWhaleFlow(this.whaleClient, filter).catch((error) => {
       logger.warn({ err: error, filter }, "Whale flow scan failed");
       return [] as WhaleRow[];
@@ -393,7 +393,7 @@ export class TelegramCommandCenter {
 
   private async sendMomentum(filter: MomentumFilter): Promise<void> {
     if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send(formatMomentumList(sampleMomentumRows(), momentumTitle(filter)), momentumActionsKeyboard());
-    await this.notifier.send("⏳ Сканую великі рухи: Bybit Futures + Spot, volume/OI/whale/BTC filters...", momentumActionsKeyboard());
+    await this.notifier.send("⏳ Сканую сильні рухи: Bybit Futures + Spot, обсяг/OI/кити/BTC фільтри...", momentumActionsKeyboard());
     const rows = await this.momentumScanner.scan(filter).catch((error) => {
       logger.warn({ err: error, filter }, "Momentum scanner failed");
       return [];
@@ -403,12 +403,12 @@ export class TelegramCommandCenter {
 
   private async sendMomentumCoin(input: string): Promise<void> {
     if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send(formatMomentumAlert(sampleMomentumRows()[0]), momentumActionsKeyboard());
-    await this.notifier.send(`⏳ Перевіряю momentum ${input.toUpperCase()}...`, momentumActionsKeyboard());
+    await this.notifier.send(`⏳ Перевіряю сильний рух ${input.toUpperCase()}...`, momentumActionsKeyboard());
     const row = await this.momentumScanner.checkSymbol(input).catch((error) => {
       logger.warn({ err: error, input }, "Momentum coin check failed");
       return null;
     });
-    if (!row) return this.notifier.send(["🚨 Великі рухи / Momentum Scanner", "", input.toUpperCase(), "", "Clean momentum trigger зараз не підтверджений.", "Фільтр відсікає fake pumps, low liquidity, weak volume/OI або BTC-conflict."].join("\n"), momentumActionsKeyboard());
+    if (!row) return this.notifier.send(["🚨 Сканер сильних рухів", "", input.toUpperCase(), "", "Чистий імпульсний тригер зараз не підтверджений.", "Фільтр відсікає fake pump, низьку ліквідність, слабкий обсяг/OI або конфлікт із BTC."].join("\n"), momentumActionsKeyboard());
     return this.notifier.send(formatMomentumAlert(row), momentumActionsKeyboard());
   }
 
@@ -432,8 +432,8 @@ export class TelegramCommandCenter {
 
   private async sendMonitoring(): Promise<void> {
     const pairs = loadPriorityWatchlist();
-    if (!pairs.length) return this.notifier.send("👀 Моніторинг\n\nWatchlist порожній. Натисни ➕ Додати пару.", watchlistActionsKeyboard());
-      await this.notifier.send("👀 Моніторинг активний\n\n⏱ Watchlist evolution: перевірка кожні 2 хв", watchlistActionsKeyboard());
+    if (!pairs.length) return this.notifier.send("👀 Моніторинг\n\nСписок моніторингу порожній. Натисни ➕ Додати пару.", watchlistActionsKeyboard());
+      await this.notifier.send("👀 Моніторинг активний\n\n⏱ Еволюція сетапів: перевірка кожні 2 хв", watchlistActionsKeyboard());
     for (const pair of pairs.slice(0, 10)) await this.notifier.send(monitoringStatusFor(pair), signalQuickActions(pair));
   }
 
@@ -450,12 +450,12 @@ export class TelegramCommandCenter {
 
   private async setRiskMode(value: RiskMode): Promise<void> {
     const settings = updateTelegramSettings({ riskMode: value });
-    return this.notifier.send(["✅ Risk mode оновлено", "", `Поточний режим: ${settings.riskMode}`].join("\n"), settingsKeyboard());
+    return this.notifier.send(["✅ Режим ризику оновлено", "", `Поточний режим: ${riskModeUa(settings.riskMode)}`].join("\n"), settingsKeyboard());
   }
 
   private async resetLearningCommand(): Promise<void> {
     resetLearning();
-    return this.notifier.send(["✅ Learning reset", "", "Adaptive weights restored to defaults.", "Safe learning will restart after 20 completed trades."].join("\n"), mainMenuKeyboard());
+    return this.notifier.send(["✅ Навчання скинуто", "", "Адаптивні ваги повернено до стандартних.", "Безпечне навчання перезапуститься після 20 завершених угод."].join("\n"), mainMenuKeyboard());
   }
 
   private async handleCallback(id: string, data: string, answer = true): Promise<void> {
@@ -630,10 +630,10 @@ function mainMenuKeyboard(): TelegramReplyMarkup {
   return {
     keyboard: [
       [{ text: "📊 Сигнали" }, { text: "🔎 Пошук по парах" }],
-      [{ text: "👀 Watchlist" }, { text: "📈 Ринок" }],
+      [{ text: "👀 Список моніторингу" }, { text: "📈 Ринок" }],
       [{ text: "₿ BTC Фільтр" }, { text: "🔥 Топ Сетапи" }],
       [{ text: "🚨 Великі рухи" }, { text: "🐋 Рух китів" }],
-      [{ text: "🧠 Intelligence" }, { text: "🪙 New Tokens" }],
+      [{ text: "🧠 Інтелект" }, { text: "🪙 Нові монети" }],
       [{ text: "📊 Статистика" }, { text: "⚙️ Налаштування" }],
       [{ text: "🧪 Діагностика" }, { text: "📁 Позиції" }],
       [{ text: "🏠 Головне меню" }]
@@ -647,7 +647,7 @@ function signalMenuKeyboard(): TelegramReplyMarkup {
   return {
     inline_keyboard: [
       [uiButton("🔍 Аналіз пари", "signal_pair")],
-      [uiButton("🪙 New Tokens", "new_tokens")],
+      [uiButton("🪙 Нові монети", "new_tokens")],
       [uiButton("🔥 Найкращі сигнали", "top"), uiButton("🔍 Пошук по парах", "search_pair")],
       [uiButton("🔙 Назад", "back")]
     ]
@@ -658,7 +658,7 @@ function watchlistMenuKeyboard(): TelegramReplyMarkup {
   return {
     inline_keyboard: [
       [uiButton("➕ Додати пару", "watch_add"), uiButton("📄 Мій список", "watchlist")],
-      [uiButton("👀 Watch status", "watch_status")],
+      [uiButton("👀 Статус моніторингу", "watch_status")],
       [uiButton("❌ Видалити пару", "watch_remove"), uiButton("🔴 Моніторинг", "monitoring")],
       [uiButton("🔙 Назад", "back")]
     ]
@@ -679,7 +679,7 @@ function marketActionsKeyboard(): TelegramReplyMarkup {
   return {
     inline_keyboard: [
       [uiButton("🔄 Оновити Ринок", "market")],
-      [uiButton("📡 Intelligence", "intelligence"), uiButton("Market Regime", "market_regime")],
+      [uiButton("📡 Інтелект", "intelligence"), uiButton("Режим ринку", "market_regime")],
       [uiButton("📊 Сигнали", "signals"), uiButton("🔥 Топ Сетапи", "top")],
       [uiButton("₿ BTC Фільтр", "btc"), uiButton("🔙 Назад", "back")]
     ]
@@ -689,7 +689,7 @@ function marketActionsKeyboard(): TelegramReplyMarkup {
 function watchlistActionsKeyboard(): TelegramReplyMarkup {
   return {
     inline_keyboard: [
-      [uiButton("📄 Мій список", "watchlist"), uiButton("👀 Watch status", "watch_status")],
+      [uiButton("📄 Мій список", "watchlist"), uiButton("👀 Статус моніторингу", "watch_status")],
       [uiButton("🔴 Моніторинг", "monitoring")],
       [uiButton("➕ Додати пару", "watch_add"), uiButton("❌ Видалити пару", "watch_remove")],
       [uiButton("📊 Аналіз", "signal_pair"), uiButton("🔙 Назад", "back")]
@@ -720,7 +720,7 @@ function whaleActionsKeyboard(): TelegramReplyMarkup {
   return {
     inline_keyboard: [
       [uiButton("🔄 Оновити скан", "whales")],
-      [uiButton("📈 Тільки accumulation", "whales_accumulation"), uiButton("📉 Тільки distribution", "whales_distribution")],
+      [uiButton("📈 Тільки накопичення", "whales_accumulation"), uiButton("📉 Тільки розподіл", "whales_distribution")],
       [uiButton("🔥 Найсильніші рухи", "whales_strongest"), uiButton("🔍 Перевірити монету", "whales_check")],
       [uiButton("🔙 Назад", "back")]
     ]
@@ -730,7 +730,7 @@ function whaleActionsKeyboard(): TelegramReplyMarkup {
 function watchlistQuickKeyboard(_pair: string): TelegramReplyMarkup {
   return {
     inline_keyboard: [
-      [uiButton("📄 Мій список", "watchlist"), uiButton("👀 Watch status", "watch_status")],
+      [uiButton("📄 Мій список", "watchlist"), uiButton("👀 Статус моніторингу", "watch_status")],
       [uiButton("❌ Видалити пару", "watch_remove")],
       [uiButton("📊 Аналіз", "signal_pair"), uiButton("🔴 Моніторинг", "monitoring")],
       [uiButton("🔙 Назад", "back")]
@@ -743,7 +743,7 @@ function settingsKeyboard(): TelegramReplyMarkup {
     inline_keyboard: [
       [uiButton("💰 Баланс", "balance"), uiButton("⚡ Плече", "leverage")],
       [uiButton("🔔 Сповіщення", "notifications"), uiButton("📱 Telegram UX", "telegram_ux")],
-      [uiButton("🎯 Risk mode", "risk_mode")],
+      [uiButton("🎯 Режим ризику", "risk_mode")],
       [uiButton("🔙 Назад", "back")]
     ]
   };
@@ -754,14 +754,14 @@ function leverageKeyboard(): TelegramReplyMarkup {
 }
 
 function riskModeKeyboard(): TelegramReplyMarkup {
-  return { inline_keyboard: [[uiButton("Conservative", "conservative"), uiButton("Balanced", "balanced")], [uiButton("Aggressive", "aggressive")], [uiButton("🔙 Назад", "back")]] };
+  return { inline_keyboard: [[uiButton("Обережний", "conservative"), uiButton("Збалансований", "balanced")], [uiButton("Агресивний", "aggressive")], [uiButton("🔙 Назад", "back")]] };
 }
 
 function intelligenceKeyboard(): TelegramReplyMarkup {
   return {
     inline_keyboard: [
-      [uiButton("Pump Detector", "pump_detector"), uiButton("Whale Bias", "whale_bias")],
-      [uiButton("Liquidation Status", "liquidation_status"), uiButton("Market Regime", "market_regime")],
+      [uiButton("Детектор пампу", "pump_detector"), uiButton("Перекіс китів", "whale_bias")],
+      [uiButton("Ліквідації", "liquidation_status"), uiButton("Режим ринку", "market_regime")],
       [uiButton("🔙 Назад", "back")]
     ]
   };
@@ -779,11 +779,11 @@ function pairSearchKeyboard(symbol: string, hasFutures: boolean, hasSpot: boolea
   if (hasFutures && hasSpot) analysis.push({ text: "💰 Детальний Spot", callback_data: `analyze_spot:${symbol}` });
   if (analysis.length) rows.push(analysis);
   const raw = [];
-  if (hasFutures) raw.push({ text: "🛠 Raw Technical Data", callback_data: `raw_futures:${symbol}` });
-  if (!hasFutures && hasSpot) raw.push({ text: "🛠 Raw Technical Data", callback_data: `raw_spot:${symbol}` });
-  if (hasFutures && hasSpot) raw.push({ text: "🛠 Raw Spot Data", callback_data: `raw_spot:${symbol}` });
+  if (hasFutures) raw.push({ text: "🛠 Сирі технічні дані", callback_data: `raw_futures:${symbol}` });
+  if (!hasFutures && hasSpot) raw.push({ text: "🛠 Сирі технічні дані", callback_data: `raw_spot:${symbol}` });
+  if (hasFutures && hasSpot) raw.push({ text: "🛠 Сирі spot-дані", callback_data: `raw_spot:${symbol}` });
   if (raw.length) rows.push(raw);
-  rows.push([{ text: "🔥 Додати у Watchlist", callback_data: `search_add:${symbol}` }]);
+  rows.push([{ text: "🔥 Додати в моніторинг", callback_data: `search_add:${symbol}` }]);
   rows.push([uiButton("🔍 Пошук по парах", "search_pair"), uiButton("🔙 Назад", "back")]);
   return { inline_keyboard: rows };
 }
@@ -803,9 +803,9 @@ function mainMenuText() {
 
 function whaleMenuPlaceholderText() {
   return [
-    "🐋 Whale Flow Scanner",
+    "🐋 Сканер руху китів",
     "",
-    "Combined Futures + Spot whale analysis готується.",
+    "Комбінований аналіз китів Futures + Spot готується.",
     "Натисни 🔄 Оновити скан після завершення індексації ринку."
   ].join("\n");
 }
@@ -885,8 +885,8 @@ async function analyzeWhaleSymbol(client: ExchangeClient, symbol: string): Promi
 }
 
 function formatWhaleScanner(rows: WhaleRow[], filter: WhaleFilter) {
-  const title = filter === "accumulation" ? "🐋 Whale Flow Scanner — accumulation" : filter === "distribution" ? "🐋 Whale Flow Scanner — distribution" : filter === "strongest" ? "🐋 Whale Flow Scanner — strongest" : "🐋 Whale Flow Scanner";
-  if (!rows.length) return [title, "", "Немає достатньо сильного whale flow зараз.", "Futures + Spot перевірені; чекаємо чистіший imbalance."].join("\n");
+  const title = filter === "accumulation" ? "🐋 Сканер руху китів — накопичення" : filter === "distribution" ? "🐋 Сканер руху китів — розподіл" : filter === "strongest" ? "🐋 Сканер руху китів — найсильніші" : "🐋 Сканер руху китів";
+  if (!rows.length) return [title, "", "Немає достатньо сильного руху китів зараз.", "Futures + Spot перевірені; чекаємо чистіший дисбаланс."].join("\n");
   return [title, "", ...rows.slice(0, 12).map(formatWhaleRow)].join("\n\n");
 }
 
@@ -897,19 +897,19 @@ function formatWhaleCoin(row: WhaleRow) {
     "Статус:",
     `${whaleStatusLabel(row.status)}`,
     "",
-    `Confidence: ${row.confidence}%`,
-    `Whale score: ${row.score}/100`,
+    `Впевненість входу: ${row.confidence}/100`,
+    `Оцінка китів: ${row.score}/100`,
     "",
     "Що бачимо:",
     ...row.reasons.slice(0, 6).map((reason) => `• ${reason}`),
     "",
     "Висновок:",
-    row.status === "ACCUMULATION" ? "➡️ Smart money accumulation" : row.status === "DISTRIBUTION" ? "➡️ Distribution / exit behavior" : row.status === "CONFLICTED" ? "➡️ ⚠️ CONFLICTED FLOW — futures і spot не підтверджують одне одного" : "➡️ Нейтрально, немає якісної переваги"
+    row.status === "ACCUMULATION" ? "➡️ Розумні гроші набирають позицію" : row.status === "DISTRIBUTION" ? "➡️ Розподіл / вихід із позиції" : row.status === "CONFLICTED" ? "➡️ ⚠️ Конфлікт потоків — futures і spot не підтверджують одне одного" : "➡️ Нейтрально, немає якісної переваги"
   ].join("\n");
 }
 
 function formatWhaleRow(row: WhaleRow) {
-  return [`${whaleStatusIcon(row.status)} ${row.symbol} — ${whaleStatusText(row.status)}`, `Confidence: ${row.confidence}%`, `Whale score: ${row.score}/100`, "", "Причина:", ...row.reasons.slice(0, 4).map((reason) => `• ${reason}`)].join("\n");
+  return [`${whaleStatusIcon(row.status)} ${row.symbol} — ${whaleStatusText(row.status)}`, `Впевненість входу: ${row.confidence}/100`, `Оцінка китів: ${row.score}/100`, "", "Причина:", ...row.reasons.slice(0, 4).map((reason) => `• ${reason}`)].join("\n");
 }
 
 function whaleStatusLabel(status: WhaleStatus) {
@@ -926,20 +926,20 @@ function whaleStatusIcon(status: WhaleStatus) {
 function whaleStatusText(status: WhaleStatus) {
   if (status === "ACCUMULATION") return "КИТИ НАБИРАЮТЬ";
   if (status === "DISTRIBUTION") return "КИТИ ЗЛИВАЮТЬ";
-  if (status === "CONFLICTED") return "CONFLICTED FLOW";
+  if (status === "CONFLICTED") return "КОНФЛІКТ ПОТОКІВ";
   return "НЕЙТРАЛЬНО";
 }
 
 function whaleReasons(input: { status: WhaleStatus; priceChange: number; oiChange: number; fundingRate: number; futuresVolumeSpike: number; spotVolumeSpike: number; futuresBias: number; spotBias: number; liquidationPressure: WhaleRow["liquidationPressure"]; accountRatio: number; spotImbalance: number }) {
   const out = [];
-  out.push(`Futures: ${input.priceChange >= 0 ? "Price ↑" : "Price ↓"} + ${input.oiChange >= 0 ? "OI ↑" : "OI ↓"}`);
-  out.push(input.spotBias > 12 ? "Spot: buy pressure / accumulation flow" : input.spotBias < -12 ? "Spot: sell pressure / distribution flow" : "Spot: neutral flow");
-  if (Math.max(input.futuresVolumeSpike, input.spotVolumeSpike) > 1.35) out.push(`volume spike ${Math.max(input.futuresVolumeSpike, input.spotVolumeSpike).toFixed(1)}x`);
-  if (input.liquidationPressure !== "neutral") out.push(`Liquidation pressure: ${input.liquidationPressure}`);
-  if (Math.abs(input.accountRatio) > 0.08) out.push(`Positioning: ${input.accountRatio > 0 ? "long" : "short"} skew`);
-  if (Math.abs(input.fundingRate) > 0.00035) out.push(`Funding: ${input.fundingRate > 0 ? "positive" : "negative"} ${input.fundingRate.toFixed(5)}`);
-  if (input.status === "CONFLICTED") out.unshift(input.futuresBias > 0 ? "⚠️ Futures bullish, але Spot selling" : "⚠️ Futures bearish, але Spot buying");
-  if (!out.length) out.push("No abnormal whale activity");
+  out.push(`Futures: ${input.priceChange >= 0 ? "ціна ↑" : "ціна ↓"} + ${input.oiChange >= 0 ? "OI ↑" : "OI ↓"}`);
+  out.push(input.spotBias > 12 ? "Spot: тиск покупців / накопичення" : input.spotBias < -12 ? "Spot: тиск продавців / розподіл" : "Spot: нейтральний потік");
+  if (Math.max(input.futuresVolumeSpike, input.spotVolumeSpike) > 1.35) out.push(`Аномальний обсяг ${Math.max(input.futuresVolumeSpike, input.spotVolumeSpike).toFixed(1)}x`);
+  if (input.liquidationPressure !== "neutral") out.push(`Тиск ліквідацій: ${input.liquidationPressure === "short squeeze" ? "short squeeze" : "long squeeze"}`);
+  if (Math.abs(input.accountRatio) > 0.08) out.push(`Позиціонування: перекіс у ${input.accountRatio > 0 ? "LONG" : "SHORT"}`);
+  if (Math.abs(input.fundingRate) > 0.00035) out.push(`Funding: ${input.fundingRate > 0 ? "позитивний" : "негативний"} ${input.fundingRate.toFixed(5)}`);
+  if (input.status === "CONFLICTED") out.unshift(input.futuresBias > 0 ? "⚠️ Futures bullish, але Spot продає" : "⚠️ Futures bearish, але Spot купує");
+  if (!out.length) out.push("Немає аномальної активності китів");
   return out;
 }
 
@@ -1055,10 +1055,10 @@ function sampleMomentumRows(): MomentumMove[] {
 }
 
 function momentumTitle(filter: MomentumFilter) {
-  if (filter === "long") return "📈 LONG movers / Momentum Scanner";
-  if (filter === "short") return "📉 SHORT movers / Momentum Scanner";
-  if (filter === "strongest") return "🔥 Найсильніші рухи / Momentum Scanner";
-  return "🚨 Великі рухи / Momentum Scanner";
+  if (filter === "long") return "📈 Лідери LONG / Сканер сильних рухів";
+  if (filter === "short") return "📉 Лідери SHORT / Сканер сильних рухів";
+  if (filter === "strongest") return "🔥 Найсильніші рухи / Сканер сильних рухів";
+  return "🚨 Великі рухи / Сканер сильних рухів";
 }
 
 function signalMenuText() {
@@ -1071,20 +1071,20 @@ function watchlistMenuText() {
 
 function monitoringText() {
   const pairs = loadPriorityWatchlist();
-  if (!pairs.length) return "👀 Моніторинг\n\nWatchlist порожній. Натисни ➕ Додати пару.";
+  if (!pairs.length) return "👀 Моніторинг\n\nСписок моніторингу порожній. Натисни ➕ Додати пару.";
   return ["👀 Моніторинг активний", "", ...pairs.map(monitoringStatusFor)].join("\n\n");
 }
 
 function settingsText() {
   const settings = loadTelegramSettings();
-  return ["⚙️ Налаштування", "", `💰 Баланс: ${settings.balanceUsdt} USDT`, `⚡ Плече: ${settings.maxLeverage} MAX`, `🔔 Сповіщення: ${settings.notifications ? "ON" : "OFF"}`, "📱 Telegram UX: кнопкове меню", `🎯 Risk mode: ${settings.riskMode}`].join("\n");
+  return ["⚙️ Налаштування", "", `💰 Баланс: ${settings.balanceUsdt} USDT`, `⚡ Плече: ${settings.maxLeverage} максимум`, `🔔 Сповіщення: ${settings.notifications ? "увімкнено" : "вимкнено"}`, "📱 Telegram UX: кнопкове меню", `🎯 Режим ризику: ${riskModeUa(settings.riskMode)}`].join("\n");
 }
 
 function settingsDetailText(button: string) {
   const settings = loadTelegramSettings();
   if (button.startsWith("🔔")) return "🔔 Сповіщення\n\nАвто-пуші: тільки real entry, watchlist → entry upgrade та trade management.";
   if (button.startsWith("📱")) return "📱 Telegram UX\n\nУвімкнено чисте кнопкове меню, inline quick actions та короткий формат сигналів.";
-  return `⚙️ Налаштування\n\nБаланс: ${settings.balanceUsdt} USDT\nПлече: ${settings.maxLeverage}\nСповіщення: ${settings.notifications ? "ON" : "OFF"}\nRisk mode: ${settings.riskMode}`;
+  return `⚙️ Налаштування\n\nБаланс: ${settings.balanceUsdt} USDT\nПлече: ${settings.maxLeverage}\nСповіщення: ${settings.notifications ? "увімкнено" : "вимкнено"}\nРежим ризику: ${riskModeUa(settings.riskMode)}`;
 }
 
 function leverageText() {
@@ -1092,7 +1092,13 @@ function leverageText() {
 }
 
 function riskModeText() {
-  return ["🎯 Risk mode", "", `Поточний режим: ${loadTelegramSettings().riskMode}`, "", "Conservative — найменший ризик", "Balanced — стандартний ризик", "Aggressive — більше ризику тільки для сильних setup"].join("\n");
+  return ["🎯 Режим ризику", "", `Поточний режим: ${riskModeUa(loadTelegramSettings().riskMode)}`, "", "Обережний — найменший ризик", "Збалансований — стандартний ризик", "Агресивний — більше ризику тільки для сильних сетапів"].join("\n");
+}
+
+function riskModeUa(value: RiskMode) {
+  if (value === "Conservative") return "Обережний";
+  if (value === "Balanced") return "Збалансований";
+  return "Агресивний";
 }
 
 function helpText() {
@@ -1100,28 +1106,28 @@ function helpText() {
     "📌 Команди",
     "",
     "/signal BTCUSDT — аналіз пари + постійний моніторинг",
-    "/watch AIGENSYNUSDT — додати в watchlist",
-    "/unwatch AIGENSYNUSDT — прибрати з watchlist",
+    "/watch AIGENSYNUSDT — додати в список моніторингу",
+    "/unwatch AIGENSYNUSDT — прибрати зі списку моніторингу",
     "/watchlist — список пар",
-    "/watchstatus — активні setup, score, missing confirmations",
+    "/watchstatus — активні сетапи, оцінка, відсутні підтвердження",
     "/top — найкращі сетапи зараз",
-    "/newtokens — Bybit Futures new-token watch",
+    "/newtokens — нові монети Bybit Futures",
     "/newsignal TOKENUSDT — аналіз нового futures токена",
     "/newwatch — якісні нові лістинги під моніторингом",
     "/market — стан ринку",
-    "/intelligence — Pump Detector, Whale Bias, Liquidation Status, Market Regime",
+    "/intelligence — детектор пампу, перекіс китів, ліквідації, режим ринку",
     "/markethealth — режим, агресивність і активні пороги",
     "/btc — BTC фільтр",
     "/status — статус сканера",
     "/search BTCUSDT — пошук по всіх Bybit Spot/Futures і повний аналіз",
-    "/stats — journal статистика",
-    "/performance — real strategy performance",
-    "/learning — safe learning статус",
-    "/resetlearning — скинути adaptive weights",
-    "/paper on — увімкнути paper trading",
-    "/paper off — вимкнути paper trading",
-    "/paper — статистика paper trading",
-    "/paperstats — watchlist simulation stats",
+    "/stats — статистика журналу",
+    "/performance — результативність стратегії",
+    "/learning — статус безпечного навчання",
+    "/resetlearning — скинути адаптивні ваги",
+    "/paper on — увімкнути паперову торгівлю",
+    "/paper off — вимкнути паперову торгівлю",
+    "/paper — статистика паперової торгівлі",
+    "/paperstats — статистика симуляції моніторингу",
     "/diagnostics — API і біржі",
     "/help — список команд"
   ].join("\n");
@@ -1129,7 +1135,7 @@ function helpText() {
 
 function paperModeText(enabled: boolean) {
   setPaperMode(enabled);
-  return [enabled ? "✅ Paper trading ON" : "⏸ Paper trading OFF", "", paperStatsText()].join("\n");
+  return [enabled ? "✅ Паперова торгівля увімкнена" : "⏸ Паперова торгівля вимкнена", "", paperStatsText()].join("\n");
 }
 
 function statusText() {
@@ -1140,7 +1146,7 @@ function statusText() {
     `Останній scan: ${state.diagnostics.lastScanAt ? new Date(state.diagnostics.lastScanAt).toLocaleTimeString() : "очікується"}`,
     `Символів: ${state.diagnostics.scannedSymbols}`,
     `Сигналів сьогодні: ${state.stats.signalsToday}`,
-    `Watchlist: ${loadPriorityWatchlist().join(", ") || "порожній"}`
+    `Список моніторингу: ${loadPriorityWatchlist().join(", ") || "порожній"}`
   ].join("\n");
 }
 
@@ -1151,11 +1157,11 @@ function diagnosticsText() {
   return [
     "🧪 Діагностика",
     "",
-    `${bybit ? "✅" : "⚠️"} Bybit connected`,
-    `${config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID ? "✅" : "⚠️"} Telegram connected`,
-    "✅ Dashboard online",
-    `${loadPriorityWatchlist().length ? "✅" : "⚠️"} Watchlist active`,
-    `${state.diagnostics.lastScanAt ? "✅" : "⚠️"} Scanner active`,
+    `${bybit ? "✅" : "⚠️"} Bybit підключено`,
+    `${config.TELEGRAM_BOT_TOKEN && config.TELEGRAM_CHAT_ID ? "✅" : "⚠️"} Telegram підключено`,
+    "✅ Дашборд онлайн",
+    `${loadPriorityWatchlist().length ? "✅" : "⚠️"} Список моніторингу активний`,
+    `${state.diagnostics.lastScanAt ? "✅" : "⚠️"} Сканер активний`,
     ...(api.length ? ["", "API:", ...api] : []),
     ...(errors.length ? ["", "Помилки:", ...errors] : [])
   ].join("\n");
@@ -1186,41 +1192,41 @@ function marketHealthText() {
   const noTrade = recent.filter((signal) => signal.side === "NO_TRADE").length;
   const avgScore = recent.length ? Math.round(recent.reduce((sum, signal) => sum + signal.score, 0) / recent.length) : 0;
   return [
-    "🩺 Market Health",
+    "🩺 Стан ринку",
     "",
-    `Market: ${thresholds.mode}`,
-    `BTC: ${btcOk ? "stable" : "unstable"}`,
-    `Volatility: ${regime}`,
-    `Aggression: ${thresholds.aggression}`,
-    `Active thresholds: Entry ${thresholds.entry}+ / Watchlist ${thresholds.watch}+ / Early ${thresholds.early}+`,
+    `Ринок: ${marketModeUa(thresholds.mode)}`,
+    `BTC: ${btcOk ? "стабільний" : "нестабільний"}`,
+    `Волатильність: ${regimeUaText(regime)}`,
+    `Агресивність: ${aggressionUa(thresholds.aggression)}`,
+    `Активні пороги: вхід ${thresholds.entry}+ / моніторинг ${thresholds.watch}+ / ранній сетап ${thresholds.early}+`,
     "",
-    `Expected signals: ${expectedSignals(thresholds.aggression, btcOk)}`,
-    `Recent flow: ${entries} entries / ${watch} watchlist / ${noTrade} no-trade`,
-    `Average score: ${avgScore || "немає даних"}`,
+    `Очікувана кількість сигналів: ${expectedSignals(thresholds.aggression, btcOk)}`,
+    `Останній потік: ${entries} входів / ${watch} моніторинг / ${noTrade} без входу`,
+    `Середня оцінка: ${avgScore || "немає даних"}`,
     "",
-    "Why signals are low/high:",
+    "Чому сигналів мало/багато:",
     ...marketHealthReasons(recent, btcOk, thresholds.aggression)
   ].join("\n");
 }
 
 function expectedSignals(aggression: string, btcOk: boolean) {
-  if (!btcOk) return "Low";
-  if (aggression === "Balanced") return "Normal: 1-2 entries, 4-6 watchlist per 20 checks";
-  if (aggression === "Selective fast momentum") return "Medium: fast clean setups only";
-  return "Low";
+  if (!btcOk) return "низька";
+  if (aggression === "Balanced") return "нормальна: 1-2 входи, 4-6 пар у моніторинг на 20 перевірок";
+  if (aggression === "Selective fast momentum") return "середня: тільки швидкі чисті сетапи";
+  return "низька";
 }
 
 function marketHealthReasons(recent: Signal[], btcOk: boolean, aggression: string) {
   const reasons: string[] = [];
-  if (!btcOk) reasons.push("⚠️ BTC stability filter limits alt entries");
-  if (aggression === "Conservative") reasons.push("⚠️ Sideways/weak regime keeps strict 92+ entry threshold");
+  if (!btcOk) reasons.push("⚠️ BTC-фільтр обмежує входи в альти");
+  if (aggression === "Conservative") reasons.push("⚠️ Боковий/слабкий режим тримає строгий поріг входу 92+");
   const weakVolume = recent.filter((signal) => (signal.scoreBreakdown.volumeConfirmation ?? 0) < 65).length;
   const weakSniper = recent.filter((signal) => (signal.scoreBreakdown.entrySniper ?? 0) < 70).length;
   const fakeRisk = recent.filter((signal) => signal.fakeBreakout?.risk).length;
-  if (weakVolume >= Math.max(3, recent.length / 3)) reasons.push("⚠️ Volume confirmation is low across recent scans");
-  if (weakSniper >= Math.max(3, recent.length / 3)) reasons.push("⚠️ Sniper/retest trigger is not ready on most setups");
-  if (fakeRisk) reasons.push("⚠️ Fake-breakout protection is active");
-  if (!reasons.length) reasons.push("✅ Market filters are healthy; scanner can upgrade watchlist quickly");
+  if (weakVolume >= Math.max(3, recent.length / 3)) reasons.push("⚠️ Підтвердження обсягом слабке у більшості останніх перевірок");
+  if (weakSniper >= Math.max(3, recent.length / 3)) reasons.push("⚠️ Sniper/ретест ще не готовий у більшості сетапів");
+  if (fakeRisk) reasons.push("⚠️ Захист від fake breakout активний");
+  if (!reasons.length) reasons.push("✅ Фільтри ринку здорові; сканер може швидко оновити моніторинг до входу");
   return reasons.slice(0, 5);
 }
 
@@ -1252,19 +1258,19 @@ function watchlistText() {
   const pairs = loadPriorityWatchlist();
   const ranked = rankedWatchlist();
   return [
-    "👀 Watchlist / ТОП WATCHLIST",
+    "👀 Список моніторингу / ТОП",
     "",
-    ...(ranked.length ? ranked.slice(0, 10).map((signal, index) => `#${index + 1} ${signal.symbol} — ${signal.score}/100`) : ["Активних setup 72+ поки немає"]),
+    ...(ranked.length ? ranked.slice(0, 10).map((signal, index) => `#${index + 1} ${signal.symbol} — ${signal.score}/100`) : ["Активних сетапів 72+ поки немає"]),
     "",
-    "Priority pairs:",
-    ...(pairs.length ? pairs.map((pair) => `✅ ${pair}`) : ["Watchlist порожній"])
+    "Пріоритетні пари:",
+    ...(pairs.length ? pairs.map((pair) => `✅ ${pair}`) : ["Список моніторингу порожній"])
   ].join("\n");
 }
 
 function watchStatusText() {
   const ranked = rankedWatchlist();
-  if (!ranked.length) return ["👀 Watch status", "", "Активних setup 72+ зараз немає.", "Scanner продовжує моніторинг без FOMO."].join("\n");
-  return ["👀 Watchlist / ТОП WATCHLIST", "", ...ranked.slice(0, 8).map(watchStatusCard)].join("\n\n");
+  if (!ranked.length) return ["👀 Статус моніторингу", "", "Активних сетапів 72+ зараз немає.", "Сканер продовжує моніторинг без FOMO."].join("\n");
+  return ["👀 Список моніторингу / ТОП", "", ...ranked.slice(0, 8).map(watchStatusCard)].join("\n\n");
 }
 
 function rankedWatchlist() {
@@ -1280,26 +1286,26 @@ function watchStatusCard(signal: Signal, index: number) {
     "",
     `${signal.score}/100`,
     "",
-    "Readiness:",
+    "Готовність:",
     `${readinessPercent(signal)}%`,
     "",
-    "Missing confirmations:",
-    ...(missing.length ? missing.map((item) => `⚠️ ${item}`) : ["✅ entry trigger nearly ready"]),
+    "Відсутні підтвердження:",
+    ...(missing.length ? missing.map((item) => `⚠️ ${item}`) : ["✅ тригер входу майже готовий"]),
     "",
-    "Estimated trigger:",
+    "Оцінка готовності:",
     readinessLabel(signal)
   ].join("\n");
 }
 
 function missingWatchConfirmations(signal: Signal) {
   const missing: string[] = [];
-  if ((signal.scoreBreakdown.liquiditySweep ?? 0) < 70) missing.push("retest / liquidity sweep");
-  if ((signal.scoreBreakdown.volumeConfirmation ?? 0) < 65) missing.push("volume confirmation");
-  if ((signal.scoreBreakdown.openInterestConfirmation ?? 0) < 58) missing.push("OI rising");
-  if ((signal.scoreBreakdown.momentumQuality ?? 0) < 70) missing.push("momentum shift");
-  if ((signal.scoreBreakdown.orderBookImbalance ?? 0) < 60) missing.push("orderbook improvement");
-  if ((signal.scoreBreakdown.entrySniper ?? 0) < 70) missing.push("sniper trigger");
-  if (!signal.btcStable && signal.symbol !== "BTCUSDT") missing.push("BTC stable");
+  if ((signal.scoreBreakdown.liquiditySweep ?? 0) < 70) missing.push("ретест / sweep ліквідності");
+  if ((signal.scoreBreakdown.volumeConfirmation ?? 0) < 65) missing.push("підтвердження обсягом");
+  if ((signal.scoreBreakdown.openInterestConfirmation ?? 0) < 58) missing.push("зростання OI");
+  if ((signal.scoreBreakdown.momentumQuality ?? 0) < 70) missing.push("зміна імпульсу");
+  if ((signal.scoreBreakdown.orderBookImbalance ?? 0) < 60) missing.push("покращення стакана");
+  if ((signal.scoreBreakdown.entrySniper ?? 0) < 70) missing.push("sniper-тригер");
+  if (!signal.btcStable && signal.symbol !== "BTCUSDT") missing.push("стабільність BTC");
   return missing.slice(0, 5);
 }
 
@@ -1315,9 +1321,9 @@ function readinessPercent(signal: Signal) {
 
 function readinessLabel(signal: Signal) {
   const missing = missingWatchConfirmations(signal).length;
-  if (signal.score >= 88 && missing <= 2) return "HIGH";
-  if (signal.score >= 82 && missing <= 4) return "MEDIUM";
-  return "EARLY";
+  if (signal.score >= 88 && missing <= 2) return "висока";
+  if (signal.score >= 82 && missing <= 4) return "середня";
+  return "рання";
 }
 
 function signalAnalysisText(pair: string) {
@@ -1328,10 +1334,10 @@ function signalAnalysisText(pair: string) {
 
 function watchAddedText(pair: string) {
   return [
-    `✅ ${pair} додано до Watchlist`,
+    `✅ ${pair} додано до списку моніторингу`,
     "",
     "👀 Моніторинг активний",
-    "⏱ Evolution check кожні 2 хв",
+    "⏱ Перевірка еволюції кожні 2 хв",
     "",
     monitoringStatusFor(pair)
   ].join("\n");
@@ -1339,9 +1345,9 @@ function watchAddedText(pair: string) {
 
 function monitoringStatusFor(pair: string) {
   const signal = findSignal(pair);
-  if (!signal) return [pair, "", "Статус:", "Дані scanner ще формуються"].join("\n");
-  const side = signal.side === "WATCHLIST" ? `INTERNAL MONITOR ${signal.score}/100` : signal.side === "NO_TRADE" ? "NO ACTIVE ENTRY" : `${signal.side} ${signal.score}%`;
-  return [pair, "", "Статус:", side, "", signal.side === "WATCHLIST" ? `Readiness: ${readinessLabel(signal)}` : signal.management].join("\n");
+  if (!signal) return [pair, "", "Статус:", "Дані сканера ще формуються"].join("\n");
+  const side = signal.side === "WATCHLIST" ? `внутрішній моніторинг ${signal.score}/100` : signal.side === "NO_TRADE" ? "немає активного входу" : `${sideUa(signal.side)} ${signal.score}%`;
+  return [pair, "", "Статус:", side, "", signal.side === "WATCHLIST" ? `Готовність: ${readinessLabel(signal)}` : signal.management].join("\n");
 }
 
 function findSignal(pair: string) {
@@ -1350,7 +1356,7 @@ function findSignal(pair: string) {
 
 function signalSummary(signal: Signal) {
   const side = signal.side === "BUY" ? "LONG" : signal.side;
-  return `${side} ${signal.symbol}\nScore: ${signal.score}/100 · ${signal.entryStatus}\nEntry: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`;
+  return `${sideUa(side as Signal["side"])} ${signal.symbol}\nОцінка сетапу: ${signal.score}/100 · ${entryStatusUa(signal.entryStatus)}\nВхід: ${fmt(signal.entry[0])}–${fmt(signal.entry[1])}`;
 }
 
 function compactSignalCard(signal: Signal) {
@@ -1362,21 +1368,34 @@ function signalKey(signal: Signal) {
   return [signal.symbol, side, signal.mode, fmt(signal.entry[0]), fmt(signal.entry[1])].join(":");
 }
 
+function sideUa(side: Signal["side"] | "LONG" | "SHORT") {
+  if (side === "NO_TRADE") return "без входу";
+  if (side === "WATCHLIST") return "моніторинг";
+  if (side === "BUY" || side === "LONG") return "LONG";
+  return "SHORT";
+}
+
+function entryStatusUa(status: Signal["entryStatus"]) {
+  if (status === "ENTER_NOW") return "можна входити";
+  if (status === "WAIT_FOR_ENTRY") return "очікування входу";
+  return "без входу";
+}
+
 function topLine(signal: Signal) {
   const side = signal.side === "BUY" ? "LONG" : signal.side;
   const icon = side === "SHORT" ? "🔴" : side === "WATCHLIST" ? "⚠️" : "🟢";
-  return `${icon} ${side} ${signal.symbol} — ${signal.score}%`;
+  return `${icon} ${sideUa(side as Signal["side"])} ${signal.symbol} — ${signal.score}%`;
 }
 
 function positionSummary(signal: Signal) {
   const side = signal.side === "BUY" ? "LONG" : signal.side;
   return [
-    `${side} ${signal.symbol} — ${signal.score}%`,
-    `Entry: ${fmt(signal.entry[0])}-${fmt(signal.entry[1])}`,
+    `${sideUa(side as Signal["side"])} ${signal.symbol} — ${signal.score}%`,
+    `Вхід: ${fmt(signal.entry[0])}-${fmt(signal.entry[1])}`,
     `SL: ${fmt(signal.stopLoss)}`,
     `TP: ${signal.takeProfit.map(fmt).join(" / ")}`,
-    "Breakeven: після TP1",
-    `Status: ${signal.entryStatus}`
+    "Беззбитковість: після TP1",
+    `Статус: ${entryStatusUa(signal.entryStatus)}`
   ].join("\n");
 }
 
@@ -1386,22 +1405,22 @@ function pairSearchText(result: { query: string; futures: MarketRegistryItem[]; 
   return [
     "🔍 Пошук по парах",
     "",
-    `Query: ${result.query}`,
+    `Запит: ${result.query}`,
     "",
-    "Found:",
+    "Знайдено:",
     "",
     "📈 Futures:",
-    result.futures.length ? result.futures.slice(0, 5).map(shortMarketLine).join("\n") : "Not found",
+    result.futures.length ? result.futures.slice(0, 5).map(shortMarketLine).join("\n") : "не знайдено",
     "",
     "💰 Spot:",
-    result.spot.length ? result.spot.slice(0, 5).map(shortMarketLine).join("\n") : "Not found",
+    result.spot.length ? result.spot.slice(0, 5).map(shortMarketLine).join("\n") : "не знайдено",
     "",
-    best && health ? "Market health:" : "",
+    best && health ? "Стан ринку:" : "",
     best && health ? `${health.label} (${health.score}/100)` : "",
-    best ? `Volume: ${formatUsd(best.turnover24h)}` : "",
-    best ? `Liquidity: ${best.liquidity}/100` : "",
+    best ? `Обсяг: ${formatUsd(best.turnover24h)}` : "",
+    best ? `Ліквідність: ${best.liquidity}/100` : "",
     best ? `Spread: ${(best.spreadPct * 100).toFixed(3)}%` : "",
-    best ? `Volatility: 24h ${(best.price24hPcnt * 100).toFixed(2)}%` : ""
+    best ? `Волатильність: 24h ${(best.price24hPcnt * 100).toFixed(2)}%` : ""
   ].filter(Boolean).join("\n");
 }
 
@@ -1425,14 +1444,14 @@ function futuresExecutionAnalysisText(signal: Signal, _market?: MarketRegistryIt
 
 function spotExecutionAnalysisText(analysis: Awaited<ReturnType<typeof analyzeSpot>>) {
   const ready = analysis.suitability.shortTermTrade || analysis.suitability.midTermHold;
-  const decision = ready && analysis.shortTerm.confidence >= 62 ? "🟢 LONG" : "⚪ WAIT / NO TRADE";
+  const decision = ready && analysis.shortTerm.confidence >= 62 ? "🟢 LONG" : "⚪ ЧЕКАТИ / БЕЗ ВХОДУ";
   const wait = decision.includes("WAIT");
   const sl = analysis.longTerm.accumulationZone[0] * 0.97;
   return [
     `${decision} — ${analysis.symbol}`,
     "",
-    `📍 Entry zone: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
-    "➡️ LONG setup",
+    `📍 Зона входу: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
+    "➡️ LONG сетап",
     "",
     `🛑 SL: ${fmt(sl)}`,
     `🎯 TP1: ${fmt(analysis.longTerm.resistance[0])}`,
@@ -1440,29 +1459,29 @@ function spotExecutionAnalysisText(analysis: Awaited<ReturnType<typeof analyzeSp
     `🎯 TP3: ${analysis.longTerm.growthPotential}`,
     "",
     "⚡ spot",
-    `📊 Confidence: ${analysis.shortTerm.confidence}%`,
+    `📊 Впевненість входу: ${analysis.shortTerm.confidence}/100`,
     "",
     "Причина:",
     ...spotExecutionReasons(analysis, wait).map((reason) => `• ${reason}`),
     wait ? "" : null,
-    wait ? "⏱ Recheck: 2 min" : null
+    wait ? "⏱ Повторна перевірка: 2 хв" : null
   ].filter(Boolean).join("\n");
 }
 
 function spotExecutionReasons(analysis: Awaited<ReturnType<typeof analyzeSpot>>, noTrade: boolean) {
   const positive = [
-    analysis.metrics.momentumScore >= 60 ? "momentum confirm" : null,
-    analysis.metrics.trendScore >= 60 ? "trend confirm" : null,
-    analysis.metrics.volume24h >= 1_000_000 ? "volume confirm" : null,
-    analysis.metrics.health.score >= 55 ? "liquidity ok" : null,
-    analysis.metrics.btcCorrelation > -0.4 ? "BTC stable" : null
+    analysis.metrics.momentumScore >= 60 ? "імпульс підтверджений" : null,
+    analysis.metrics.trendScore >= 60 ? "тренд підтверджений" : null,
+    analysis.metrics.volume24h >= 1_000_000 ? "обсяг підтверджений" : null,
+    analysis.metrics.health.score >= 55 ? "ліквідність нормальна" : null,
+    analysis.metrics.btcCorrelation > -0.4 ? "BTC стабільний" : null
   ].filter(Boolean) as string[];
   const blockers = [
-    analysis.metrics.volume24h < 1_000_000 ? "weak volume" : null,
-    analysis.metrics.momentumScore < 55 ? "weak momentum" : null,
-    analysis.metrics.price > analysis.longTerm.accumulationZone[1] ? "no retest" : null,
-    analysis.metrics.health.score < 55 ? "weak liquidity" : null,
-    analysis.longTerm.riskProfile === "Extreme" ? "high risk" : null
+    analysis.metrics.volume24h < 1_000_000 ? "слабкий обсяг" : null,
+    analysis.metrics.momentumScore < 55 ? "слабкий імпульс" : null,
+    analysis.metrics.price > analysis.longTerm.accumulationZone[1] ? "немає ретесту" : null,
+    analysis.metrics.health.score < 55 ? "слабка ліквідність" : null,
+    analysis.longTerm.riskProfile === "Extreme" ? "високий ризик" : null
   ].filter(Boolean) as string[];
   if (noTrade) return blockers.slice(0, 5);
   return [...positive, ...blockers.filter((reason) => !positive.includes(reason))].slice(0, 5);
@@ -1480,14 +1499,14 @@ function futuresTraderBriefText(signal: Signal) {
     "Причина одним реченням:",
     futuresBriefReason(signal, decision, confirmations, blockers),
     "",
-    `📍 Entry: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
-    `➡️ ${direction} setup`,
+    `📍 Вхід: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
+    `➡️ ${direction} сетап`,
     `🛑 SL: ${fmt(signal.stopLoss)}`,
     `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
     `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
     `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
     "",
-    `📊 Confidence: ${signal.confidence}%`,
+    `📊 Впевненість входу: ${signal.confidence}/100`,
     `⚖️ RR: ${signal.riskReward}`,
     "",
     "Коротко що підтверджує:",
@@ -1501,7 +1520,7 @@ function futuresTraderBriefText(signal: Signal) {
 
 function spotTraderBriefText(analysis: Awaited<ReturnType<typeof analyzeSpot>>) {
   const ready = analysis.suitability.shortTermTrade || analysis.suitability.midTermHold;
-  const decision = ready && analysis.shortTerm.confidence >= 62 ? "🟢 LONG" : "⚪ WAIT";
+  const decision = ready && analysis.shortTerm.confidence >= 62 ? "🟢 LONG" : "⚪ ЧЕКАТИ";
   const sl = analysis.longTerm.accumulationZone[0] * 0.97;
   const confirmations = spotBriefConfirmations(analysis);
   const blockers = spotExecutionReasons(analysis, decision.includes("WAIT"));
@@ -1512,14 +1531,14 @@ function spotTraderBriefText(analysis: Awaited<ReturnType<typeof analyzeSpot>>) 
     "Причина одним реченням:",
     spotBriefReason(analysis, decision, confirmations, blockers),
     "",
-    `📍 Entry: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
-    "➡️ LONG setup",
+    `📍 Вхід: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
+    "➡️ LONG сетап",
     `🛑 SL: ${fmt(sl)}`,
     `🎯 TP1: ${fmt(analysis.longTerm.resistance[0])}`,
     `🎯 TP2: ${fmt(analysis.longTerm.resistance[1])}`,
     `🎯 TP3: ${analysis.longTerm.growthPotential}`,
     "",
-    `📊 Confidence: ${analysis.shortTerm.confidence}%`,
+    `📊 Впевненість входу: ${analysis.shortTerm.confidence}/100`,
     `⚖️ RR: ${spotRiskReward(analysis.metrics.price, sl, analysis.longTerm.resistance[0])}`,
     "",
     "Коротко що підтверджує:",
@@ -1534,7 +1553,7 @@ function spotTraderBriefText(analysis: Awaited<ReturnType<typeof analyzeSpot>>) 
 function futuresBriefDecision(signal: Signal) {
   if ((signal.side === "LONG" || signal.side === "BUY") && signal.entryStatus !== "NO_TRADE") return "🟢 LONG";
   if (signal.side === "SHORT" && signal.entryStatus !== "NO_TRADE") return "🔴 SHORT";
-  return "⚪ WAIT";
+  return "⚪ ЧЕКАТИ";
 }
 
 function futuresSetupDirection(signal: Signal) {
@@ -1546,10 +1565,10 @@ function futuresSetupDirection(signal: Signal) {
 function futuresBriefConfirmations(signal: Signal) {
   const breakdown = signal.scoreBreakdown ?? {};
   const items = [
-    (breakdown.momentumQuality ?? 0) >= 70 ? "momentum" : null,
-    signal.correlation.aligned || signal.btcStable || signal.symbol === "BTCUSDT" ? "BTC correlation" : null,
-    (breakdown.liquiditySweep ?? 0) >= 65 || (breakdown.orderBookImbalance ?? 0) >= 60 ? "liquidity" : null,
-    signal.higherTimeframe.aligned || (breakdown.multiTimeframeAlignment ?? 0) >= 55 ? "trend" : null
+    (breakdown.momentumQuality ?? 0) >= 70 ? "імпульс" : null,
+    signal.correlation.aligned || signal.btcStable || signal.symbol === "BTCUSDT" ? "кореляція BTC" : null,
+    (breakdown.liquiditySweep ?? 0) >= 65 || (breakdown.orderBookImbalance ?? 0) >= 60 ? "ліквідність" : null,
+    signal.higherTimeframe.aligned || (breakdown.multiTimeframeAlignment ?? 0) >= 55 ? "тренд" : null
   ].filter(Boolean) as string[];
   return items.length ? items.slice(0, 4) : ["немає сильного підтвердження"];
 }
@@ -1557,32 +1576,32 @@ function futuresBriefConfirmations(signal: Signal) {
 function futuresBriefBlockers(signal: Signal) {
   const breakdown = signal.scoreBreakdown ?? {};
   const items = [
-    signal.fakeBreakout.risk ? "fake breakout risk" : null,
-    (breakdown.volumeConfirmation ?? 0) < 65 ? "weak volume" : null,
-    (breakdown.entrySniper ?? 0) < 70 ? "no sniper trigger" : null,
-    (breakdown.liquiditySweep ?? 0) < 65 ? "bad retest" : null,
-    !signal.btcStable && signal.symbol !== "BTCUSDT" ? "BTC correlation risk" : null
+    signal.fakeBreakout.risk ? "ризик fake breakout" : null,
+    (breakdown.volumeConfirmation ?? 0) < 65 ? "слабкий обсяг" : null,
+    (breakdown.entrySniper ?? 0) < 70 ? "немає sniper-тригера" : null,
+    (breakdown.liquiditySweep ?? 0) < 65 ? "слабкий ретест" : null,
+    !signal.btcStable && signal.symbol !== "BTCUSDT" ? "ризик кореляції BTC" : null
   ].filter(Boolean) as string[];
   return items.length ? items.slice(0, 4) : ["критичних перешкод немає"];
 }
 
 function futuresBriefReason(signal: Signal, decision: string, confirmations: string[], blockers: string[]) {
-  if (decision.includes("WAIT")) return `Чекаємо, бо ${blockers[0] ?? "немає чистого entry"}.`;
+  if (decision.includes("ЧЕКАТИ")) return `Чекаємо, бо ${blockers[0] ?? "немає чистого входу"}.`;
   return `${decision.replace(/^[^\s]+\s/, "")} сценарій активний, бо ${confirmations.slice(0, 2).join(" і ")}; головний ризик: ${blockers[0] ?? "низький"}.`;
 }
 
 function spotBriefConfirmations(analysis: Awaited<ReturnType<typeof analyzeSpot>>) {
   const items = [
-    analysis.metrics.momentumScore >= 60 ? "momentum" : null,
-    analysis.metrics.btcCorrelation > -0.4 ? "BTC correlation" : null,
-    analysis.metrics.health.score >= 55 ? "liquidity" : null,
-    analysis.metrics.trendScore >= 60 ? "trend" : null
+    analysis.metrics.momentumScore >= 60 ? "імпульс" : null,
+    analysis.metrics.btcCorrelation > -0.4 ? "кореляція BTC" : null,
+    analysis.metrics.health.score >= 55 ? "ліквідність" : null,
+    analysis.metrics.trendScore >= 60 ? "тренд" : null
   ].filter(Boolean) as string[];
   return items.length ? items.slice(0, 4) : ["немає сильного підтвердження"];
 }
 
 function spotBriefReason(analysis: Awaited<ReturnType<typeof analyzeSpot>>, decision: string, confirmations: string[], blockers: string[]) {
-  if (decision.includes("WAIT")) return `Чекаємо, бо ${blockers[0] ?? "немає чистого entry"}.`;
+  if (decision.includes("ЧЕКАТИ")) return `Чекаємо, бо ${blockers[0] ?? "немає чистого входу"}.`;
   return `LONG сценарій активний, бо ${confirmations.slice(0, 2).join(" і ")}; головний ризик: ${blockers[0] ?? analysis.longTerm.riskProfile}.`;
 }
 
@@ -1599,44 +1618,44 @@ function futuresProfessionalAnalysisText(signal: Signal, market?: MarketRegistry
     `Тип ринку: futures / perpetual${market?.quoteAsset ? ` / ${market.quoteAsset}` : ""}`,
     result?.spot.length ? `Також є Spot: ${result.spot.slice(0, 3).map((item) => item.symbol).join(", ")}` : "Spot: не знайдено або нижча ліквідність",
     "",
-    "SHORT TERM:",
+    "КОРОТКИЙ ТЕРМІН:",
     `Scalp: ${scalpOutlook(signal)}`,
     `Intraday: ${intradayOutlook(signal)}`,
-    `5m outlook: ${scoreLabel(breakdown.fastMoveQuality ?? breakdown.entrySniper)} / ${signal.fastMoveQuality.message}`,
-    `15m outlook: ${signal.side === "NO_TRADE" ? "немає якісного входу" : signal.side === "WATCHLIST" ? "watchlist only" : signal.side}`,
-    `1h outlook: ${signal.higherTimeframe.aligned ? "aligned" : signal.higherTimeframe.counterTrend ? "counter-trend risk" : "mixed"}`,
+    `5m прогноз: ${scoreLabel(breakdown.fastMoveQuality ?? breakdown.entrySniper)} / ${signal.fastMoveQuality.message}`,
+    `15m прогноз: ${signal.side === "NO_TRADE" ? "немає якісного входу" : signal.side === "WATCHLIST" ? "тільки моніторинг" : sideUa(signal.side)}`,
+    `1h прогноз: ${signal.higherTimeframe.aligned ? "узгоджено" : signal.higherTimeframe.counterTrend ? "ризик контртренду" : "змішано"}`,
     "",
-    "LONG TERM:",
-    `Swing: ${signal.higherTimeframe.score >= 70 ? "continuation favored" : signal.higherTimeframe.counterTrend ? "reversal risk" : "range/mixed"}`,
+    "ДОВГИЙ ТЕРМІН:",
+    `Swing: ${signal.higherTimeframe.score >= 70 ? "перевага продовження" : signal.higherTimeframe.counterTrend ? "ризик розвороту" : "діапазон/змішано"}`,
     `Continuation: ${signal.higherTimeframe.aligned && !signal.fakeBreakout.risk ? "так" : "потрібне підтвердження"}`,
     `Reversal: ${signal.marketRegime === "REVERSAL" ? "активний сценарій" : "не основний сценарій"}`,
-    `Accumulation/Distribution: ${signal.marketRegime === "SIDEWAYS" || signal.marketRegime === "LOW_VOLATILITY" ? "range accumulation/distribution" : "немає явної зони"}`,
+    `Накопичення/розподіл: ${signal.marketRegime === "SIDEWAYS" || signal.marketRegime === "LOW_VOLATILITY" ? "діапазон накопичення/розподілу" : "немає явної зони"}`,
     "",
     "Професійний аналіз:",
-    `Trend: ${signal.marketRegime}`,
-    `Momentum: ${scoreLabel(breakdown.momentumQuality)}`,
-    `Volume: ${scoreLabel(breakdown.volumeConfirmation)}${market ? ` / 24h ${formatUsd(market.turnover24h)}` : ""}`,
+    `Тренд: ${regimeUaText(signal.marketRegime)}`,
+    `Імпульс: ${scoreLabel(breakdown.momentumQuality)}`,
+    `Обсяг: ${scoreLabel(breakdown.volumeConfirmation)}${market ? ` / 24h ${formatUsd(market.turnover24h)}` : ""}`,
     `OI: ${oi.message} (${oi.score}/100)`,
     `Funding: ${fundingText(signal)} (${funding}/100)`,
-    `Liquidity: ${scoreLabel(market?.liquidity ?? breakdown.liquidity)}${market ? ` / ${formatUsd(market.turnover24h)}` : ""}`,
+    `Ліквідність: ${scoreLabel(market?.liquidity ?? breakdown.liquidity)}${market ? ` / ${formatUsd(market.turnover24h)}` : ""}`,
     `Spread: ${market ? `${(market.spreadPct * 100).toFixed(3)}%` : "немає даних"}`,
-    `BTC correlation: ${signal.correlation.aligned ? "aligned" : signal.correlation.riskOff ? "risk-off" : "mixed"}`,
-    `Market regime: ${signal.marketRegime}`,
-    `Sniper trigger: ${scoreLabel(breakdown.entrySniper)}`,
-    `Retest status: ${scoreLabel(breakdown.liquiditySweep)} / ${signal.liquidityIntelligence.message}`,
-    `Manipulation risk: ${manipulationRisk(signal)}`,
-    `Whale activity: ${scoreLabel(breakdown.whaleActivity)}${intel ? ` / ${intel.whale.whaleBias} ${intel.whale.smartMoneyScore}/100` : ""}`,
-    `Liquidation pressure: ${intel ? `${intel.liq.sweepDirection} / strength ${intel.liq.liqSignalStrength}/100 / trap ${intel.liq.trapProbability}/100` : signal.liquidityIntelligence.message}`,
+    `Кореляція BTC: ${signal.correlation.aligned ? "узгоджено" : signal.correlation.riskOff ? "risk-off" : "змішано"}`,
+    `Режим ринку: ${regimeUaText(signal.marketRegime)}`,
+    `Sniper-тригер: ${scoreLabel(breakdown.entrySniper)}`,
+    `Статус ретесту: ${scoreLabel(breakdown.liquiditySweep)} / ${signal.liquidityIntelligence.message}`,
+    `Ризик маніпуляції: ${manipulationRisk(signal)}`,
+    `Активність китів: ${scoreLabel(breakdown.whaleActivity)}${intel ? ` / ${biasUa(intel.whale.whaleBias)} ${intel.whale.smartMoneyScore}/100` : ""}`,
+    `Тиск ліквідацій: ${intel ? `${biasUa(intel.liq.sweepDirection)} / сила ${intel.liq.liqSignalStrength}/100 / пастка ${intel.liq.trapProbability}/100` : signal.liquidityIntelligence.message}`,
     "",
-    "ENTRY:",
-    `📍 entry zone: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
+    "ВХІД:",
+    `📍 зона входу: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
     `🛑 SL: ${fmt(signal.stopLoss)}`,
     `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
     `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
     `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
-    `Confidence: ${signal.confidence}% / score ${signal.score}%`,
+    `Впевненість входу: ${signal.confidence}/100 / оцінка сетапу ${signal.score}/100`,
     `RR: ${signal.riskReward}`,
-    `STATUS ONLY: ${status}`,
+    `СТАТУС: ${statusUa(status)}`,
     "",
     signal.rejectionReason ? `Фільтр: ${signal.rejectionReason}` : "Фільтр: setup валідний тільки після підтвердження entry-зони",
     "Причини:",
@@ -1646,7 +1665,7 @@ function futuresProfessionalAnalysisText(signal: Signal, market?: MarketRegistry
 
 function spotProfessionalAnalysisText(analysis: Awaited<ReturnType<typeof analyzeSpot>>, market?: MarketRegistryItem, result?: { query: string; futures: MarketRegistryItem[]; spot: MarketRegistryItem[] }) {
   const ready = analysis.suitability.shortTermTrade || analysis.suitability.midTermHold;
-  const status = ready && analysis.shortTerm.confidence >= 72 ? "✅ READY" : analysis.shortTerm.confidence >= 62 ? "👀 WATCHLIST" : "❌ NO TRADE";
+  const status = ready && analysis.shortTerm.confidence >= 72 ? "✅ ГОТОВО" : analysis.shortTerm.confidence >= 62 ? "👀 МОНІТОРИНГ" : "❌ БЕЗ ВХОДУ";
   const sl = analysis.longTerm.accumulationZone[0] * 0.97;
   return [
     `🔍 Пошук по парах — ${analysis.symbol}`,
@@ -1655,45 +1674,45 @@ function spotProfessionalAnalysisText(analysis: Awaited<ReturnType<typeof analyz
     "Тип ринку: spot",
     result?.futures.length ? `Також є Futures: ${result.futures.slice(0, 3).map((item) => item.symbol).join(", ")}` : "Futures: не знайдено або нижча ліквідність",
     "",
-    "SHORT TERM:",
+    "КОРОТКИЙ ТЕРМІН:",
     `Scalp: ${analysis.shortTerm.scalping}`,
     `Intraday: ${analysis.shortTerm.intraday}`,
-    `5m outlook: N/A для spot scalping engine` ,
-    `15m outlook: ${analysis.shortTerm.scalping}`,
-    `1h outlook: ${analysis.shortTerm.intraday}`,
+    `5m прогноз: недоступно для spot-скальпінгу`,
+    `15m прогноз: ${analysis.shortTerm.scalping}`,
+    `1h прогноз: ${analysis.shortTerm.intraday}`,
     "",
-    "LONG TERM:",
+    "ДОВГИЙ ТЕРМІН:",
     `Swing: ${analysis.shortTerm.swing}`,
     `Continuation: ${analysis.metrics.trendScore >= 65 ? "можлива" : "потрібне підтвердження"}`,
-    `Reversal: ${analysis.longTerm.marketCycle.includes("Distribution") ? "ризик від resistance" : "не основний сценарій"}`,
-    `Accumulation/Distribution: ${analysis.longTerm.marketCycle}`,
+    `Розворот: ${analysis.longTerm.marketCycle.includes("Distribution") ? "ризик від resistance" : "не основний сценарій"}`,
+    `Накопичення/розподіл: ${analysis.longTerm.marketCycle}`,
     "",
     "Професійний аналіз:",
-    `Trend: ${analysis.metrics.trendScore}/100`,
-    `Momentum: ${analysis.metrics.momentumScore}/100`,
-    `Volume: ${formatUsd(analysis.metrics.volume24h)}`,
+    `Тренд: ${analysis.metrics.trendScore}/100`,
+    `Імпульс: ${analysis.metrics.momentumScore}/100`,
+    `Обсяг: ${formatUsd(analysis.metrics.volume24h)}`,
     "OI: N/A для spot",
-    "Funding: N/A для spot",
-    `Liquidity: ${analysis.metrics.liquidity}/100`,
+    "Funding: недоступний для spot",
+    `Ліквідність: ${analysis.metrics.liquidity}/100`,
     `Spread: ${(analysis.metrics.spreadPct * 100).toFixed(3)}%`,
-    `BTC correlation: ${analysis.metrics.btcCorrelation.toFixed(2)}`,
-    `Market regime: ${analysis.longTerm.marketCycle}`,
-    `Sniper trigger: ${ready ? "очікувати підтвердження біля smart entry" : "не готовий"}`,
-    `Retest status: ${analysis.metrics.price <= analysis.longTerm.accumulationZone[1] ? "біля accumulation/retest" : "чекати відкат"}`,
-    `Manipulation risk: ${spotManipulationRisk(analysis)}`,
-    `Whale activity: ${analysis.metrics.whaleScore}/100`,
-    "Liquidation pressure: N/A для spot",
+    `Кореляція BTC: ${analysis.metrics.btcCorrelation.toFixed(2)}`,
+    `Режим ринку: ${analysis.longTerm.marketCycle}`,
+    `Sniper-тригер: ${ready ? "очікувати підтвердження біля smart entry" : "не готовий"}`,
+    `Статус ретесту: ${analysis.metrics.price <= analysis.longTerm.accumulationZone[1] ? "біля accumulation/retest" : "чекати відкат"}`,
+    `Ризик маніпуляції: ${spotManipulationRisk(analysis)}`,
+    `Активність китів: ${analysis.metrics.whaleScore}/100`,
+    "Тиск ліквідацій: недоступний для spot",
     "",
-    "ENTRY:",
-    `📍 entry zone: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
+    "ВХІД:",
+    `📍 зона входу: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
     `🛑 SL: ${fmt(sl)}`,
     `🎯 TP1: ${fmt(analysis.longTerm.resistance[0])}`,
     `🎯 TP2: ${fmt(analysis.longTerm.resistance[1])}`,
     `🎯 TP3: ${analysis.longTerm.growthPotential}`,
-    `Confidence: ${analysis.shortTerm.confidence}% short / ${analysis.longTerm.confidence}% long`,
+    `Впевненість входу: ${analysis.shortTerm.confidence}/100 коротко / ${analysis.longTerm.confidence}/100 довго`,
     `RR: ${spotRiskReward(analysis.metrics.price, sl, analysis.longTerm.resistance[0])}`,
-    `STATUS ONLY: ${status}`,
-    market ? `Market health: ${marketHealth(market).label} (${marketHealth(market).score}/100)` : "",
+    `СТАТУС: ${status}`,
+    market ? `Стан ринку: ${marketHealthLabelUa(marketHealth(market).label)} (${marketHealth(market).score}/100)` : "",
     "",
     "Причини:",
     ...analysis.reasons.map((reason) => `• ${reason}`)
@@ -1701,41 +1720,52 @@ function spotProfessionalAnalysisText(analysis: Awaited<ReturnType<typeof analyz
 }
 
 function realStatus(signal: Signal) {
-  if (signal.entryStatus === "ENTER_NOW" && signal.side !== "NO_TRADE" && signal.side !== "WATCHLIST") return "🚀 ENTER NOW";
-  if (signal.entryStatus === "WAIT_FOR_ENTRY" && signal.score >= 88) return "✅ READY";
-  if (signal.side === "WATCHLIST" || signal.score >= 72) return "👀 WATCHLIST";
-  return "❌ NO TRADE";
+  if (signal.entryStatus === "ENTER_NOW" && signal.side !== "NO_TRADE" && signal.side !== "WATCHLIST") return "🚀 МОЖНА ВХОДИТИ";
+  if (signal.entryStatus === "WAIT_FOR_ENTRY" && signal.score >= 88) return "✅ ГОТОВО ДО ПІДТВЕРДЖЕННЯ";
+  if (signal.side === "WATCHLIST" || signal.score >= 72) return "👀 МОНІТОРИНГ";
+  return "❌ БЕЗ ВХОДУ";
+}
+
+function statusUa(value: string) {
+  return value;
+}
+
+function marketHealthLabelUa(value: string) {
+  if (value === "Strong") return "сильний";
+  if (value === "Tradable") return "торговий";
+  if (value === "Thin/Risky") return "тонкий/ризиковий";
+  return value;
 }
 
 function scalpOutlook(signal: Signal) {
   const breakdown = signal.scoreBreakdown ?? {};
-  if ((breakdown.entrySniper ?? 0) >= 90 && (breakdown.fastMoveQuality ?? 0) >= 70) return "sniper scalp possible after trigger";
-  if ((breakdown.entrySniper ?? 0) >= 70) return "wait for retest confirmation";
-  return "no scalp entry";
+  if ((breakdown.entrySniper ?? 0) >= 90 && (breakdown.fastMoveQuality ?? 0) >= 70) return "можливий sniper-скальп після тригера";
+  if ((breakdown.entrySniper ?? 0) >= 70) return "чекати підтвердження ретесту";
+  return "скальп-входу немає";
 }
 
 function intradayOutlook(signal: Signal) {
-  if (signal.side === "NO_TRADE") return "stand aside";
-  if (signal.side === "WATCHLIST") return "watchlist until entry zone confirms";
-  return `${signal.side} continuation if BTC/regime stays aligned`;
+  if (signal.side === "NO_TRADE") return "залишатися поза ринком";
+  if (signal.side === "WATCHLIST") return "моніторинг до підтвердження зони входу";
+  return `${sideUa(signal.side)} продовження, якщо BTC і режим ринку залишаються узгодженими`;
 }
 
 function manipulationRisk(signal: Signal) {
   const intel = signal.intelligence;
   const risks = [
     signal.fakeBreakout.risk ? "fake-breakout" : null,
-    signal.orderFlow.trapRisk ? "order-flow trap" : null,
-    intel && intel.whale.trapRisk >= 70 ? "whale trap" : null,
-    intel && intel.liq.trapProbability >= 70 ? "liquidation trap" : null,
-    signal.marketRegime === "MANIPULATION_RISK" ? "regime" : null
+    signal.orderFlow.trapRisk ? "пастка order flow" : null,
+    intel && intel.whale.trapRisk >= 70 ? "пастка китів" : null,
+    intel && intel.liq.trapProbability >= 70 ? "ліквідаційна пастка" : null,
+    signal.marketRegime === "MANIPULATION_RISK" ? "ризиковий режим" : null
   ].filter(Boolean);
-  return risks.length ? `HIGH (${risks.join(", ")})` : "LOW/MEDIUM";
+  return risks.length ? `ВИСОКИЙ (${risks.join(", ")})` : "НИЗЬКИЙ/СЕРЕДНІЙ";
 }
 
 function spotManipulationRisk(analysis: Awaited<ReturnType<typeof analyzeSpot>>) {
-  if (analysis.metrics.spreadPct > 0.01 || analysis.longTerm.riskProfile === "Extreme") return "HIGH";
-  if (analysis.metrics.whaleScore < 35 || analysis.longTerm.riskProfile === "High") return "MEDIUM";
-  return "LOW";
+  if (analysis.metrics.spreadPct > 0.01 || analysis.longTerm.riskProfile === "Extreme") return "ВИСОКИЙ";
+  if (analysis.metrics.whaleScore < 35 || analysis.longTerm.riskProfile === "High") return "СЕРЕДНІЙ";
+  return "НИЗЬКИЙ";
 }
 
 function scoreLabel(value: number | undefined) {
@@ -1796,28 +1826,28 @@ function marketText() {
     latest?.btcStable ? "Стабільний" : "Нестабільний або немає даних",
     "",
     "Funding:",
-    latest ? fundingText(latest) : "Немає даних",
+    latest ? fundingText(latest) : "немає даних",
     "",
-    "Risk:",
-    latest && latest.newsRisk.severity !== "HIGH" ? "Низький" : "Підвищений"
+    "Ризик:",
+    latest && latest.newsRisk.severity !== "HIGH" ? "низький" : "підвищений"
   ].join("\n");
 }
 
 function intelligenceText(section: "overview" | "pump" | "whale" | "liq" | "market") {
   const latest = latestIntelligence();
-  if (!latest) return ["📡 Intelligence", "", "Дані ще формуються.", "Live scanner має завершити хоча б один futures scan."].join("\n");
+  if (!latest) return ["📡 Інтелект", "", "Дані ще формуються.", "Live-сканер має завершити хоча б одну futures-перевірку."].join("\n");
   const [symbol, intel] = latest;
-  const header = ["📡 Intelligence", "", `Pair: ${symbol}`, `Updated: ${new Date(intel.updatedAt).toLocaleTimeString()}`, ""];
-  if (section === "pump") return [...header, "Pump Detector", ...intel.pump.reasons, `Score: ${intel.pump.pumpScore}/100`, `Momentum: ${intel.pump.momentumStrength}/100`, `Breakout: ${intel.pump.breakoutProbability}/100`, `Timing: ${intel.pump.entryTiming}`].join("\n");
-  if (section === "whale") return [...header, "Whale Bias", ...intel.whale.reasons, `Bias: ${intel.whale.whaleBias}`, `Smart money: ${intel.whale.smartMoneyScore}/100`, `Confidence: ${intel.whale.whaleConfidence}/100`, `Trap risk: ${intel.whale.trapRisk}/100`].join("\n");
-  if (section === "liq") return [...header, "Liquidation Status", ...intel.liq.reasons, `Strength: ${intel.liq.liqSignalStrength}/100`, `Sweep: ${intel.liq.sweepDirection}`, `Entry quality: ${intel.liq.entryQuality}/100`, `Trap: ${intel.liq.trapProbability}/100`].join("\n");
-  if (section === "market") return [...header, "Market Regime", ...intel.market.reasons, `Regime: ${intel.market.marketRegime}`, `Risk: ${intel.market.riskScore}/100`, `Aggression: ${intel.market.marketAggression}/100`, `BTC bias: ${intel.market.btcBias}`].join("\n");
+  const header = ["📡 Інтелект", "", `Пара: ${symbol}`, `Оновлено: ${new Date(intel.updatedAt).toLocaleTimeString()}`, ""];
+  if (section === "pump") return [...header, "Детектор пампу", ...intel.pump.reasons.map(intelReasonUa), `Оцінка: ${intel.pump.pumpScore}/100`, `Імпульс: ${intel.pump.momentumStrength}/100`, `Пробій: ${intel.pump.breakoutProbability}/100`, `Таймінг: ${entryTimingUa(intel.pump.entryTiming)}`].join("\n");
+  if (section === "whale") return [...header, "Перекіс китів", ...intel.whale.reasons.map(intelReasonUa), `Перекіс: ${biasUa(intel.whale.whaleBias)}`, `Розумні гроші: ${intel.whale.smartMoneyScore}/100`, `Впевненість: ${intel.whale.whaleConfidence}/100`, `Ризик пастки: ${intel.whale.trapRisk}/100`].join("\n");
+  if (section === "liq") return [...header, "Статус ліквідацій", ...intel.liq.reasons.map(intelReasonUa), `Сила: ${intel.liq.liqSignalStrength}/100`, `Sweep: ${biasUa(intel.liq.sweepDirection)}`, `Якість входу: ${intel.liq.entryQuality}/100`, `Пастка: ${intel.liq.trapProbability}/100`].join("\n");
+  if (section === "market") return [...header, "Режим ринку", ...intel.market.reasons.map(intelReasonUa), `Режим: ${regimeUaText(intel.market.marketRegime)}`, `Ризик: ${intel.market.riskScore}/100`, `Агресивність: ${intel.market.marketAggression}/100`, `BTC bias: ${biasUa(intel.market.btcBias)}`].join("\n");
   return [
     ...header,
-    `Pump Detector: ${intel.pump.pumpScore}/100 (${intel.pump.entryTiming})`,
-    `Whale Bias: ${intel.whale.whaleBias} ${intel.whale.smartMoneyScore}/100`,
-    `Liquidation: ${intel.liq.sweepDirection} ${intel.liq.entryQuality}/100`,
-    `Market Regime: ${intel.market.marketRegime}, risk ${intel.market.riskScore}/100`,
+    `Детектор пампу: ${intel.pump.pumpScore}/100 (${entryTimingUa(intel.pump.entryTiming)})`,
+    `Перекіс китів: ${biasUa(intel.whale.whaleBias)} ${intel.whale.smartMoneyScore}/100`,
+    `Ліквідації: ${biasUa(intel.liq.sweepDirection)} ${intel.liq.entryQuality}/100`,
+    `Режим ринку: ${regimeUaText(intel.market.marketRegime)}, ризик ${intel.market.riskScore}/100`,
     "",
     "Авто-пуші вимкнені для intelligence. Це тільки on-demand меню."
   ].join("\n");
@@ -1831,9 +1861,69 @@ function latestIntelligence() {
 
 function fundingText(signal: Signal) {
   const funding = signal.scoreBreakdown.fundingConfirmation ?? 0;
-  if (funding >= 70) return "Нормальний";
-  if (funding >= 45) return "Помірний";
-  return "Перегрітий";
+  if (funding >= 70) return "Funding: нормальний";
+  if (funding >= 45) return "Funding: помірний";
+  return "Funding: перегрітий";
+}
+
+function marketModeUa(value: string) {
+  return value.replace("Balanced", "збалансований").replace("Conservative", "обережний").replace("Aggressive", "агресивний");
+}
+
+function aggressionUa(value: string) {
+  if (value === "Balanced") return "збалансована";
+  if (value === "Selective fast momentum") return "вибірковий швидкий імпульс";
+  if (value === "Conservative") return "обережна";
+  return value.toLowerCase();
+}
+
+function regimeUaText(value: string) {
+  const map: Record<string, string> = {
+    TRENDING: "трендовий",
+    SIDEWAYS: "боковий",
+    BREAKOUT: "пробій",
+    REVERSAL: "розворот",
+    HIGH_VOLATILITY: "висока волатильність",
+    LOW_VOLATILITY: "низька волатильність",
+    CHOPPY: "шумний",
+    RANGING: "боковий",
+    EXPANSION: "розширення",
+    COMPRESSION: "стиснення",
+    VOLATILE: "волатильний",
+    NEWS_DRIVEN: "новинний",
+    MANIPULATION_RISK: "ризик маніпуляції"
+  };
+  return map[value] ?? value.toLowerCase();
+}
+
+function biasUa(value: string) {
+  return value
+    .replace(/bullish/gi, "бичачий")
+    .replace(/bearish/gi, "ведмежий")
+    .replace(/neutral/gi, "нейтральний")
+    .replace(/long/gi, "LONG")
+    .replace(/short/gi, "SHORT")
+    .replace(/none/gi, "немає")
+    .replace(/up/gi, "вгору")
+    .replace(/down/gi, "вниз");
+}
+
+function entryTimingUa(value: string) {
+  return value.replace(/wait/gi, "чекати").replace(/enter/gi, "вхід").replace(/now/gi, "зараз").replace(/retest/gi, "ретест");
+}
+
+function intelReasonUa(value: string) {
+  return value
+    .replace(/momentum/gi, "імпульс")
+    .replace(/volume/gi, "обсяг")
+    .replace(/breakout/gi, "пробій")
+    .replace(/whale/gi, "кити")
+    .replace(/liquidation/gi, "ліквідації")
+    .replace(/risk/gi, "ризик")
+    .replace(/trap/gi, "пастка")
+    .replace(/funding/gi, "funding")
+    .replace(/market/gi, "ринок")
+    .replace(/BTC/gi, "BTC");
 }
 
 function fullAnalysisText(pair: string) {
@@ -1868,7 +1958,7 @@ function buttonAction(text: string): ButtonAction | null {
     ["back", ["назад", "back"]],
     ["signals", ["сигнали", "signals"]],
     ["search_pair", ["search pair", "пошук по парах", "пошук пари", "пошук", "search"]],
-    ["watchlist", ["watchlist", "мій список"]],
+    ["watchlist", ["watchlist", "мій список", "список моніторингу"]],
     ["settings", ["налаштування", "settings"]],
     ["signal_pair", ["аналіз пари", "аналіз", "analyze pair", "signal pair"]],
     ["watch_add", ["додати пару", "add pair", "watch add"]],
@@ -1877,12 +1967,12 @@ function buttonAction(text: string): ButtonAction | null {
     ["signals_refresh", ["оновити сигнали", "refresh signals", "signals refresh"]],
     ["positions", ["активні угоди", "позиції", "оновити позиції", "positions"]],
     ["stats", ["статистика", "stats"]],
-    ["new_tokens", ["new tokens"]],
-    ["watch_status", ["watch status"]],
+    ["new_tokens", ["new tokens", "нові монети"]],
+    ["watch_status", ["watch status", "статус моніторингу"]],
     ["monitoring", ["моніторинг", "monitoring"]],
     ["momentum", ["великі рухи", "рухи", "momentum", "moves", "big moves"]],
-    ["momentum_long", ["long movers", "лонг рухи", "long momentum"]],
-    ["momentum_short", ["short movers", "шорт рухи", "short momentum"]],
+    ["momentum_long", ["long movers", "лідери long", "лонг рухи", "long momentum"]],
+    ["momentum_short", ["short movers", "лідери short", "шорт рухи", "short momentum"]],
     ["momentum_strongest", ["найсильніші рухи", "strongest moves", "strongest momentum"]],
     ["momentum_check", ["перевірити монету", "перевірити рух", "перевірити великий рух", "check momentum", "momentum check"]],
     ["whales", ["рух китів", "кити", "whales", "whale flow"]],
@@ -1894,7 +1984,7 @@ function buttonAction(text: string): ButtonAction | null {
     ["pump_detector", ["pump detector", "pump"]],
     ["whale_bias", ["whale bias", "whale"]],
     ["liquidation_status", ["liquidation status", "liquidation"]],
-    ["market_regime", ["market regime"]],
+    ["market_regime", ["market regime", "режим ринку"]],
     ["market", ["ринок", "оновити ринок", "market"]],
     ["btc", ["btc", "btc фільтр", "₿ btc фільтр", "btc filter"]],
     ["diagnostics", ["діагностика", "оновити статус", "diagnostics"]],
@@ -1905,9 +1995,9 @@ function buttonAction(text: string): ButtonAction | null {
     ["notifications", ["сповіщення", "notifications"]],
     ["telegram_ux", ["telegram ux"]],
     ["risk_mode", ["risk mode", "режим ризику"]],
-    ["conservative", ["conservative"]],
-    ["balanced", ["balanced"]],
-    ["aggressive", ["aggressive"]]
+    ["conservative", ["conservative", "обережний"]],
+    ["balanced", ["balanced", "збалансований"]],
+    ["aggressive", ["aggressive", "агресивний"]]
   ];
   return aliases.find(([, names]) => names.includes(stripped))?.[0] ?? null;
 }

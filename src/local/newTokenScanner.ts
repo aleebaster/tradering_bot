@@ -124,37 +124,37 @@ export async function analyzeBybitNewToken(symbol: string): Promise<NewTokenOppo
     leverage: score >= 95 && confirmations >= 7 ? "x3" : "x2",
     reasons: reasons({ ticker, orderbook, volume, oiScore, fundingScore, momentum, liquidityScore, retest, sniper, btcOk, regime: regimeFrom(candles), fakeBreakoutRisk }),
     waitingFor: waitingFor({ volume, oiScore, momentum, liquidityScore, retest, sniper, btcOk, orderbookScore, fakeBreakoutRisk }),
-    rejectionReason: earlyMomentum && !retest.confirmed ? "EARLY MOMENTUM: Wait retest." : rejectionReason({ ticker, orderbook, btcOk, recentPump, impulse, volatilityPct, confirmations, retest, sniper, score }),
+    rejectionReason: earlyMomentum && !retest.confirmed ? "РАННІЙ ІМПУЛЬС: чекати ретест." : rejectionReason({ ticker, orderbook, btcOk, recentPump, impulse, volatilityPct, confirmations, retest, sniper, score }),
     earlyMomentum
   };
 }
 
 export function formatNewTokenWatch(items: NewTokenOpportunity[]) {
-  if (!items.length) return ["🚀 NEW TOKENS WATCH", "", "Якісних Bybit futures new-token setup зараз немає.", "Фільтр: monitoring 5M+, entry 20M+, low spread, healthy depth, BTC stable, retest/sniper only."].join("\n");
-  return ["🚀 NEW TOKENS WATCH", "", ...items.map(formatNewTokenCard)].join("\n\n");
+  if (!items.length) return ["🚀 НОВІ МОНЕТИ", "", "Якісних сетапів Bybit futures по нових монетах зараз немає.", "Фільтр: моніторинг від 5M, вхід від 20M, низький spread, здорова глибина, стабільний BTC, тільки retest/sniper."].join("\n");
+  return ["🚀 НОВІ МОНЕТИ", "", ...items.map(formatNewTokenCard)].join("\n\n");
 }
 
 export function formatNewTokenCard(item: NewTokenOpportunity) {
-  const statusLabel = item.status === "SIGNAL" ? "🟢 REAL ENTRY" : item.earlyMomentum ? "⚠️ EARLY MOMENTUM" : item.score >= 85 ? "🟡 WATCHLIST" : item.score >= 80 ? "👀 EARLY SETUP" : item.status === "REJECTED" ? "❌ rejected" : "❌ weak setup";
+  const statusLabel = item.status === "SIGNAL" ? "🟢 РЕАЛЬНИЙ ВХІД" : item.earlyMomentum ? "⚠️ РАННІЙ ІМПУЛЬС" : item.score >= 85 ? "🟡 МОНІТОРИНГ" : item.score >= 80 ? "👀 РАННІЙ СЕТАП" : item.status === "REJECTED" ? "❌ відхилено" : "❌ слабкий сетап";
   const pumpDetected = item.waitingFor.some((reason) => reason.toLowerCase().includes("pump")) || item.rejectionReason.toLowerCase().includes("pumped");
-  const header = item.status === "SIGNAL" ? `🟢 REAL ENTRY — ${item.symbol}` : item.earlyMomentum ? `⚠️ EARLY MOMENTUM\n\n${item.symbol}` : item.score >= 85 ? `🚀 HIGH POTENTIAL DETECTED\n\n${item.symbol}` : item.score >= 80 ? `👀 EARLY SETUP — ${item.symbol}` : `🚀 NEW TOKEN WATCH\n\n${item.symbol}`;
+  const header = item.status === "SIGNAL" ? `🟢 РЕАЛЬНИЙ ВХІД — ${item.symbol}` : item.earlyMomentum ? `⚠️ РАННІЙ ІМПУЛЬС\n\n${item.symbol}` : item.score >= 85 ? `🚀 ВИСОКИЙ ПОТЕНЦІАЛ\n\n${item.symbol}` : item.score >= 80 ? `👀 РАННІЙ СЕТАП — ${item.symbol}` : `🚀 НОВА МОНЕТА\n\n${item.symbol}`;
   return [
     header,
     "",
-    pumpDetected ? "⚠️ PUMP DETECTED" : null,
-    pumpDetected ? "WAIT RETEST" : null,
-    item.earlyMomentum && !pumpDetected ? "Wait retest." : null,
+    pumpDetected ? "⚠️ ВИЯВЛЕНО PUMP" : null,
+    pumpDetected ? "ЧЕКАТИ РЕТЕСТ" : null,
+    item.earlyMomentum && !pumpDetected ? "Чекати ретест." : null,
     pumpDetected ? "" : null,
-    "Current status:",
+    "Поточний статус:",
     statusLabel,
-    `Score: ${item.score}/100 · confirmations ${item.confirmations}/9`,
-    `Volume 24h: ${formatUsd(item.turnover24h)}`,
-    `Spread: ${(item.spreadPct * 100).toFixed(3)}% · depth: ${formatUsd(item.depthUsdt)}`,
+    `Оцінка: ${item.score}/100 · підтвердження ${item.confirmations}/9`,
+    `Обсяг 24h: ${formatUsd(item.turnover24h)}`,
+    `Spread: ${(item.spreadPct * 100).toFixed(3)}% · глибина: ${formatUsd(item.depthUsdt)}`,
     "",
     "Причина:",
     ...item.reasons.slice(0, 6).map((reason) => `✅ ${reason}`),
     "",
-    item.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : item.score >= 85 ? "Waiting for:" : "Missing:",
+    item.entryStatus === "ENTER_NOW" ? "✅ ЗАХОДИТИ ЗАРАЗ" : item.score >= 85 ? "Чекаємо:" : "Не вистачає:",
     ...(item.entryStatus === "ENTER_NOW" ? [] : item.waitingFor.slice(0, 5).map((reason) => item.score >= 85 ? `• ${reason}` : `⚠️ ${reason}`)),
     item.entryStatus === "ENTER_NOW" ? "" : "Наступна перевірка: 1-2 хв",
     "",
@@ -212,7 +212,7 @@ function retestQuality(candles: Candle[], direction: number, e20: number, vw: nu
   const level = direction === 1 ? Math.max(e20, vw, sr.support) : Math.min(e20, vw, sr.resistance);
   const touched = direction === 1 ? last.low <= level * 1.004 && last.close > level : last.high >= level * 0.996 && last.close < level;
   const rejection = direction === 1 ? last.close > last.open && (last.close - last.low) / Math.max(last.high - last.low, 1e-9) > 0.55 : last.close < last.open && (last.high - last.close) / Math.max(last.high - last.low, 1e-9) > 0.55;
-  return { confirmed: touched && rejection, score: touched && rejection ? 100 : touched ? 70 : 25, message: touched && rejection ? "clean retest + rejection" : "retest ще не підтверджений" };
+  return { confirmed: touched && rejection, score: touched && rejection ? 100 : touched ? 70 : 25, message: touched && rejection ? "чистий retest + відбій" : "retest ще не підтверджений" };
 }
 
 function sniperQuality(candles: Candle[], direction: number) {
@@ -224,7 +224,7 @@ function sniperQuality(candles: Candle[], direction: number) {
   const sweep = direction === 1 ? last.low < priorLow && last.close > priorLow : last.high > priorHigh && last.close < priorHigh;
   const vol = volumeProfileScore(data) >= 55;
   const momentum = direction === 1 ? last.close > last.open : last.close < last.open;
-  return { confirmed: sweep && vol && momentum, score: sweep && vol && momentum ? 100 : sweep ? 70 : 20, message: sweep && vol && momentum ? "1M liquidity sweep + volume sniper" : "чекаємо 1M sniper trigger" };
+  return { confirmed: sweep && vol && momentum, score: sweep && vol && momentum ? 100 : sweep ? 70 : 20, message: sweep && vol && momentum ? "1M liquidity sweep + volume sniper підтверджено" : "чекаємо 1M sniper trigger" };
 }
 
 function entryZone(price: number, a: number, direction: number): [number, number] {
@@ -237,13 +237,13 @@ function targets(price: number, a: number, direction: number): [number, number, 
 
 function reasons(input: { ticker: { turnover24h: number }; orderbook: { spreadPct: number; depthUsdt: number }; volume: number; oiScore: number; fundingScore: number; momentum: number; liquidityScore: number; retest: { confirmed: boolean; message: string }; sniper: { confirmed: boolean; message: string }; btcOk: boolean; regime: string; fakeBreakoutRisk: boolean }) {
   return [
-    "новий Bybit USDT perpetual candidate",
+    "новий Bybit USDT perpetual кандидат",
     input.ticker.turnover24h >= IDEAL_TURNOVER ? "сильний futures обсяг 50M+" : input.ticker.turnover24h >= ENTRY_MIN_TURNOVER ? "обсяг 20M+ достатній для entry після підтверджень" : "обсяг 5M+ достатній тільки для моніторингу",
     input.oiScore >= 58 ? "OI росте без перегріву" : "OI нейтральний",
     input.fundingScore >= 80 ? "funding стабільний" : "funding не критичний",
     input.retest.confirmed ? input.retest.message : "чекаємо retest",
     input.sniper.confirmed ? input.sniper.message : "чекаємо sniper trigger",
-    input.btcOk ? "BTC stable" : "BTC нестабільний",
+    input.btcOk ? "BTC стабільний" : "BTC нестабільний",
     `режим: ${input.regime}`,
     input.fakeBreakoutRisk ? "fake breakout / pump risk активний" : "fake breakout risk низький"
   ];
@@ -251,31 +251,31 @@ function reasons(input: { ticker: { turnover24h: number }; orderbook: { spreadPc
 
 function waitingFor(input: { volume: number; oiScore: number; momentum: number; liquidityScore: number; retest: { confirmed: boolean }; sniper: { confirmed: boolean }; btcOk: boolean; orderbookScore: number; fakeBreakoutRisk: boolean }) {
   const out: string[] = [];
-  if (input.volume < 65) out.push("volume confirm / 20M+ turnover for entry");
-  if (input.oiScore < 58) out.push("OI confirm");
-  if (input.momentum < 65) out.push("momentum confirm");
-  if (input.liquidityScore < 70 || input.orderbookScore < 80) out.push("healthy orderbook/liquidity");
-  if (!input.btcOk) out.push("BTC stable");
-  if (input.fakeBreakoutRisk) out.push("cooldown after pump / no FOMO");
+  if (input.volume < 65) out.push("підтвердження обсягу / 20M+ turnover для входу");
+  if (input.oiScore < 58) out.push("підтвердження OI");
+  if (input.momentum < 65) out.push("підтвердження імпульсу");
+  if (input.liquidityScore < 70 || input.orderbookScore < 80) out.push("здоровий orderbook/liquidity");
+  if (!input.btcOk) out.push("стабільний BTC");
+  if (input.fakeBreakoutRisk) out.push("cooldown після pump / без FOMO");
   if (!input.retest.confirmed) out.push("retest");
   if (!input.sniper.confirmed) out.push("sniper trigger");
-  return out.length ? out : ["price stays in entry zone", "risk remains controlled"];
+  return out.length ? out : ["ціна залишається в зоні входу", "ризик залишається контрольованим"];
 }
 
 function rejectionReason(input: { ticker: { turnover24h: number }; orderbook: { spreadPct: number; depthUsdt: number; spoofRisk: boolean }; btcOk: boolean; recentPump: number; impulse: number; volatilityPct: number; confirmations: number; retest: { confirmed: boolean }; sniper: { confirmed: boolean }; score: number }) {
-  if (input.ticker.turnover24h < MIN_TURNOVER) return "low volume below 5M monitoring minimum";
-  if (input.orderbook.spreadPct > MAX_SPREAD) return "wide spread";
-  if (input.orderbook.depthUsdt < MIN_DEPTH || input.orderbook.spoofRisk) return "thin/suspicious orderbook";
-  if (!input.btcOk) return "BTC unstable";
-  if (input.recentPump > 0.2 || input.impulse > 0.15) return "already pumped / FOMO candle";
-  if (input.volatilityPct > 0.035) return "insane volatility";
+  if (input.ticker.turnover24h < MIN_TURNOVER) return "низький обсяг нижче мінімуму 5M для моніторингу";
+  if (input.orderbook.spreadPct > MAX_SPREAD) return "широкий spread";
+  if (input.orderbook.depthUsdt < MIN_DEPTH || input.orderbook.spoofRisk) return "тонкий/підозрілий orderbook";
+  if (!input.btcOk) return "BTC нестабільний";
+  if (input.recentPump > 0.2 || input.impulse > 0.15) return "вже був pump / FOMO-свічка";
+  if (input.volatilityPct > 0.035) return "екстремальна волатильність";
   if (input.confirmations < 4) return "setup ще слабкий, але лишається під моніторингом";
-  if (!input.retest.confirmed || !input.sniper.confirmed) return "WAIT: retest/sniper not confirmed";
-  return `score ${Math.round(input.score)}: моніторинг без входу`;
+  if (!input.retest.confirmed || !input.sniper.confirmed) return "ЧЕКАТИ: retest/sniper не підтверджено";
+  return `оцінка ${Math.round(input.score)}: моніторинг без входу`;
 }
 
 function rejected(symbol: string, reason: string): NewTokenOpportunity {
-  return { symbol, status: "REJECTED", side: "WAIT", score: 0, listedDays: null, turnover24h: 0, spreadPct: 1, depthUsdt: 0, confirmations: 0, btcStable: false, entryStatus: "NO_TRADE", entry: [0, 0], stopLoss: 0, takeProfit: [0, 0, 0], leverage: "x2", reasons: ["Bybit futures only", "strict small-account protection"], waitingFor: ["quality liquidity", "BTC stable", "retest", "sniper trigger"], rejectionReason: reason, earlyMomentum: false };
+  return { symbol, status: "REJECTED", side: "WAIT", score: 0, listedDays: null, turnover24h: 0, spreadPct: 1, depthUsdt: 0, confirmations: 0, btcStable: false, entryStatus: "NO_TRADE", entry: [0, 0], stopLoss: 0, takeProfit: [0, 0, 0], leverage: "x2", reasons: ["тільки Bybit futures", "суворий захист малого банку"], waitingFor: ["якісна ліквідність", "стабільний BTC", "retest", "sniper trigger"], rejectionReason: reason, earlyMomentum: false };
 }
 
 function formatUsd(value: number) {

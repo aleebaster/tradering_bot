@@ -746,7 +746,22 @@ function summarize(signals: Signal[]) {
   const risk = signals.some((s) => s.marketRegime === "MANIPULATION_RISK");
   if (risk) return "⚠️ РИНОК ВИСОКОГО РИЗИКУ — НЕ ВХОДИТИ";
   const best = signals.sort((a, b) => b.score - a.score)[0];
-  return best ? `Режим ринку: ${regimeUa(best.marketRegime)}. Найсильніший сетап: ${best.symbol} ${sideUa(best.side)} ${best.score}/100` : "Якісних ринкових даних ще немає";
+  if (!best) return "Якісних ринкових даних ще немає";
+  return [
+    "📈 Ринок:",
+    `Режим: ${regimeUa(best.marketRegime)}`,
+    "",
+    "🏆 Найкращий кандидат:",
+    best.symbol,
+    "",
+    `Оцінка сетапу: ${best.score}/100`,
+    `Впевненість входу: ${best.confidence}/100`,
+    "",
+    best.side === "NO_TRADE" || best.entryStatus !== "ENTER_NOW" ? "❌ ЗАРАЗ НЕ ВХОДИТИ" : `✅ ${sideUa(best.side)}`,
+    "",
+    "Причина:",
+    ...marketBlockReasons(best).map((reason) => `• ${reason}`)
+  ].join("\n");
 }
 
 function sideUa(side: Signal["side"]) {
@@ -754,6 +769,16 @@ function sideUa(side: Signal["side"]) {
 }
 
 function regimeUa(regime: Signal["marketRegime"]) {
-  const map: Record<Signal["marketRegime"], string> = { TRENDING: "трендовий", SIDEWAYS: "боковий", BREAKOUT: "breakout", REVERSAL: "reversal", HIGH_VOLATILITY: "висока волатильність", LOW_VOLATILITY: "низька волатильність", CHOPPY: "шумний", RANGING: "боковий", EXPANSION: "розширення", COMPRESSION: "стиснення", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" };
+  const map: Record<Signal["marketRegime"], string> = { TRENDING: "трендовий", SIDEWAYS: "боковий", BREAKOUT: "пробій", REVERSAL: "розворот", HIGH_VOLATILITY: "висока волатильність", LOW_VOLATILITY: "низька волатильність", CHOPPY: "шумний", RANGING: "боковий", EXPANSION: "розширення", COMPRESSION: "стиснення", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" };
   return map[regime];
+}
+
+function marketBlockReasons(signal: Signal) {
+  const out: string[] = [];
+  if ((signal.scoreBreakdown.volumeConfirmation ?? 0) < 65) out.push("слабкий обсяг");
+  if ((signal.scoreBreakdown.liquiditySweep ?? 0) < 65) out.push("немає ретесту");
+  if (signal.entryStatus !== "ENTER_NOW") out.push("очікування підтвердження");
+  if (signal.fakeBreakout.risk || signal.marketRegime === "MANIPULATION_RISK") out.push("ризик fake breakout");
+  if (!signal.btcStable && signal.symbol !== "BTCUSDT") out.push("BTC не підтверджує напрямок");
+  return out.length ? out.slice(0, 5) : ["умови формуються", "чекаємо кращу точку входу"];
 }

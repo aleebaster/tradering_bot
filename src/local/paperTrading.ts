@@ -160,17 +160,17 @@ export function paperMemoryStatsText() {
   const avgRr = average(closed.map((trade) => trade.rr));
   const watchlistSuccess = closed.length ? Math.round(wins.length / closed.length * 100) : 0;
   return [
-    "🧪 Paper Trade Memory",
+    "🧪 Памʼять paper-угод",
     "",
-    `Virtual winrate: ${closed.length ? Math.round(wins.length / closed.length * 100) : 0}%`,
-    `Watchlist success: ${watchlistSuccess}%`,
-    `Best setup type: ${rankSetup(closed, true)}`,
-    `Worst setup type: ${rankSetup(closed, false)}`,
-    `Average RR: ${avgRr.toFixed(2)}R`,
-    `Open simulations: ${state.trades.filter((trade) => trade.status === "OPEN").length}`,
-    `Closed simulations: ${closed.length}`,
+    `Віртуальний winrate: ${closed.length ? Math.round(wins.length / closed.length * 100) : 0}%`,
+    `Успішність моніторингу: ${watchlistSuccess}%`,
+    `Найкращий тип сетапу: ${rankSetup(closed, true)}`,
+    `Найгірший тип сетапу: ${rankSetup(closed, false)}`,
+    `Середній RR: ${avgRr.toFixed(2)}R`,
+    `Відкриті симуляції: ${state.trades.filter((trade) => trade.status === "OPEN").length}`,
+    `Закриті симуляції: ${closed.length}`,
     "",
-    "Last 20 paper trades:",
+    "Останні 20 paper-угод:",
     ...(closed.slice(0, 20).map((trade) => `${trade.symbol} ${trade.direction} ${trade.status} ${trade.rr.toFixed(2)}R · ${trade.setupType}`))
   ].join("\n");
 }
