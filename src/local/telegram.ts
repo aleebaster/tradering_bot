@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { logger } from "./logger";
 import type { Signal } from "./types";
 
 export type TelegramReplyMarkup = {
@@ -65,6 +66,8 @@ export class TelegramNotifier {
     if (replyMarkup) body.reply_markup = replyMarkup;
     const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
     if (!res.ok) throw new Error(`Помилка Telegram ${res.status}: ${(await res.text()).slice(0, 180)}`);
+    const json = await res.json().catch(() => null) as { ok?: boolean; result?: { message_id?: number; chat?: { id?: number | string } } } | null;
+    logger.info({ messageId: json?.result?.message_id, chatId: json?.result?.chat?.id, chars: text.length }, "Telegram response sent");
   }
 
   isEnabled() {

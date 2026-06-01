@@ -189,11 +189,15 @@ export class TelegramCommandCenter {
   private async handle(text: string): Promise<void> {
     const cleanText = normalizeButtonText(text);
     const button = buttonAction(cleanText);
-    if (this.pendingAction && !cleanText.startsWith("/") && (!button || isPairQueryText(cleanText))) return this.handlePendingInput(cleanText);
+    if (this.pendingAction && !cleanText.startsWith("/") && (!button || isPairQueryText(cleanText))) {
+      logger.info({ text, cleanText, pendingAction: this.pendingAction }, "Telegram handler executed");
+      return this.handlePendingInput(cleanText);
+    }
     if (this.pendingAction && button) this.pendingAction = null;
     const [rawCommand, rawPair] = cleanText.split(/\s+/, 2);
     const command = rawCommand.split("@")[0].toLowerCase();
     const pair = rawPair ? normalizePriorityPair(rawPair) : "";
+    logger.info({ text, cleanText, button, command }, "Telegram handler executed");
 
     if (["/start", "/menu"].includes(command) || button === "menu" || button === "back") return this.notifier.send(mainMenuText(), mainMenuKeyboard());
     if (button === "signals") return this.sendTopSetups();
@@ -388,6 +392,7 @@ export class TelegramCommandCenter {
   private async handleCallback(id: string, data: string, answer = true): Promise<void> {
     if (answer) await answerCallback(id);
     const [action, rawSymbol] = data.split(":", 2);
+    logger.info({ data, action, rawSymbol }, "Telegram callback handler executed");
     if (action === "ui") return this.handleUiCallback(rawSymbol ?? "");
     const pair = normalizePriorityPair(rawSymbol ?? "");
     if (!pair) return this.notifier.send("Пара не розпізнана", mainMenuKeyboard());
