@@ -79,7 +79,7 @@ export function signalQuickActions(symbol: string): TelegramReplyMarkup {
   return {
     inline_keyboard: [
       [{ text: "🟢 Моніторити", callback_data: `watch:${symbol}` }, { text: "🔄 Оновити Аналіз", callback_data: `refresh:${symbol}` }],
-      [{ text: "📈 Детальний аналіз", callback_data: `analyze_futures:${symbol}` }, { text: "❌ Видалити", callback_data: `remove:${symbol}` }]
+      [{ text: "📖 Детальний аналіз", callback_data: `analyze_futures:${symbol}` }, { text: "❌ Видалити", callback_data: `remove:${symbol}` }]
     ]
   };
 }
@@ -90,26 +90,27 @@ function modeUa(mode: string) {
 
 export function formatExecutionSignal(signal: Signal) {
   const leverage = strongestSetup(signal) ? "x3" : "x2";
-  const status = executionStatus(signal);
-  const label = status.replace(/^[^\s]+\s/, "");
+  const decision = executionDecision(signal);
+  const direction = setupDirection(signal);
+  const wait = decision.includes("WAIT");
   return [
-    `${status.split(" ")[0]} ${signal.symbol} — ${label}`,
+    `${decision} — ${signal.symbol}`,
     "",
-    `📍 Entry: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
+    `📍 Entry zone: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
+    `➡️ ${direction} setup`,
+    "",
     `🛑 SL: ${fmt(signal.stopLoss)}`,
-    "",
     `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
     `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
     `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
     "",
     `⚡ ${leverage}`,
-    `🔥 Confidence: ${signal.confidence}%`,
-    `📊 RR: ${signal.riskReward}`,
+    `📊 Confidence: ${signal.confidence}%`,
     "",
     "Причина:",
-    ...executionReasons(signal).map((reason) => `${label === "NO TRADE" ? "•" : "✅"} ${reason}`),
-    label === "NO TRADE" ? "" : null,
-    label === "NO TRADE" ? "⏱ Recheck: 2 min" : null
+    ...executionReasons(signal).map((reason) => `• ${reason}`),
+    wait ? "" : null,
+    wait ? "⏱ Recheck: 2 min" : null
   ].filter(Boolean).join("\n");
 }
 
@@ -140,16 +141,21 @@ export function isRealEntrySignal(signal: Signal) {
     && rrNumber(signal.riskReward) >= 2;
 }
 
-function executionStatus(signal: Signal) {
-  if (signal.entryStatus === "ENTER_NOW" && signal.side !== "NO_TRADE" && signal.side !== "WATCHLIST") return "🚀 ENTER NOW";
-  if (signal.entryStatus === "WAIT_FOR_ENTRY" && signal.score >= 88) return "✅ READY";
-  if (signal.side === "WATCHLIST" || signal.score >= 72) return "👀 WATCHLIST";
-  return "❌ NO TRADE";
+function executionDecision(signal: Signal) {
+  if ((signal.side === "LONG" || signal.side === "BUY") && signal.entryStatus !== "NO_TRADE") return "🟢 LONG";
+  if (signal.side === "SHORT" && signal.entryStatus !== "NO_TRADE") return "🔴 SHORT";
+  return "⚪ WAIT / NO TRADE";
+}
+
+function setupDirection(signal: Signal) {
+  if (signal.side === "SHORT") return "SHORT";
+  if (signal.side === "LONG" || signal.side === "BUY") return "LONG";
+  return signal.higherTimeframe.direction < 0 ? "SHORT" : "LONG";
 }
 
 function executionReasons(signal: Signal) {
   const breakdown = signal.scoreBreakdown;
-  const noTrade = executionStatus(signal).includes("NO TRADE");
+  const noTrade = executionDecision(signal).includes("WAIT");
   const positive = [
     (breakdown.momentumQuality ?? 0) >= 70 ? "momentum confirm" : null,
     (breakdown.openInterestConfirmation ?? 0) >= 65 ? "OI confirm" : null,

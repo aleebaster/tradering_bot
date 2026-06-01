@@ -662,8 +662,8 @@ function backKeyboard(): TelegramReplyMarkup {
 function pairSearchKeyboard(symbol: string, hasFutures: boolean, hasSpot: boolean): TelegramReplyMarkup {
   const rows: TelegramReplyMarkup["inline_keyboard"] = [];
   const analysis = [];
-  if (hasFutures) analysis.push({ text: "📈 Детальний аналіз", callback_data: `analyze_futures:${symbol}` });
-  if (!hasFutures && hasSpot) analysis.push({ text: "📈 Детальний аналіз", callback_data: `analyze_spot:${symbol}` });
+  if (hasFutures) analysis.push({ text: "📖 Детальний аналіз", callback_data: `analyze_futures:${symbol}` });
+  if (!hasFutures && hasSpot) analysis.push({ text: "📖 Детальний аналіз", callback_data: `analyze_spot:${symbol}` });
   if (hasFutures && hasSpot) analysis.push({ text: "💰 Детальний Spot", callback_data: `analyze_spot:${symbol}` });
   if (analysis.length) rows.push(analysis);
   rows.push([{ text: "🔥 Додати у Watchlist", callback_data: `search_add:${symbol}` }]);
@@ -1046,27 +1046,27 @@ function futuresExecutionAnalysisText(signal: Signal, _market?: MarketRegistryIt
 
 function spotExecutionAnalysisText(analysis: Awaited<ReturnType<typeof analyzeSpot>>) {
   const ready = analysis.suitability.shortTermTrade || analysis.suitability.midTermHold;
-  const status = ready && analysis.shortTerm.confidence >= 72 ? "✅ READY" : analysis.shortTerm.confidence >= 62 ? "👀 WATCHLIST" : "❌ NO TRADE";
-  const label = status.replace(/^[^\s]+\s/, "");
+  const decision = ready && analysis.shortTerm.confidence >= 62 ? "🟢 LONG" : "⚪ WAIT / NO TRADE";
+  const wait = decision.includes("WAIT");
   const sl = analysis.longTerm.accumulationZone[0] * 0.97;
   return [
-    `${status.split(" ")[0]} ${analysis.symbol} — ${label}`,
+    `${decision} — ${analysis.symbol}`,
     "",
-    `📍 Entry: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
+    `📍 Entry zone: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
+    "➡️ LONG setup",
+    "",
     `🛑 SL: ${fmt(sl)}`,
-    "",
     `🎯 TP1: ${fmt(analysis.longTerm.resistance[0])}`,
     `🎯 TP2: ${fmt(analysis.longTerm.resistance[1])}`,
     `🎯 TP3: ${analysis.longTerm.growthPotential}`,
     "",
     "⚡ spot",
-    `🔥 Confidence: ${analysis.shortTerm.confidence}%`,
-    `📊 RR: ${spotRiskReward(analysis.metrics.price, sl, analysis.longTerm.resistance[0])}`,
+    `📊 Confidence: ${analysis.shortTerm.confidence}%`,
     "",
     "Причина:",
-    ...spotExecutionReasons(analysis, label === "NO TRADE").map((reason) => `${label === "NO TRADE" ? "•" : "✅"} ${reason}`),
-    label === "NO TRADE" ? "" : null,
-    label === "NO TRADE" ? "⏱ Recheck: 2 min" : null
+    ...spotExecutionReasons(analysis, wait).map((reason) => `• ${reason}`),
+    wait ? "" : null,
+    wait ? "⏱ Recheck: 2 min" : null
   ].filter(Boolean).join("\n");
 }
 

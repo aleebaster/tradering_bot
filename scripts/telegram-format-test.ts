@@ -11,27 +11,37 @@ class CaptureNotifier extends TelegramNotifier {
 const notifier = new CaptureNotifier();
 
 const longMessage = [
-  "🚀 BTCUSDT — ENTER NOW",
+  "🟢 LONG — BTCUSDT",
   "",
-  "📍 Entry: 104250 - 104400",
+  "📍 Entry zone: 104250 - 104400",
+  "➡️ LONG setup",
+  "",
   "🛑 SL: 103780",
-  "",
   "🎯 TP1: 105100",
   "🎯 TP2: 106000",
   "🎯 TP3: 107200",
   "",
   "⚡ x2",
-  "🔥 Confidence: 94%",
-  "📊 RR: 1:4.2",
+  "📊 Confidence: 94%",
   "",
   "Причина:",
-  "✅ momentum confirm",
-  "✅ OI confirm",
-  "✅ volume confirm"
+  "• momentum bullish",
+  "• BTC supportive",
+  "• liquidity good"
 ].join("\n");
 
 const shortMessage = [
-  "❌ BTCUSDT — NO TRADE",
+  "⚪ WAIT / NO TRADE — BTCUSDT",
+  "",
+  "📍 Entry zone: 104250 - 104400",
+  "➡️ LONG setup",
+  "",
+  "🛑 SL: 103780",
+  "🎯 TP1: 105100",
+  "🎯 TP2: 106000",
+  "🎯 TP3: 107200",
+  "",
+  "📊 Confidence: 55%",
   "",
   "Причина:",
   "• weak volume",
@@ -47,13 +57,13 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     sent: [
-      { type: "ENTER_NOW", header: "🚀 BTCUSDT — ENTER NOW", symbol: "BTCUSDT" },
-      { type: "NO_TRADE", header: "❌ BTCUSDT — NO TRADE", symbol: "BTCUSDT" }
+      { type: "LONG", header: "🟢 LONG — BTCUSDT", symbol: "BTCUSDT" },
+      { type: "WAIT", header: "⚪ WAIT / NO TRADE — BTCUSDT", symbol: "BTCUSDT" }
     ],
     checks: {
       noLiveTelegramSpam: notifier.messages.length === 2,
-      requiredFields: "Pair / Status / Entry / SL / TP1-TP3 / Leverage / Confidence / RR / 3-5 reasons",
-      readableInSeconds: "1-2"
+      requiredFields: "Decision / Entry zone / Direction / SL / TP1-TP3 / Confidence / 3-5 reasons",
+      readableInSeconds: "2-3"
     }
   }, null, 2));
 }
