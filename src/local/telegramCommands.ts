@@ -17,10 +17,11 @@ import { marketHealth, resolvePair, type MarketRegistryItem } from "./marketRegi
 import { analyzeSpot } from "./spotAnalysis";
 import { analyzeFutures } from "./marketAnalysis";
 import { ExchangeClient } from "./exchanges";
+import { formatMomentumAlert, formatMomentumList, momentumActionsKeyboard, MomentumScanner, type MomentumFilter, type MomentumMove } from "./momentumScanner";
 import type { Signal } from "./types";
 import type { Candle } from "./types";
 
-type PendingAction = "signal" | "watch" | "unwatch" | "balance" | "newsignal" | "search" | "whale_check";
+type PendingAction = "signal" | "watch" | "unwatch" | "balance" | "newsignal" | "search" | "whale_check" | "momentum_check";
 type TelegramUpdate = {
   update_id: number;
   message?: { text?: string; chat?: { id?: number | string } };
@@ -49,6 +50,7 @@ export class TelegramCommandCenter {
   private handledMessages = 0;
   private offsetInitialized = false;
   private whaleClient = new ExchangeClient();
+  private momentumScanner = new MomentumScanner();
 
   constructor(notifier: TelegramCommandHandler = new TelegramNotifier()) {
     this.notifier = notifier;
@@ -216,6 +218,11 @@ export class TelegramCommandCenter {
     if (button === "new_tokens") return this.sendNewTokens();
     if (button === "watch_status") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
     if (button === "monitoring") return this.sendMonitoring();
+    if (button === "momentum") return this.sendMomentum("all");
+    if (button === "momentum_long") return this.sendMomentum("long");
+    if (button === "momentum_short") return this.sendMomentum("short");
+    if (button === "momentum_strongest") return this.sendMomentum("strongest");
+    if (button === "momentum_check") return this.askPair("momentum_check");
     if (button === "whales") return this.sendWhaleScanner("all");
     if (button === "whales_accumulation") return this.sendWhaleScanner("accumulation");
     if (button === "whales_distribution") return this.sendWhaleScanner("distribution");
@@ -242,6 +249,9 @@ export class TelegramCommandCenter {
     if (command === "/signals") return this.sendTopSetups();
     if (command === "/diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
     if (command === "/market") return this.notifier.send(marketText(), marketActionsKeyboard());
+    if (command === "/momentum" || command === "/moves") return this.sendMomentum("all");
+    if (command === "/longmovers") return this.sendMomentum("long");
+    if (command === "/shortmovers") return this.sendMomentum("short");
     if (command === "/whales") return this.sendWhaleScanner("all");
     if (command === "/intelligence") return this.notifier.send(intelligenceText("overview"), intelligenceKeyboard());
     if (command === "/markethealth") return this.notifier.send(marketHealthText(), marketActionsKeyboard());
@@ -301,6 +311,7 @@ export class TelegramCommandCenter {
     this.pendingAction = action;
     if (action === "balance") return this.notifier.send(["💰 Баланс", "", `Поточний баланс: ${loadTelegramSettings().balanceUsdt} USDT`, "", "Введіть новий баланс у USDT:", "Наприклад: 5"].join("\n"), backKeyboard());
     if (action === "whale_check") return this.notifier.send(["🐋 Перевірити монету", "", "Введіть монету або пару:", "BTC", "ETH", "PEPE", "DOGE", "BTCUSDT", "", "Я нормалізую btc → BTCUSDT."].join("\n"), whaleActionsKeyboard());
+    if (action === "momentum_check") return this.notifier.send(["🚨 Перевірити великий рух", "", "Введіть монету або пару:", "ESPORTS", "BTC", "ETH", "PEPE", "DOGE", "", "Я нормалізую btc → BTCUSDT."].join("\n"), momentumActionsKeyboard());
     const title = action === "search" ? "пошуку" : action === "newsignal" ? "new-token аналізу" : action === "signal" ? "аналізу" : action === "watch" ? "додавання" : "видалення";
     const question = action === "unwatch" ? "Яку пару видалити?" : "Введіть пару:";
     return this.notifier.send([question, "", "Приклади:", "BTCUSDT", "ETHUSDT", "AIGENSYNUSDT", "PEPEUSDT", "", "Можна вводити lowercase/uppercase: btc, BTC, btcusdt", "Пошук іде по всіх Bybit Spot/Futures/Perpetual/USDT/new listings.", "", `Режим: ${title}`].join("\n"), backKeyboard());
@@ -312,6 +323,7 @@ export class TelegramCommandCenter {
     if (action === "balance") return this.setBalance(text);
     if (action === "search") return this.sendPairSearch(text);
     if (action === "whale_check") return this.sendWhaleCoin(text);
+    if (action === "momentum_check") return this.sendMomentumCoin(text);
     const pair = normalizePriorityPair(text);
     if (!pair || pair.length < 6) return this.notifier.send("Пара не розпізнана. Приклад: BTCUSDT", mainMenuKeyboard());
     if (action === "watch") return this.handle(`/watch ${pair}`);
@@ -376,6 +388,27 @@ export class TelegramCommandCenter {
       return [] as WhaleRow[];
     });
     return this.notifier.send(formatWhaleScanner(rows, filter), whaleActionsKeyboard());
+  }
+
+  private async sendMomentum(filter: MomentumFilter): Promise<void> {
+    if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send(formatMomentumList(sampleMomentumRows(), momentumTitle(filter)), momentumActionsKeyboard());
+    await this.notifier.send("⏳ Сканую великі рухи: Bybit Futures + Spot, volume/OI/whale/BTC filters...", momentumActionsKeyboard());
+    const rows = await this.momentumScanner.scan(filter).catch((error) => {
+      logger.warn({ err: error, filter }, "Momentum scanner failed");
+      return [];
+    });
+    return this.notifier.send(formatMomentumList(rows, momentumTitle(filter)), momentumActionsKeyboard());
+  }
+
+  private async sendMomentumCoin(input: string): Promise<void> {
+    if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send(formatMomentumAlert(sampleMomentumRows()[0]), momentumActionsKeyboard());
+    await this.notifier.send(`⏳ Перевіряю momentum ${input.toUpperCase()}...`, momentumActionsKeyboard());
+    const row = await this.momentumScanner.checkSymbol(input).catch((error) => {
+      logger.warn({ err: error, input }, "Momentum coin check failed");
+      return null;
+    });
+    if (!row) return this.notifier.send(["🚨 Великі рухи / Momentum Scanner", "", input.toUpperCase(), "", "Clean momentum trigger зараз не підтверджений.", "Фільтр відсікає fake pumps, low liquidity, weak volume/OI або BTC-conflict."].join("\n"), momentumActionsKeyboard());
+    return this.notifier.send(formatMomentumAlert(row), momentumActionsKeyboard());
   }
 
   private async sendWhaleCoin(input: string): Promise<void> {
@@ -460,6 +493,11 @@ export class TelegramCommandCenter {
     if (button === "new_tokens") return this.sendNewTokens();
     if (button === "watch_status") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
     if (button === "monitoring") return this.sendMonitoring();
+    if (button === "momentum") return this.sendMomentum("all");
+    if (button === "momentum_long") return this.sendMomentum("long");
+    if (button === "momentum_short") return this.sendMomentum("short");
+    if (button === "momentum_strongest") return this.sendMomentum("strongest");
+    if (button === "momentum_check") return this.askPair("momentum_check");
     if (button === "whales") return this.sendWhaleScanner("all");
     if (button === "whales_accumulation") return this.sendWhaleScanner("accumulation");
     if (button === "whales_distribution") return this.sendWhaleScanner("distribution");
@@ -588,10 +626,11 @@ function mainMenuKeyboard(): TelegramReplyMarkup {
       [{ text: "📊 Сигнали" }, { text: "🔎 Пошук по парах" }],
       [{ text: "👀 Watchlist" }, { text: "📈 Ринок" }],
       [{ text: "₿ BTC Фільтр" }, { text: "🔥 Топ Сетапи" }],
-      [{ text: "🐋 Рух китів" }, { text: "🧠 Intelligence" }],
-      [{ text: "🪙 New Tokens" }, { text: "📊 Статистика" }],
-      [{ text: "⚙️ Налаштування" }, { text: "🧪 Діагностика" }],
-      [{ text: "📁 Позиції" }, { text: "🏠 Головне меню" }]
+      [{ text: "🚨 Великі рухи" }, { text: "🐋 Рух китів" }],
+      [{ text: "🧠 Intelligence" }, { text: "🪙 New Tokens" }],
+      [{ text: "📊 Статистика" }, { text: "⚙️ Налаштування" }],
+      [{ text: "🧪 Діагностика" }, { text: "📁 Позиції" }],
+      [{ text: "🏠 Головне меню" }]
     ],
     resize_keyboard: true,
     is_persistent: true
@@ -956,6 +995,62 @@ function sampleWhaleRows(): WhaleRow[] {
 function normalizeWhalePair(input: string) {
   const pair = normalizePriorityPair(input);
   return pair.endsWith("USDT") ? pair : `${pair}USDT`;
+}
+
+function sampleMomentumRows(): MomentumMove[] {
+  return [
+    {
+      symbol: "ESPORTSUSDT",
+      direction: "LONG",
+      timeframe: "5m",
+      movePct: 4.4,
+      fromPrice: 0.05321,
+      toPrice: 0.05555,
+      turnover24h: 13_700_000,
+      volumeSpike: 3.2,
+      oiLabel: "Price ↑ + OI ↑",
+      oiChange: 0.006,
+      whaleLabel: "Accumulation 78%",
+      whaleScore: 78,
+      momentum: "Strong",
+      entryType: "LIMIT ENTRY",
+      entryReason: "Retest: 0.05490 - 0.05510",
+      retest: [0.0549, 0.0551],
+      potential: "HIGH",
+      risk: "Medium",
+      reasons: ["volume spike", "OI confirmation", "whale accumulation", "spot confirms futures move", "breakout structure"],
+      score: 84
+    },
+    {
+      symbol: "PEPEUSDT",
+      direction: "SHORT",
+      timeframe: "15m",
+      movePct: -6.1,
+      fromPrice: 0.0000121,
+      toPrice: 0.00001136,
+      turnover24h: 41_000_000,
+      volumeSpike: 2.8,
+      oiLabel: "Price ↓ + OI ↑",
+      oiChange: 0.004,
+      whaleLabel: "Distribution 72%",
+      whaleScore: 28,
+      momentum: "Very Strong",
+      entryType: "MARKET ENTRY",
+      entryReason: "Breakout confirmed",
+      retest: [0.0000115, 0.00001162],
+      potential: "HIGH",
+      risk: "Medium",
+      reasons: ["volume spike", "OI confirmation", "whale distribution", "breakout structure"],
+      score: 86
+    }
+  ];
+}
+
+function momentumTitle(filter: MomentumFilter) {
+  if (filter === "long") return "📈 LONG movers / Momentum Scanner";
+  if (filter === "short") return "📉 SHORT movers / Momentum Scanner";
+  if (filter === "strongest") return "🔥 Найсильніші рухи / Momentum Scanner";
+  return "🚨 Великі рухи / Momentum Scanner";
 }
 
 function signalMenuText() {
@@ -1755,7 +1850,7 @@ function isMenuButton(text: string) {
   return buttonAction(text) !== null;
 }
 
-type ButtonAction = "menu" | "back" | "signals" | "search_pair" | "watchlist" | "settings" | "signal_pair" | "watch_add" | "watch_remove" | "top" | "signals_refresh" | "positions" | "stats" | "new_tokens" | "watch_status" | "monitoring" | "whales" | "whales_accumulation" | "whales_distribution" | "whales_strongest" | "whales_check" | "intelligence" | "pump_detector" | "whale_bias" | "liquidation_status" | "market_regime" | "market" | "btc" | "diagnostics" | "balance" | "leverage" | "x2" | "x3" | "notifications" | "telegram_ux" | "risk_mode" | "conservative" | "balanced" | "aggressive";
+type ButtonAction = "menu" | "back" | "signals" | "search_pair" | "watchlist" | "settings" | "signal_pair" | "watch_add" | "watch_remove" | "top" | "signals_refresh" | "positions" | "stats" | "new_tokens" | "watch_status" | "monitoring" | "momentum" | "momentum_long" | "momentum_short" | "momentum_strongest" | "momentum_check" | "whales" | "whales_accumulation" | "whales_distribution" | "whales_strongest" | "whales_check" | "intelligence" | "pump_detector" | "whale_bias" | "liquidation_status" | "market_regime" | "market" | "btc" | "diagnostics" | "balance" | "leverage" | "x2" | "x3" | "notifications" | "telegram_ux" | "risk_mode" | "conservative" | "balanced" | "aggressive";
 
 function buttonAction(text: string): ButtonAction | null {
   const normalized = normalizeButtonText(text).toLowerCase();
@@ -1777,6 +1872,11 @@ function buttonAction(text: string): ButtonAction | null {
     ["new_tokens", ["new tokens"]],
     ["watch_status", ["watch status"]],
     ["monitoring", ["моніторинг", "monitoring"]],
+    ["momentum", ["великі рухи", "рухи", "momentum", "moves", "big moves"]],
+    ["momentum_long", ["long movers", "лонг рухи", "long momentum"]],
+    ["momentum_short", ["short movers", "шорт рухи", "short momentum"]],
+    ["momentum_strongest", ["найсильніші рухи", "strongest moves", "strongest momentum"]],
+    ["momentum_check", ["перевірити рух", "перевірити великий рух", "check momentum", "momentum check"]],
     ["whales", ["рух китів", "кити", "whales", "whale flow"]],
     ["whales_accumulation", ["тільки accumulation", "accumulation", "whales accumulation"]],
     ["whales_distribution", ["тільки distribution", "distribution", "whales distribution"]],

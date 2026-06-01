@@ -18,10 +18,11 @@ const mainMenu: TelegramReplyMarkup = {
     [{ text: "📊 Сигнали" }, { text: "🔎 Пошук по парах" }],
     [{ text: "👀 Watchlist" }, { text: "📈 Ринок" }],
     [{ text: "₿ BTC Фільтр" }, { text: "🔥 Топ Сетапи" }],
-    [{ text: "🐋 Рух китів" }, { text: "🧠 Intelligence" }],
-    [{ text: "🪙 New Tokens" }, { text: "📊 Статистика" }],
-    [{ text: "⚙️ Налаштування" }, { text: "🧪 Діагностика" }],
-    [{ text: "📁 Позиції" }, { text: "🏠 Головне меню" }]
+    [{ text: "🚨 Великі рухи" }, { text: "🐋 Рух китів" }],
+    [{ text: "🧠 Intelligence" }, { text: "🪙 New Tokens" }],
+    [{ text: "📊 Статистика" }, { text: "⚙️ Налаштування" }],
+    [{ text: "🧪 Діагностика" }, { text: "📁 Позиції" }],
+    [{ text: "🏠 Головне меню" }]
   ],
   resize_keyboard: true,
   is_persistent: true
@@ -64,10 +65,11 @@ async function main() {
       persistentMenuRows: mainMenu.keyboard?.length,
       persistentMenuVisible: mainMenu.is_persistent === true,
       duplicateSearchButtons: mainMenu.keyboard?.flat().filter((button) => button.text.includes("Пошук по парах")).length ?? 0,
+      momentumButtonVisible: Boolean(mainMenu.keyboard?.flat().some((button) => button.text === "🚨 Великі рухи")),
       whaleButtonVisible: Boolean(mainMenu.keyboard?.flat().some((button) => button.text === "🐋 Рух китів")),
       inlineKeyboardRows: signalActions.inline_keyboard?.length,
       noLiveTelegramSpam: notifier.messages.length === 13,
-      buttons: ["📊 Сигнали", "🔎 Пошук по парах", "👀 Watchlist", "📈 Ринок", "₿ BTC Фільтр", "🔥 Топ Сетапи", "🐋 Рух китів", "🧠 Intelligence", "🪙 New Tokens", "📊 Статистика", "⚙️ Налаштування", "🧪 Діагностика", "📁 Позиції", "🏠 Головне меню", "🔍 Аналіз пари", "➕ Додати пару", "📄 Мій список", "❌ Видалити пару", "🔴 Моніторинг", "💰 Баланс", "⚡ Плече", "x2", "x3", "🔔 Сповіщення", "🎯 Risk mode", "Conservative", "Balanced", "Aggressive", "🟢 Моніторити", "🔄 Оновити Аналіз", "❌ Видалити", "📖 Детальний аналіз", "🛠 Raw Technical Data"]
+      buttons: ["📊 Сигнали", "🔎 Пошук по парах", "👀 Watchlist", "📈 Ринок", "₿ BTC Фільтр", "🔥 Топ Сетапи", "🚨 Великі рухи", "🐋 Рух китів", "🧠 Intelligence", "🪙 New Tokens", "📊 Статистика", "⚙️ Налаштування", "🧪 Діагностика", "📁 Позиції", "🏠 Головне меню", "🔍 Аналіз пари", "➕ Додати пару", "📄 Мій список", "❌ Видалити пару", "🔴 Моніторинг", "💰 Баланс", "⚡ Плече", "x2", "x3", "🔔 Сповіщення", "🎯 Risk mode", "Conservative", "Balanced", "Aggressive", "🟢 Моніторити", "🔄 Оновити Аналіз", "❌ Видалити", "📖 Детальний аналіз", "🛠 Raw Technical Data"]
     }
   }, null, 2));
 }

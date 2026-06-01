@@ -37,6 +37,13 @@ async function main() {
   await click(center, checks, "❌ Видалити пару", "Яку пару видалити");
   await click(center, checks, "AIGENSYNUSDT", "Видалено");
   await click(center, checks, "📈 Ринок", "Ринок");
+  await click(center, checks, "🚨 Великі рухи", "Momentum Scanner");
+  await click(center, checks, "/momentum", "Momentum Scanner");
+  await click(center, checks, "📈 LONG movers", "LONG movers");
+  await click(center, checks, "📉 SHORT movers", "SHORT movers");
+  await click(center, checks, "🔥 Найсильніші рухи", "Найсильніші рухи");
+  await click(center, checks, "🔍 Перевірити рух", "Перевірити великий рух");
+  await click(center, checks, "ESPORTS", "ESPORTSUSDT");
   await click(center, checks, "🐋 Рух китів", "Whale Flow Scanner");
   await click(center, checks, "кити", "Whale Flow Scanner");
   await click(center, checks, "/whales", "Whale Flow Scanner");
@@ -87,6 +94,10 @@ async function main() {
   checks["inline_ui_search_pair"] = last(notifier).includes("Введіть пару");
   await center.handleCallbackForTest("ui:top");
   checks["inline_ui_top"] = last(notifier).includes("Топ Сетапи");
+  await center.handleCallbackForTest("ui:momentum");
+  checks["inline_ui_momentum"] = last(notifier).includes("Momentum Scanner");
+  await center.handleCallbackForTest("ui:momentum_check");
+  checks["inline_ui_momentum_check"] = last(notifier).includes("Перевірити великий рух");
   await center.handleCallbackForTest("ui:whales");
   checks["inline_ui_whales"] = last(notifier).includes("Whale Flow Scanner");
   await center.handleCallbackForTest("ui:whales_check");

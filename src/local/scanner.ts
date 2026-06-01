@@ -13,6 +13,7 @@ import { notificationsEnabled } from "./telegramSettings";
 import { recordTradeMemory } from "./tradeMemory";
 import { recordProtectionOutcome, signalsPaused } from "./lossProtection";
 import { LiqBot, MarketReportBot, PumpDetectorBot, WhaleTrackerBot } from "./bots";
+import { formatMomentumAlert, momentumActionsKeyboard, MomentumScanner } from "./momentumScanner";
 
 type Broadcast = (payload: unknown) => void;
 
@@ -21,6 +22,7 @@ export class Scanner {
   private notifier = new TelegramNotifier();
   private timer: NodeJS.Timeout | null = null;
   private watchlistTimer: NodeJS.Timeout | null = null;
+  private momentumTimer: NodeJS.Timeout | null = null;
   private started = false;
   private signalCooldown = new Map<string, { score: number; sentAt: number }>();
   private watchlistSent = new Set<string>();
@@ -31,6 +33,7 @@ export class Scanner {
   private binanceWs: WebSocket | null = null;
   private scanning = false;
   private watchlistMonitoring = false;
+  private momentumScanning = false;
   private symbols = config.symbols;
   private cursor = 0;
   private managementSent = new Set<string>();
@@ -42,6 +45,7 @@ export class Scanner {
   private whaleTracker = new WhaleTrackerBot();
   private liqBot = new LiqBot();
   private marketReportBot = new MarketReportBot();
+  private momentumScanner = new MomentumScanner();
 
   constructor(private broadcast: Broadcast) {}
 
@@ -66,13 +70,16 @@ export class Scanner {
     await this.scan();
     this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
     this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 120_000);
+    this.momentumTimer = setInterval(() => void this.scanMomentumMoves(), 90_000);
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer);
     if (this.watchlistTimer) clearInterval(this.watchlistTimer);
+    if (this.momentumTimer) clearInterval(this.momentumTimer);
     this.timer = null;
     this.watchlistTimer = null;
+    this.momentumTimer = null;
     this.started = false;
     this.binanceWs?.close();
   }
@@ -476,6 +483,22 @@ export class Scanner {
     }
     this.broadcast({ type: "state", state });
     this.watchlistMonitoring = false;
+  }
+
+  private async scanMomentumMoves() {
+    if (this.momentumScanning || Date.now() < this.bybitCooldownUntil || !notificationsEnabled()) return;
+    this.momentumScanning = true;
+    try {
+      const moves = await this.momentumScanner.scan("strongest", 3);
+      for (const move of moves) {
+        if (move.score < 78 || !this.momentumScanner.shouldSendAlert(move)) continue;
+        await this.notifier.send(formatMomentumAlert(move), momentumActionsKeyboard()).catch((err) => logger.warn({ err, symbol: move.symbol }, "Momentum alert Telegram send failed"));
+      }
+    } catch (err) {
+      logger.warn({ err }, "Momentum scanner skipped");
+    } finally {
+      this.momentumScanning = false;
+    }
   }
 }
 
