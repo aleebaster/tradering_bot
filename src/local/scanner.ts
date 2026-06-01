@@ -493,7 +493,12 @@ export class Scanner {
     try {
       const moves = await this.momentumScanner.scanAutoSignals(3);
       for (const move of moves) {
-        if (move.score < 70 || !this.momentumScanner.shouldSendAlert(move, smartCooldownMinutes(move.score))) continue;
+        if (move.score < 70) continue;
+        if (!this.momentumScanner.shouldSendAlert(move, smartCooldownMinutes(move.score))) {
+          logger.info({ symbol: move.symbol, score: move.score, setupType: move.setupType }, "auto entry signal suppressed by cooldown");
+          continue;
+        }
+        logger.info({ symbol: move.symbol, direction: move.direction, score: move.score, setupType: move.setupType, movePct: move.movePct }, "auto entry signal confirmed");
         await this.notifier.send(formatAutoEntrySignal(move), momentumActionsKeyboard()).catch((err) => logger.warn({ err, symbol: move.symbol }, "Auto entry Telegram send failed"));
       }
       state.diagnostics.apiStatus.autoSignals = `active; cycle ${Date.now() - startedAt}ms; candidates ${moves.length}`;
