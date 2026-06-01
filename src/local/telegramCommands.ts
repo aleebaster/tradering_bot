@@ -204,6 +204,10 @@ export class TelegramCommandCenter {
     const pair = rawPair ? normalizePriorityPair(rawPair) : "";
     logger.info({ text, cleanText, button, command }, "Telegram handler executed");
 
+    if (command === "/momentum" || command === "/moves") return this.sendMomentum("all");
+    if (command === "/longmovers") return this.sendMomentum("long");
+    if (command === "/shortmovers") return this.sendMomentum("short");
+
     if (["/start", "/menu"].includes(command) || button === "menu" || button === "back") return this.notifier.send(mainMenuText(), mainMenuKeyboard());
     if (button === "signals") return this.sendTopSetups();
     if (button === "search_pair") return this.askPair("search");
@@ -249,9 +253,6 @@ export class TelegramCommandCenter {
     if (command === "/signals") return this.sendTopSetups();
     if (command === "/diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
     if (command === "/market") return this.notifier.send(marketText(), marketActionsKeyboard());
-    if (command === "/momentum" || command === "/moves") return this.sendMomentum("all");
-    if (command === "/longmovers") return this.sendMomentum("long");
-    if (command === "/shortmovers") return this.sendMomentum("short");
     if (command === "/whales") return this.sendWhaleScanner("all");
     if (command === "/intelligence") return this.notifier.send(intelligenceText("overview"), intelligenceKeyboard());
     if (command === "/markethealth") return this.notifier.send(marketHealthText(), marketActionsKeyboard());
@@ -476,6 +477,11 @@ export class TelegramCommandCenter {
   }
 
   private async handleUiCallback(action: string): Promise<void> {
+    if (action === "momentum") return this.sendMomentum("all");
+    if (action === "momentum_long") return this.sendMomentum("long");
+    if (action === "momentum_short") return this.sendMomentum("short");
+    if (action === "momentum_strongest") return this.sendMomentum("strongest");
+    if (action === "momentum_check") return this.askPair("momentum_check");
     const button = buttonAction(action);
     if (!button) return this.notifier.send(mainMenuText(), mainMenuKeyboard());
     if (this.pendingAction) this.pendingAction = null;
@@ -1876,12 +1882,12 @@ function buttonAction(text: string): ButtonAction | null {
     ["momentum_long", ["long movers", "лонг рухи", "long momentum"]],
     ["momentum_short", ["short movers", "шорт рухи", "short momentum"]],
     ["momentum_strongest", ["найсильніші рухи", "strongest moves", "strongest momentum"]],
-    ["momentum_check", ["перевірити рух", "перевірити великий рух", "check momentum", "momentum check"]],
+    ["momentum_check", ["перевірити монету", "перевірити рух", "перевірити великий рух", "check momentum", "momentum check"]],
     ["whales", ["рух китів", "кити", "whales", "whale flow"]],
     ["whales_accumulation", ["тільки accumulation", "accumulation", "whales accumulation"]],
     ["whales_distribution", ["тільки distribution", "distribution", "whales distribution"]],
     ["whales_strongest", ["найсильніші рухи", "strongest whale moves", "whales strongest"]],
-    ["whales_check", ["перевірити монету", "check coin", "whales check"]],
+    ["whales_check", ["перевірити кита", "перевірити whale", "check coin", "whales check"]],
     ["intelligence", ["intelligence", "інтелект"]],
     ["pump_detector", ["pump detector", "pump"]],
     ["whale_bias", ["whale bias", "whale"]],

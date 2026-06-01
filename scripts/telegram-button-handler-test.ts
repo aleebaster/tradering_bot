@@ -47,8 +47,8 @@ async function main() {
   await click(center, checks, "🐋 Рух китів", "Whale Flow Scanner");
   await click(center, checks, "кити", "Whale Flow Scanner");
   await click(center, checks, "/whales", "Whale Flow Scanner");
-  await click(center, checks, "🔍 Перевірити монету", "Перевірити монету");
-  await click(center, checks, "btc", "BTCUSDT");
+  await click(center, checks, "🔍 Перевірити монету", "Перевірити великий рух");
+  await click(center, checks, "btc", "ВЕЛИКИЙ РУХ");
   await click(center, checks, "📡 Intelligence", "Intelligence");
   await center.handleCallbackForTest("ui:pump_detector");
   checks["inline_ui_pump_detector"] = last(notifier).includes("Pump Detector") || last(notifier).includes("Дані ще формуються");

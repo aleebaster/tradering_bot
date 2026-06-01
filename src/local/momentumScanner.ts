@@ -53,7 +53,7 @@ export class MomentumScanner {
       .filter((item) => item.symbol.endsWith("USDT") && item.lastPrice > 0 && item.turnover24h >= 1_000_000)
       .map((item) => ({ item, spot: spotBySymbol.get(item.symbol), rank: candidateRank(item, spotBySymbol.get(item.symbol)) }))
       .sort((a, b) => b.rank - a.rank)
-      .slice(0, 6);
+      .slice(0, 4);
 
     const rows = (await Promise.all(candidates.map(({ item, spot }) => this.analyze(item, spot, btcMove5m).catch(() => null))))
       .filter((row): row is MomentumMove => Boolean(row));
