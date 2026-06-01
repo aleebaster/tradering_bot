@@ -12,5 +12,6 @@ data/paper-trading.json
 data/paper-trade-memory.json
 data/telegram-settings.json
 data/loss-protection.json
+data/auto-signal-dedupe.json
 
 .vercel

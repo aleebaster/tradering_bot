@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { ExchangeClient } from "./exchanges";
 import { loadTelegramSettings, maxLeverageNumber } from "./telegramSettings";
 import type { Candle } from "./types";
@@ -39,7 +41,15 @@ const MOVE_THRESHOLDS = [
   { timeframe: "1h" as const, interval: "60", bars: 1, levels: [4, 8, 12] }
 ];
 
-const alertCooldown = new Map<string, { sentAt: number; score: number; movePct: number; setupType: SetupType }>();
+type SignalDedupeEntry = { sentAt: number; score: number; movePct: number; setupType: SetupType; direction: Direction; price: number };
+type SignalDedupeDecision = { allowed: boolean; reason: string; timeLeftMs: number; previous?: SignalDedupeEntry };
+
+const DEDUPE_FILE = resolve(process.cwd(), "data", "auto-signal-dedupe.json");
+const DEFAULT_HARD_COOLDOWN_MINUTES = 45;
+const MATERIAL_CONFIDENCE_IMPROVEMENT = 15;
+const SETUP_CHANGE_CONFIDENCE_IMPROVEMENT = 10;
+const MIN_REPEAT_PRICE_DISTANCE_PCT = 2.5;
+const alertCooldown = loadSignalDedupe();
 
 export class MomentumScanner {
   private tickerHistory = new Map<string, Array<{ at: number; price: number; turnover24h: number }>>();
@@ -101,22 +111,34 @@ export class MomentumScanner {
     return this.analyze(ticker, spot.find((item) => item.symbol === pair), pctMove(btcCandles, 1), true).catch(() => null);
   }
 
-  shouldSendAlert(move: MomentumMove, cooldownMinutes = 60) {
-    const key = move.symbol;
-    const prev = alertCooldown.get(key);
-    if (prev) {
-      const elapsed = Date.now() - prev.sentAt;
-      const improved = move.score >= prev.score + 8 || Math.abs(move.movePct) >= Math.abs(prev.movePct) + 1.2 || move.setupType !== prev.setupType && move.score >= prev.score + 4;
-      if (elapsed < cooldownMinutes * 60_000 && !improved) return false;
-    }
-    alertCooldown.set(key, { sentAt: Date.now(), score: move.score, movePct: move.movePct, setupType: move.setupType });
+  signalDedupeDecision(move: MomentumMove, cooldownMinutes = DEFAULT_HARD_COOLDOWN_MINUTES): SignalDedupeDecision {
+    return signalDedupeDecision(move, cooldownMinutes);
+  }
+
+  shouldSendAlert(move: MomentumMove, cooldownMinutes = DEFAULT_HARD_COOLDOWN_MINUTES) {
+    const decision = this.signalDedupeDecision(move, cooldownMinutes);
+    if (!decision.allowed) return false;
+    markSignalDedupe(move);
     return true;
   }
 
-  cooldownProof(move: MomentumMove, cooldownMinutes = 60) {
+  cooldownProof(move: MomentumMove, cooldownMinutes = DEFAULT_HARD_COOLDOWN_MINUTES) {
+    clearSignalDedupeForTest();
     const first = this.shouldSendAlert(move, cooldownMinutes);
     const second = this.shouldSendAlert(move, cooldownMinutes);
-    return { first, second, suppressed: first && !second };
+    return { first, second, suppressed: first && !second, decision: this.signalDedupeDecision(move, cooldownMinutes) };
+  }
+
+  smartDedupeProof(move: MomentumMove) {
+    clearSignalDedupeForTest();
+    const first = this.shouldSendAlert(move);
+    const same = this.signalDedupeDecision({ ...move, score: move.score + 3, toPrice: move.toPrice * 1.004, movePct: move.movePct + 0.2 });
+    const reverse = this.signalDedupeDecision({ ...move, direction: move.direction === "LONG" ? "SHORT" : "LONG", movePct: -move.movePct, toPrice: move.toPrice * 1.03 });
+    const confidenceJump = this.signalDedupeDecision({ ...move, score: move.score + MATERIAL_CONFIDENCE_IMPROVEMENT, toPrice: move.toPrice * 1.031 });
+    const setupChangedWeak = this.signalDedupeDecision({ ...move, setupType: move.setupType === "Momentum breakout" ? "Sniper retest" : "Momentum breakout", score: move.score + 4, toPrice: move.toPrice * 1.03 });
+    seedSignalDedupeForTest(move, DEFAULT_HARD_COOLDOWN_MINUTES + 1);
+    const expired = this.signalDedupeDecision(move);
+    return { first, same, reverse, confidenceJump, setupChangedWeak, expired };
   }
 
   private rememberTickers(tickers: Ticker[]) {
@@ -485,6 +507,62 @@ function formatQty(value: number) {
 
 function baseAsset(symbol: string) {
   return symbol.replace(/USDT$/, "");
+}
+
+function signalDedupeDecision(move: MomentumMove, cooldownMinutes = DEFAULT_HARD_COOLDOWN_MINUTES): SignalDedupeDecision {
+  const prev = alertCooldown.get(move.symbol);
+  if (!prev) return { allowed: true, reason: "new symbol", timeLeftMs: 0 };
+  const elapsed = Date.now() - prev.sentAt;
+  const cooldownMs = cooldownMinutes * 60_000;
+  const timeLeftMs = Math.max(0, cooldownMs - elapsed);
+  if (elapsed >= cooldownMs) return { allowed: true, reason: "cooldown expired", timeLeftMs: 0, previous: prev };
+
+  const priceDistance = priceDistancePct(prev.price, move.toPrice);
+  const confidenceDelta = move.score - prev.score;
+  const directionChanged = move.direction !== prev.direction;
+  if (directionChanged) return { allowed: true, reason: "direction changed", timeLeftMs, previous: prev };
+
+  const priceMovedEnough = priceDistance >= MIN_REPEAT_PRICE_DISTANCE_PCT;
+  if (!priceMovedEnough) return { allowed: false, reason: `cooldown active; price distance ${priceDistance.toFixed(2)}% < ${MIN_REPEAT_PRICE_DISTANCE_PCT}%`, timeLeftMs, previous: prev };
+  if (confidenceDelta >= MATERIAL_CONFIDENCE_IMPROVEMENT) return { allowed: true, reason: `confidence improved +${confidenceDelta}`, timeLeftMs, previous: prev };
+  if (move.setupType !== prev.setupType && confidenceDelta >= SETUP_CHANGE_CONFIDENCE_IMPROVEMENT) return { allowed: true, reason: `setup changed with confidence improvement +${confidenceDelta}`, timeLeftMs, previous: prev };
+  return { allowed: false, reason: `cooldown active; confidence delta +${confidenceDelta} is not material`, timeLeftMs, previous: prev };
+}
+
+function markSignalDedupe(move: MomentumMove) {
+  alertCooldown.set(move.symbol, { sentAt: Date.now(), score: move.score, movePct: move.movePct, setupType: move.setupType, direction: move.direction, price: move.toPrice });
+  saveSignalDedupe();
+}
+
+function priceDistancePct(prevPrice: number, nextPrice: number) {
+  return prevPrice > 0 ? Math.abs(nextPrice - prevPrice) / prevPrice * 100 : 100;
+}
+
+function loadSignalDedupe() {
+  try {
+    if (!existsSync(DEDUPE_FILE)) return new Map<string, SignalDedupeEntry>();
+    const parsed = JSON.parse(readFileSync(DEDUPE_FILE, "utf8")) as Record<string, Partial<SignalDedupeEntry>>;
+    return new Map(Object.entries(parsed).flatMap(([symbol, entry]) => validDedupeEntry(entry) ? [[symbol, entry as SignalDedupeEntry]] : []));
+  } catch {
+    return new Map<string, SignalDedupeEntry>();
+  }
+}
+
+function saveSignalDedupe() {
+  mkdirSync(dirname(DEDUPE_FILE), { recursive: true });
+  writeFileSync(DEDUPE_FILE, JSON.stringify(Object.fromEntries(alertCooldown), null, 2));
+}
+
+function validDedupeEntry(entry: Partial<SignalDedupeEntry>) {
+  return typeof entry.sentAt === "number" && typeof entry.score === "number" && typeof entry.movePct === "number" && typeof entry.price === "number" && (entry.direction === "LONG" || entry.direction === "SHORT") && typeof entry.setupType === "string";
+}
+
+function clearSignalDedupeForTest() {
+  alertCooldown.clear();
+}
+
+function seedSignalDedupeForTest(move: MomentumMove, minutesAgo: number) {
+  alertCooldown.set(move.symbol, { sentAt: Date.now() - minutesAgo * 60_000, score: move.score, movePct: move.movePct, setupType: move.setupType, direction: move.direction, price: move.toPrice });
 }
 
 function clamp(value: number, min: number, max: number) {
