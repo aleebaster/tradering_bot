@@ -79,7 +79,8 @@ export function signalQuickActions(symbol: string): TelegramReplyMarkup {
   return {
     inline_keyboard: [
       [{ text: "🟢 Моніторити", callback_data: `watch:${symbol}` }, { text: "🔄 Оновити Аналіз", callback_data: `refresh:${symbol}` }],
-      [{ text: "📖 Детальний аналіз", callback_data: `analyze_futures:${symbol}` }, { text: "❌ Видалити", callback_data: `remove:${symbol}` }]
+      [{ text: "📖 Детальний аналіз", callback_data: `analyze_futures:${symbol}` }, { text: "🛠 Raw Technical Data", callback_data: `raw_futures:${symbol}` }],
+      [{ text: "❌ Видалити", callback_data: `remove:${symbol}` }]
     ]
   };
 }

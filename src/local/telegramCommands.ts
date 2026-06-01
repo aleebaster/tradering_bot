@@ -400,6 +400,8 @@ export class TelegramCommandCenter {
     if (action === "refresh") return this.handle(`/signal ${pair}`);
     if (action === "analyze_futures") return this.sendFuturesAnalysis(pair);
     if (action === "analyze_spot") return this.sendSpotAnalysis(pair);
+    if (action === "raw_futures") return this.sendRawFuturesAnalysis(pair);
+    if (action === "raw_spot") return this.sendRawSpotAnalysis(pair);
     if (action === "search_add") return this.handle(`/watch ${pair}`);
     if (action === "remove") return this.handle(`/unwatch ${pair}`);
     if (action === "full") return this.notifier.send(fullAnalysisText(pair), signalQuickActions(pair));
@@ -459,12 +461,24 @@ export class TelegramCommandCenter {
   private async sendSpotAnalysis(pair: string): Promise<void> {
     const analysis = await analyzeSpot(pair).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
     if ("error" in analysis) return this.notifier.send(`Spot analysis failed: ${analysis.error}`, mainMenuKeyboard());
-    return this.notifier.send(spotProfessionalAnalysisText(analysis, undefined, undefined), pairSearchKeyboard(analysis.symbol, false, true));
+    return this.notifier.send(spotTraderBriefText(analysis), pairSearchKeyboard(analysis.symbol, false, true));
   }
 
   private async sendFuturesAnalysis(pair: string): Promise<void> {
     const signal = await analyzeFutures(pair).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
     if ("error" in signal) return this.notifier.send(`Futures analysis failed: ${signal.error}`, mainMenuKeyboard());
+    return this.notifier.send(futuresTraderBriefText(signal), pairSearchKeyboard(signal.symbol, true, false));
+  }
+
+  private async sendRawSpotAnalysis(pair: string): Promise<void> {
+    const analysis = await analyzeSpot(pair).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
+    if ("error" in analysis) return this.notifier.send(`Spot raw analysis failed: ${analysis.error}`, mainMenuKeyboard());
+    return this.notifier.send(spotProfessionalAnalysisText(analysis, undefined, undefined), pairSearchKeyboard(analysis.symbol, false, true));
+  }
+
+  private async sendRawFuturesAnalysis(pair: string): Promise<void> {
+    const signal = await analyzeFutures(pair).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
+    if ("error" in signal) return this.notifier.send(`Futures raw analysis failed: ${signal.error}`, mainMenuKeyboard());
     return this.notifier.send(futuresProfessionalAnalysisText(signal, undefined, undefined), pairSearchKeyboard(signal.symbol, true, false));
   }
 }
@@ -666,6 +680,11 @@ function pairSearchKeyboard(symbol: string, hasFutures: boolean, hasSpot: boolea
   if (!hasFutures && hasSpot) analysis.push({ text: "📖 Детальний аналіз", callback_data: `analyze_spot:${symbol}` });
   if (hasFutures && hasSpot) analysis.push({ text: "💰 Детальний Spot", callback_data: `analyze_spot:${symbol}` });
   if (analysis.length) rows.push(analysis);
+  const raw = [];
+  if (hasFutures) raw.push({ text: "🛠 Raw Technical Data", callback_data: `raw_futures:${symbol}` });
+  if (!hasFutures && hasSpot) raw.push({ text: "🛠 Raw Technical Data", callback_data: `raw_spot:${symbol}` });
+  if (hasFutures && hasSpot) raw.push({ text: "🛠 Raw Spot Data", callback_data: `raw_spot:${symbol}` });
+  if (raw.length) rows.push(raw);
   rows.push([{ text: "🔥 Додати у Watchlist", callback_data: `search_add:${symbol}` }]);
   rows.push([uiButton("🔍 Пошук по парах", "search_pair"), uiButton("🔙 Назад", "back")]);
   return { inline_keyboard: rows };
@@ -1087,6 +1106,124 @@ function spotExecutionReasons(analysis: Awaited<ReturnType<typeof analyzeSpot>>,
   ].filter(Boolean) as string[];
   if (noTrade) return blockers.slice(0, 5);
   return [...positive, ...blockers.filter((reason) => !positive.includes(reason))].slice(0, 5);
+}
+
+function futuresTraderBriefText(signal: Signal) {
+  const decision = futuresBriefDecision(signal);
+  const direction = futuresSetupDirection(signal);
+  const confirmations = futuresBriefConfirmations(signal);
+  const blockers = futuresBriefBlockers(signal);
+  return [
+    "━━━━━━━━━━",
+    `${decision} — ${signal.symbol}`,
+    "",
+    "Причина одним реченням:",
+    futuresBriefReason(signal, decision, confirmations, blockers),
+    "",
+    `📍 Entry: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
+    `➡️ ${direction} setup`,
+    `🛑 SL: ${fmt(signal.stopLoss)}`,
+    `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
+    `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
+    `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
+    "",
+    `📊 Confidence: ${signal.confidence}%`,
+    `⚖️ RR: ${signal.riskReward}`,
+    "",
+    "Коротко що підтверджує:",
+    ...confirmations.map((item) => `• ${item}`),
+    "",
+    "Коротко що заважає:",
+    ...blockers.map((item) => `• ${item}`),
+    "━━━━━━━━━━"
+  ].join("\n");
+}
+
+function spotTraderBriefText(analysis: Awaited<ReturnType<typeof analyzeSpot>>) {
+  const ready = analysis.suitability.shortTermTrade || analysis.suitability.midTermHold;
+  const decision = ready && analysis.shortTerm.confidence >= 62 ? "🟢 LONG" : "⚪ WAIT";
+  const sl = analysis.longTerm.accumulationZone[0] * 0.97;
+  const confirmations = spotBriefConfirmations(analysis);
+  const blockers = spotExecutionReasons(analysis, decision.includes("WAIT"));
+  return [
+    "━━━━━━━━━━",
+    `${decision} — ${analysis.symbol}`,
+    "",
+    "Причина одним реченням:",
+    spotBriefReason(analysis, decision, confirmations, blockers),
+    "",
+    `📍 Entry: ${analysis.longTerm.accumulationZone.map(fmt).join(" - ")}`,
+    "➡️ LONG setup",
+    `🛑 SL: ${fmt(sl)}`,
+    `🎯 TP1: ${fmt(analysis.longTerm.resistance[0])}`,
+    `🎯 TP2: ${fmt(analysis.longTerm.resistance[1])}`,
+    `🎯 TP3: ${analysis.longTerm.growthPotential}`,
+    "",
+    `📊 Confidence: ${analysis.shortTerm.confidence}%`,
+    `⚖️ RR: ${spotRiskReward(analysis.metrics.price, sl, analysis.longTerm.resistance[0])}`,
+    "",
+    "Коротко що підтверджує:",
+    ...confirmations.map((item) => `• ${item}`),
+    "",
+    "Коротко що заважає:",
+    ...blockers.map((item) => `• ${item}`),
+    "━━━━━━━━━━"
+  ].join("\n");
+}
+
+function futuresBriefDecision(signal: Signal) {
+  if ((signal.side === "LONG" || signal.side === "BUY") && signal.entryStatus !== "NO_TRADE") return "🟢 LONG";
+  if (signal.side === "SHORT" && signal.entryStatus !== "NO_TRADE") return "🔴 SHORT";
+  return "⚪ WAIT";
+}
+
+function futuresSetupDirection(signal: Signal) {
+  if (signal.side === "SHORT") return "SHORT";
+  if (signal.side === "LONG" || signal.side === "BUY") return "LONG";
+  return signal.higherTimeframe.direction < 0 ? "SHORT" : "LONG";
+}
+
+function futuresBriefConfirmations(signal: Signal) {
+  const breakdown = signal.scoreBreakdown ?? {};
+  const items = [
+    (breakdown.momentumQuality ?? 0) >= 70 ? "momentum" : null,
+    signal.correlation.aligned || signal.btcStable || signal.symbol === "BTCUSDT" ? "BTC correlation" : null,
+    (breakdown.liquiditySweep ?? 0) >= 65 || (breakdown.orderBookImbalance ?? 0) >= 60 ? "liquidity" : null,
+    signal.higherTimeframe.aligned || (breakdown.multiTimeframeAlignment ?? 0) >= 55 ? "trend" : null
+  ].filter(Boolean) as string[];
+  return items.length ? items.slice(0, 4) : ["немає сильного підтвердження"];
+}
+
+function futuresBriefBlockers(signal: Signal) {
+  const breakdown = signal.scoreBreakdown ?? {};
+  const items = [
+    signal.fakeBreakout.risk ? "fake breakout risk" : null,
+    (breakdown.volumeConfirmation ?? 0) < 65 ? "weak volume" : null,
+    (breakdown.entrySniper ?? 0) < 70 ? "no sniper trigger" : null,
+    (breakdown.liquiditySweep ?? 0) < 65 ? "bad retest" : null,
+    !signal.btcStable && signal.symbol !== "BTCUSDT" ? "BTC correlation risk" : null
+  ].filter(Boolean) as string[];
+  return items.length ? items.slice(0, 4) : ["критичних перешкод немає"];
+}
+
+function futuresBriefReason(signal: Signal, decision: string, confirmations: string[], blockers: string[]) {
+  if (decision.includes("WAIT")) return `Чекаємо, бо ${blockers[0] ?? "немає чистого entry"}.`;
+  return `${decision.replace(/^[^\s]+\s/, "")} сценарій активний, бо ${confirmations.slice(0, 2).join(" і ")}; головний ризик: ${blockers[0] ?? "низький"}.`;
+}
+
+function spotBriefConfirmations(analysis: Awaited<ReturnType<typeof analyzeSpot>>) {
+  const items = [
+    analysis.metrics.momentumScore >= 60 ? "momentum" : null,
+    analysis.metrics.btcCorrelation > -0.4 ? "BTC correlation" : null,
+    analysis.metrics.health.score >= 55 ? "liquidity" : null,
+    analysis.metrics.trendScore >= 60 ? "trend" : null
+  ].filter(Boolean) as string[];
+  return items.length ? items.slice(0, 4) : ["немає сильного підтвердження"];
+}
+
+function spotBriefReason(analysis: Awaited<ReturnType<typeof analyzeSpot>>, decision: string, confirmations: string[], blockers: string[]) {
+  if (decision.includes("WAIT")) return `Чекаємо, бо ${blockers[0] ?? "немає чистого entry"}.`;
+  return `LONG сценарій активний, бо ${confirmations.slice(0, 2).join(" і ")}; головний ризик: ${blockers[0] ?? analysis.longTerm.riskProfile}.`;
 }
 
 function futuresProfessionalAnalysisText(signal: Signal, market?: MarketRegistryItem, result?: { query: string; futures: MarketRegistryItem[]; spot: MarketRegistryItem[] }) {
