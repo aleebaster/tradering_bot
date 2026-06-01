@@ -109,7 +109,7 @@ export default function Dashboard() {
   const active = state?.activeSignals ?? [];
   const watchlist = state?.watchlist ?? [];
   const history = state?.history ?? [];
-  const strongest = [...active, ...watchlist, ...history].sort((a, b) => b.score - a.score).slice(0, 5);
+  const strongest = uniqueSignals([...active, ...watchlist, ...history]).sort((a, b) => b.score - a.score).slice(0, 5);
 
   return (
     <main className="min-h-screen px-4 py-5 md:px-8">
@@ -170,7 +170,7 @@ export default function Dashboard() {
       <section className="grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
         <Panel title="Найсильніші сетапи">
           <div className="grid gap-3">
-            {strongest.length ? strongest.map((s) => <SignalCard key={s.id} signal={s} />) : <Empty text="Сетапів з високою ймовірністю поки немає. Сканер відсіює слабкий ринок." />}
+            {strongest.length ? strongest.map((s, index) => <SignalCard key={signalKey(s, index, "strongest")} signal={s} />) : <Empty text="Сетапів з високою ймовірністю поки немає. Сканер відсіює слабкий ринок." />}
           </div>
         </Panel>
         <Panel title="Діагностика">
@@ -193,7 +193,7 @@ export default function Dashboard() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[850px] text-left text-sm">
             <thead className="text-slate-400"><tr><th>Час</th><th>Символ</th><th>Режим</th><th>Напрям</th><th>Оцінка</th><th>Ймовірність</th><th>Ринок</th><th>Управління</th></tr></thead>
-            <tbody>{history.slice(0, 30).map((s) => <tr key={s.id} className="border-t border-edge/70"><td className="py-3">{new Date(s.createdAt).toLocaleTimeString()}</td><td>{s.symbol}</td><td>{modeUa(s.mode)}</td><td className={sideClass(s.side)}>{sideUa(s.side)}</td><td>{s.score}</td><td>{s.winProbability}%</td><td>{regimeUa(s.marketRegime)}</td><td>{s.management}</td></tr>)}</tbody>
+            <tbody>{history.slice(0, 30).map((s, index) => <tr key={signalKey(s, index, "history")} className="border-t border-edge/70"><td className="py-3">{new Date(s.createdAt).toLocaleTimeString()}</td><td>{s.symbol}</td><td>{modeUa(s.mode)}</td><td className={sideClass(s.side)}>{sideUa(s.side)}</td><td>{s.score}</td><td>{s.winProbability}%</td><td>{regimeUa(s.marketRegime)}</td><td>{s.management}</td></tr>)}</tbody>
           </table>
         </div>
       </Panel>
@@ -222,7 +222,21 @@ function SignalCard({ signal }: { signal: Signal }) {
 
 function SignalList({ items }: { items: Signal[] }) {
   if (!items.length) return <Empty text="Активних якісних сигналів немає." />;
-  return <div className="space-y-3">{items.map((s) => <div key={s.id} className="rounded-xl border border-edge p-3"><div className="flex justify-between"><b>{s.symbol}</b><span className={sideClass(s.side)}>{sideUa(s.side)}</span></div><div className="mt-2 text-sm text-slate-400">Оцінка {s.score}/100 · {entryStatusUa(s.entryStatus)} · {s.leverage ?? "Немає"}</div></div>)}</div>;
+  return <div className="space-y-3">{items.map((s, index) => <div key={signalKey(s, index, "list")} className="rounded-xl border border-edge p-3"><div className="flex justify-between"><b>{s.symbol}</b><span className={sideClass(s.side)}>{sideUa(s.side)}</span></div><div className="mt-2 text-sm text-slate-400">Оцінка {s.score}/100 · {entryStatusUa(s.entryStatus)} · {s.leverage ?? "Немає"}</div></div>)}</div>;
+}
+
+function uniqueSignals(items: Signal[]) {
+  const seen = new Set<string>();
+  return items.filter((signal) => {
+    const key = `${signal.symbol}:${signal.mode}:${signal.side}:${signal.createdAt}:${signal.entry[0]}:${signal.entry[1]}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function signalKey(signal: Signal, index: number, scope: string) {
+  return `${scope}:${signal.symbol}:${signal.mode}:${signal.side}:${signal.createdAt}:${signal.entry[0]}:${signal.entry[1]}:${index}`;
 }
 
 function SearchColumn({ title, items }: { title: string; items: MarketItem[] }) {

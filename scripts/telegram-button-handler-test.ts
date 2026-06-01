@@ -22,7 +22,7 @@ async function main() {
   await click(center, checks, "DOGE", "📍 Entry");
   await click(center, checks, "🔍 Аналіз пари", "Введіть пару");
   await click(center, checks, "BTCUSDT", "Аналіз");
-  await click(center, checks, "🔥 Найкращі сигнали", "Топ Сетапи");
+  await click(center, checks, "🔥 Топ Сетапи", "Топ Сетапи");
   await click(center, checks, "🔍 Пошук по парах", "Введіть пару");
   await click(center, checks, "📊 Статистика", "Trading Stats");
   checks["pending_search_does_not_block_stats"] = center.status().pendingAction === null;
@@ -37,6 +37,11 @@ async function main() {
   await click(center, checks, "❌ Видалити пару", "Яку пару видалити");
   await click(center, checks, "AIGENSYNUSDT", "Видалено");
   await click(center, checks, "📈 Ринок", "Ринок");
+  await click(center, checks, "🐋 Рух китів", "Whale Flow Scanner");
+  await click(center, checks, "кити", "Whale Flow Scanner");
+  await click(center, checks, "/whales", "Whale Flow Scanner");
+  await click(center, checks, "🔍 Перевірити монету", "Перевірити монету");
+  await click(center, checks, "btc", "BTCUSDT");
   await click(center, checks, "📡 Intelligence", "Intelligence");
   await center.handleCallbackForTest("ui:pump_detector");
   checks["inline_ui_pump_detector"] = last(notifier).includes("Pump Detector") || last(notifier).includes("Дані ще формуються");
@@ -80,6 +85,12 @@ async function main() {
   checks["inline_ui_back"] = last(notifier).includes("Головне меню");
   await center.handleCallbackForTest("ui:search_pair");
   checks["inline_ui_search_pair"] = last(notifier).includes("Введіть пару");
+  await center.handleCallbackForTest("ui:top");
+  checks["inline_ui_top"] = last(notifier).includes("Топ Сетапи");
+  await center.handleCallbackForTest("ui:whales");
+  checks["inline_ui_whales"] = last(notifier).includes("Whale Flow Scanner");
+  await center.handleCallbackForTest("ui:whales_check");
+  checks["inline_ui_whales_check"] = last(notifier).includes("Перевірити монету");
 
   updateTelegramSettings(originalSettings);
 

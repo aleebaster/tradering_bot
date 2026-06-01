@@ -17,7 +17,7 @@ npm install
 npm run local:all
 ```
 
-Панель: `http://localhost:3000`
+Панель: `http://localhost:3001`
 
 Локальний API: `http://localhost:4000`
 

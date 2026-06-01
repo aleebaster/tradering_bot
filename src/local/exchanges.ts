@@ -312,6 +312,17 @@ export class ExchangeClient {
     return (list.at(-1)! - list[0]) / list[0];
   }
 
+  async bybitAccountRatio(symbol: string): Promise<number> {
+    const endpoint = `${BYBIT}/v5/market/account-ratio?category=linear&symbol=${symbol}&period=5min&limit=12`;
+    const body = await json<{ retCode?: number; retMsg?: string; result?: { list?: Array<{ buyRatio?: string; sellRatio?: string }> } }>(endpoint);
+    const rows = safeArray<{ buyRatio?: string; sellRatio?: string }>(body.result?.list);
+    if (body.retCode !== 0 || !rows.length) throw bybitDataError("Bybit account ratio malformed", { endpoint, parsedData: body, symbol });
+    const latest = rows[0];
+    const buy = Number(latest?.buyRatio ?? 0);
+    const sell = Number(latest?.sellRatio ?? 0);
+    return buy + sell > 0 ? (buy - sell) / (buy + sell) : 0;
+  }
+
   signBybit(payload: string) {
     return crypto.createHmac("sha256", config.BYBIT_API_SECRET ?? "").update(payload).digest("hex");
   }
@@ -397,7 +408,7 @@ async function bybitJsonWithRaw<T>(url: string, context: Record<string, unknown>
         logBybitRaw("Bybit JSON parse failed", { endpoint: url, rawResponse: raw, parsedData: null, attempt: attempt + 1, ...context });
         throw error;
       }
-      logBybitRaw("Bybit raw response", { endpoint: url, rawResponse: raw, parsedData: value, attempt: attempt + 1, ...context });
+      if (process.env.BYBIT_RAW_LOG === "1") logBybitRaw("Bybit raw response", { endpoint: url, rawResponse: raw, parsedData: value, attempt: attempt + 1, ...context });
       if (res.ok) return { value, raw };
       throw new Error(`${res.status} ${res.statusText} ${url}: ${raw.slice(0, 300)}`);
     } catch (error) {

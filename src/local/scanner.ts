@@ -21,6 +21,7 @@ export class Scanner {
   private notifier = new TelegramNotifier();
   private timer: NodeJS.Timeout | null = null;
   private watchlistTimer: NodeJS.Timeout | null = null;
+  private started = false;
   private signalCooldown = new Map<string, { score: number; sentAt: number }>();
   private watchlistSent = new Set<string>();
   private activatedWatchlist = new Set<string>();
@@ -29,6 +30,7 @@ export class Scanner {
   private watchlistCheckedAt = new Map<string, number>();
   private binanceWs: WebSocket | null = null;
   private scanning = false;
+  private watchlistMonitoring = false;
   private symbols = config.symbols;
   private cursor = 0;
   private managementSent = new Set<string>();
@@ -44,6 +46,11 @@ export class Scanner {
   constructor(private broadcast: Broadcast) {}
 
   async start() {
+    if (this.started) {
+      logger.info("Scanner already running; duplicate start skipped");
+      return;
+    }
+    this.started = true;
     await this.notifier.started().catch((err) => {
       state.diagnostics.apiStatus.telegram = "помилка";
       logger.warn({ err }, "Не вдалося надіслати стартове повідомлення Telegram");
@@ -58,12 +65,15 @@ export class Scanner {
     this.connectKrakenTicker();
     await this.scan();
     this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
-    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 60_000);
+    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 120_000);
   }
 
   stop() {
     if (this.timer) clearInterval(this.timer);
     if (this.watchlistTimer) clearInterval(this.watchlistTimer);
+    this.timer = null;
+    this.watchlistTimer = null;
+    this.started = false;
     this.binanceWs?.close();
   }
 
@@ -406,13 +416,16 @@ export class Scanner {
   }
 
   private async monitorWatchlist() {
+    if (this.watchlistMonitoring) return;
     const items = state.watchlist.filter((signal) => signal.mode === "futures" && signal.score >= 72);
     if (!items.length || Date.now() < this.bybitCooldownUntil) return;
+    this.watchlistMonitoring = true;
     let btcCandles: Record<string, Candle[]>;
     try {
       btcCandles = await this.loadBtcCandles();
     } catch (err) {
       logger.warn({ err }, "Watchlist BTC filter unavailable");
+      this.watchlistMonitoring = false;
       return;
     }
     const btcOk = btcStable(btcCandles);
@@ -462,6 +475,7 @@ export class Scanner {
       }
     }
     this.broadcast({ type: "state", state });
+    this.watchlistMonitoring = false;
   }
 }
 

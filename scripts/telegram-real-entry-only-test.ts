@@ -31,8 +31,8 @@ async function main() {
   const checks = {
     realEntryGate: isRealEntrySignal(real) && !isRealEntrySignal(weak) && !isRealEntrySignal(watch) && !isRealEntrySignal(outsideZone) && !isRealEntrySignal(fakeBreakout),
     oneAutomaticMessage: notifier.messages.length === 1,
-    requiredHeader: message.includes("🟢 LONG — BTCUSDT"),
-    requiredFields: ["🟢 LONG — BTCUSDT", "📍 Entry zone:", "➡️ LONG setup", "🛑 SL:", "🎯 TP1:", "🎯 TP2:", "🎯 TP3:", "⚡ x", "📊 Confidence:", "Причина:"].every((field) => message.includes(field)),
+    requiredHeader: message.includes("🟢 SIGNAL — BTCUSDT"),
+    requiredFields: ["🟢 SIGNAL — BTCUSDT", "🟢 LONG — МОЖНА ВХОДИТИ", "📍 НАПРЯМОК: LONG 🟢", "SETUP SCORE:", "ENTRY CONFIDENCE:", "⚡ EXECUTION:", "🟡 LIMIT ENTRY —", "Qty: ~", "auto from $5 balance", "💰 Bank: $5 USDT", "💵 Margin used: $2.5 USDT", "⚙️ Margin: Isolated 2x", "📦 Position size:", "🛑 SL:", "🎯 TP1:", "Закрити: 40%", "🎯 TP2:", "Закрити: 30%", "🎯 TP3:", "Закрити: 20%", "⚠️ Risk:", "ROI", "Причина:"].every((field) => message.includes(field)),
     spamRemoved: forbidden.every((item) => !message.includes(item))
   };
   const failed = Object.entries(checks).filter(([, ok]) => !ok);

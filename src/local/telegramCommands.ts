@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { config } from "./config";
 import { state } from "./state";
-import { formatExecutionSignal, signalQuickActions, TelegramNotifier, type TelegramReplyMarkup } from "./telegram";
+import { formatDecisionSignal, formatExecutionSignal, signalQuickActions, TelegramNotifier, type TelegramReplyMarkup } from "./telegram";
 import { paperMemoryStatsText, paperStatsText, setPaperMode } from "./paperTrading";
 import { addPriorityPair, loadPriorityWatchlist, normalizePriorityPair, removePriorityPair } from "./watchlistStore";
 import { loadTelegramSettings, updateTelegramSettings, type MaxLeverage, type RiskMode } from "./telegramSettings";
@@ -16,9 +16,11 @@ import { marketThresholdProfile } from "./scoring";
 import { marketHealth, resolvePair, type MarketRegistryItem } from "./marketRegistry";
 import { analyzeSpot } from "./spotAnalysis";
 import { analyzeFutures } from "./marketAnalysis";
+import { ExchangeClient } from "./exchanges";
 import type { Signal } from "./types";
+import type { Candle } from "./types";
 
-type PendingAction = "signal" | "watch" | "unwatch" | "balance" | "newsignal" | "search";
+type PendingAction = "signal" | "watch" | "unwatch" | "balance" | "newsignal" | "search" | "whale_check";
 type TelegramUpdate = {
   update_id: number;
   message?: { text?: string; chat?: { id?: number | string } };
@@ -46,6 +48,7 @@ export class TelegramCommandCenter {
   private handledCallbacks = 0;
   private handledMessages = 0;
   private offsetInitialized = false;
+  private whaleClient = new ExchangeClient();
 
   constructor(notifier: TelegramCommandHandler = new TelegramNotifier()) {
     this.notifier = notifier;
@@ -117,10 +120,10 @@ export class TelegramCommandCenter {
   private async poll() {
     if (this.polling || !config.TELEGRAM_BOT_TOKEN) return;
     if (!this.lockAcquired && !this.acquirePollingLock()) return;
-    if (!this.offsetInitialized) await this.resetPollingOffset();
     this.polling = true;
     this.lastPollAt = new Date().toISOString();
     try {
+      if (!this.offsetInitialized) await this.resetPollingOffset();
       const url = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/getUpdates?timeout=1&offset=${this.offset}`;
       const res = await telegramFetch(url);
       if (!res.ok) {
@@ -213,6 +216,11 @@ export class TelegramCommandCenter {
     if (button === "new_tokens") return this.sendNewTokens();
     if (button === "watch_status") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
     if (button === "monitoring") return this.sendMonitoring();
+    if (button === "whales") return this.sendWhaleScanner("all");
+    if (button === "whales_accumulation") return this.sendWhaleScanner("accumulation");
+    if (button === "whales_distribution") return this.sendWhaleScanner("distribution");
+    if (button === "whales_strongest") return this.sendWhaleScanner("strongest");
+    if (button === "whales_check") return this.askPair("whale_check");
     if (button === "intelligence") return this.notifier.send(intelligenceText("overview"), intelligenceKeyboard());
     if (button === "pump_detector") return this.notifier.send(intelligenceText("pump"), intelligenceKeyboard());
     if (button === "whale_bias") return this.notifier.send(intelligenceText("whale"), intelligenceKeyboard());
@@ -231,13 +239,16 @@ export class TelegramCommandCenter {
 
     if (command === "/help") return this.notifier.send(helpText(), mainMenuKeyboard());
     if (command === "/status") return this.notifier.send(statusText(), mainMenuKeyboard());
+    if (command === "/signals") return this.sendTopSetups();
     if (command === "/diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
     if (command === "/market") return this.notifier.send(marketText(), marketActionsKeyboard());
+    if (command === "/whales") return this.sendWhaleScanner("all");
     if (command === "/intelligence") return this.notifier.send(intelligenceText("overview"), intelligenceKeyboard());
     if (command === "/markethealth") return this.notifier.send(marketHealthText(), marketActionsKeyboard());
     if (command === "/btc") return this.notifier.send(btcText(), marketActionsKeyboard());
     if (command === "/positions") return this.askPair("search");
     if (command === "/stats") return this.notifier.send(tradeStatsText(), mainMenuKeyboard());
+    if (command === "/settings") return this.notifier.send(settingsText(), settingsKeyboard());
     if (command === "/performance") return this.notifier.send(performanceText(), mainMenuKeyboard());
     if (command === "/learning") return this.notifier.send(learningStatusText(), mainMenuKeyboard());
     if (command === "/resetlearning") return this.resetLearningCommand();
@@ -289,6 +300,7 @@ export class TelegramCommandCenter {
   private async askPair(action: PendingAction): Promise<void> {
     this.pendingAction = action;
     if (action === "balance") return this.notifier.send(["💰 Баланс", "", `Поточний баланс: ${loadTelegramSettings().balanceUsdt} USDT`, "", "Введіть новий баланс у USDT:", "Наприклад: 5"].join("\n"), backKeyboard());
+    if (action === "whale_check") return this.notifier.send(["🐋 Перевірити монету", "", "Введіть монету або пару:", "BTC", "ETH", "PEPE", "DOGE", "BTCUSDT", "", "Я нормалізую btc → BTCUSDT."].join("\n"), whaleActionsKeyboard());
     const title = action === "search" ? "пошуку" : action === "newsignal" ? "new-token аналізу" : action === "signal" ? "аналізу" : action === "watch" ? "додавання" : "видалення";
     const question = action === "unwatch" ? "Яку пару видалити?" : "Введіть пару:";
     return this.notifier.send([question, "", "Приклади:", "BTCUSDT", "ETHUSDT", "AIGENSYNUSDT", "PEPEUSDT", "", "Можна вводити lowercase/uppercase: btc, BTC, btcusdt", "Пошук іде по всіх Bybit Spot/Futures/Perpetual/USDT/new listings.", "", `Режим: ${title}`].join("\n"), backKeyboard());
@@ -299,6 +311,7 @@ export class TelegramCommandCenter {
     this.pendingAction = null;
     if (action === "balance") return this.setBalance(text);
     if (action === "search") return this.sendPairSearch(text);
+    if (action === "whale_check") return this.sendWhaleCoin(text);
     const pair = normalizePriorityPair(text);
     if (!pair || pair.length < 6) return this.notifier.send("Пара не розпізнана. Приклад: BTCUSDT", mainMenuKeyboard());
     if (action === "watch") return this.handle(`/watch ${pair}`);
@@ -353,6 +366,28 @@ export class TelegramCommandCenter {
     const top = topSignals();
     if (!top.length) return this.notifier.send(["📊 Сигнали / 🔥 Топ Сетапи", "", "Активних entry/watchlist setup зараз немає.", "", marketText()].join("\n"), signalActionsKeyboard());
     await this.notifier.send(["📊 Сигнали / 🔥 Топ Сетапи", "", ...top.map(compactSignalCard)].join("\n\n"), signalActionsKeyboard());
+  }
+
+  private async sendWhaleScanner(filter: WhaleFilter): Promise<void> {
+    if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send(formatWhaleScanner(sampleWhaleRows(), filter), whaleActionsKeyboard());
+    await this.notifier.send("⏳ Сканую whale flow: Futures + Spot...", whaleActionsKeyboard());
+    const rows = await scanWhaleFlow(this.whaleClient, filter).catch((error) => {
+      logger.warn({ err: error, filter }, "Whale flow scan failed");
+      return [] as WhaleRow[];
+    });
+    return this.notifier.send(formatWhaleScanner(rows, filter), whaleActionsKeyboard());
+  }
+
+  private async sendWhaleCoin(input: string): Promise<void> {
+    const pair = normalizeWhalePair(input);
+    if (process.env.TELEGRAM_HANDLER_TEST === "1") return this.notifier.send(formatWhaleCoin(sampleWhaleRows()[0]), whaleActionsKeyboard());
+    await this.notifier.send(`⏳ Перевіряю ${pair}: Futures + Spot...`, whaleActionsKeyboard());
+    const row = await analyzeWhaleSymbol(this.whaleClient, pair).catch((error) => {
+      logger.warn({ err: error, pair }, "Whale coin check failed");
+      return null;
+    });
+    if (!row) return this.notifier.send([`🐋 ${pair}`, "", "Не вдалося отримати live Bybit Futures + Spot дані для цієї монети.", "Спробуй ще раз або перевір іншу пару."].join("\n"), whaleActionsKeyboard());
+    return this.notifier.send(formatWhaleCoin(row), whaleActionsKeyboard());
   }
 
   private async sendPositions(): Promise<void> {
@@ -425,6 +460,11 @@ export class TelegramCommandCenter {
     if (button === "new_tokens") return this.sendNewTokens();
     if (button === "watch_status") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
     if (button === "monitoring") return this.sendMonitoring();
+    if (button === "whales") return this.sendWhaleScanner("all");
+    if (button === "whales_accumulation") return this.sendWhaleScanner("accumulation");
+    if (button === "whales_distribution") return this.sendWhaleScanner("distribution");
+    if (button === "whales_strongest") return this.sendWhaleScanner("strongest");
+    if (button === "whales_check") return this.askPair("whale_check");
     if (button === "intelligence") return this.notifier.send(intelligenceText("overview"), intelligenceKeyboard());
     if (button === "pump_detector") return this.notifier.send(intelligenceText("pump"), intelligenceKeyboard());
     if (button === "whale_bias") return this.notifier.send(intelligenceText("whale"), intelligenceKeyboard());
@@ -544,15 +584,17 @@ function startOneShotAnalysis(pair: string) {
 
 function mainMenuKeyboard(): TelegramReplyMarkup {
   return {
-    inline_keyboard: [
-      [uiButton("📊 Сигнали", "signals"), uiButton("🔍 Пошук по парах", "search_pair")],
-      [uiButton("👀 Watchlist", "watchlist"), uiButton("📈 Ринок", "market")],
-      [uiButton("₿ BTC Фільтр", "btc"), uiButton("🔥 Топ Сетапи", "top")],
-      [uiButton("📡 Intelligence", "intelligence"), uiButton("🔍 Пошук по парах", "search_pair")],
-      [uiButton("🪙 New Tokens", "new_tokens")],
-      [uiButton("📊 Статистика", "stats"), uiButton("⚙️ Налаштування", "settings")],
-      [uiButton("🧪 Діагностика", "diagnostics")]
-    ]
+    keyboard: [
+      [{ text: "📊 Сигнали" }, { text: "🔎 Пошук по парах" }],
+      [{ text: "👀 Watchlist" }, { text: "📈 Ринок" }],
+      [{ text: "₿ BTC Фільтр" }, { text: "🔥 Топ Сетапи" }],
+      [{ text: "🐋 Рух китів" }, { text: "🧠 Intelligence" }],
+      [{ text: "🪙 New Tokens" }, { text: "📊 Статистика" }],
+      [{ text: "⚙️ Налаштування" }, { text: "🧪 Діагностика" }],
+      [{ text: "📁 Позиції" }, { text: "🏠 Головне меню" }]
+    ],
+    resize_keyboard: true,
+    is_persistent: true
   };
 }
 
@@ -624,6 +666,17 @@ function diagnosticsActionsKeyboard(): TelegramReplyMarkup {
     inline_keyboard: [
       [uiButton("🔄 Оновити Статус", "diagnostics")],
       [uiButton("📈 Ринок", "market"), uiButton("📊 Сигнали", "signals")],
+      [uiButton("🔙 Назад", "back")]
+    ]
+  };
+}
+
+function whaleActionsKeyboard(): TelegramReplyMarkup {
+  return {
+    inline_keyboard: [
+      [uiButton("🔄 Оновити скан", "whales")],
+      [uiButton("📈 Тільки accumulation", "whales_accumulation"), uiButton("📉 Тільки distribution", "whales_distribution")],
+      [uiButton("🔥 Найсильніші рухи", "whales_strongest"), uiButton("🔍 Перевірити монету", "whales_check")],
       [uiButton("🔙 Назад", "back")]
     ]
   };
@@ -701,6 +754,208 @@ function mainMenuText() {
     "Обери дію кнопками нижче.",
     "Кнопки повертають поточні live-дані. Авто-сповіщення: тільки entry та trade management."
   ].join("\n");
+}
+
+function whaleMenuPlaceholderText() {
+  return [
+    "🐋 Whale Flow Scanner",
+    "",
+    "Combined Futures + Spot whale analysis готується.",
+    "Натисни 🔄 Оновити скан після завершення індексації ринку."
+  ].join("\n");
+}
+
+type WhaleFilter = "all" | "accumulation" | "distribution" | "strongest";
+type WhaleStatus = "ACCUMULATION" | "DISTRIBUTION" | "NEUTRAL" | "CONFLICTED";
+type WhaleRow = {
+  symbol: string;
+  status: WhaleStatus;
+  confidence: number;
+  score: number;
+  futuresBias: number;
+  spotBias: number;
+  priceChange: number;
+  oiChange: number;
+  fundingRate: number;
+  volumeSpike: number;
+  liquidationPressure: "short squeeze" | "long squeeze" | "neutral";
+  reasons: string[];
+};
+
+async function scanWhaleFlow(client: ExchangeClient, filter: WhaleFilter): Promise<WhaleRow[]> {
+  const [linear, spot] = await Promise.all([client.bybitTickers("linear"), client.bybitTickers("spot")]);
+  const spotSymbols = new Set(spot.map((item) => item.symbol));
+  const preferred = new Set(["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "PEPEUSDT", "LINKUSDT", "AVAXUSDT", "ADAUSDT", "AIGENSYNUSDT"]);
+  const candidates = linear
+    .filter((item) => item.symbol.endsWith("USDT") && spotSymbols.has(item.symbol) && item.turnover24h > 0)
+    .sort((a, b) => (preferred.has(b.symbol) ? 2_000_000_000 : 0) + b.turnover24h - ((preferred.has(a.symbol) ? 2_000_000_000 : 0) + a.turnover24h))
+    .slice(0, 18)
+    .map((item) => item.symbol);
+  const rows = (await Promise.all(candidates.map((symbol) => analyzeWhaleSymbol(client, symbol).catch((error) => {
+    logger.warn({ err: error, symbol }, "Whale flow symbol skipped");
+    return null;
+  })))).filter((row): row is WhaleRow => Boolean(row));
+  const filtered = rows.filter((row) => filter === "all" || filter === "strongest" || filter === "accumulation" && row.status === "ACCUMULATION" || filter === "distribution" && row.status === "DISTRIBUTION");
+  return filtered.sort((a, b) => b.score - a.score || b.confidence - a.confidence).slice(0, filter === "strongest" ? 10 : 15);
+}
+
+async function analyzeWhaleSymbol(client: ExchangeClient, symbol: string): Promise<WhaleRow> {
+  const pair = normalizePriorityPair(symbol);
+  const [futuresCandles, spotCandles, linearBook, spotBook, oiChange, fundingRate, accountRatio] = await Promise.all([
+    client.bybitKlines(pair, "5", "linear", 36),
+    client.bybitKlines(pair, "5", "spot", 36).catch(() => [] as Candle[]),
+    client.bybitOrderBookStats(pair, "linear").catch(() => ({ spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false })),
+    client.bybitOrderBookStats(pair, "spot").catch(() => ({ spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false })),
+    client.openInterestChange(pair).catch(() => 0),
+    client.fundingRate(pair).catch(() => 0),
+    client.bybitAccountRatio(pair).catch(() => 0)
+  ]);
+  const priceChange = changeFrom(futuresCandles, 12);
+  const spotChange = changeFrom(spotCandles, 12);
+  const futuresVolumeSpike = volumeSpikeRatio(futuresCandles);
+  const spotVolumeSpike = volumeSpikeRatio(spotCandles);
+  const futuresBias = futuresDirection(priceChange, oiChange, linearBook.imbalance, accountRatio);
+  const spotBias = spotDirection(spotChange, spotVolumeSpike, spotBook.imbalance);
+  const liquidationPressure = squeezePressure(futuresCandles, futuresVolumeSpike, priceChange);
+  const fundingPenalty = Math.abs(fundingRate) > 0.0007 ? 8 : Math.abs(fundingRate) > 0.00035 ? 4 : 0;
+  const conflicted = futuresBias > 20 && spotBias < -15 || futuresBias < -20 && spotBias > 15;
+  const combined = futuresBias * 0.48 + spotBias * 0.42 + Math.sign(futuresBias + spotBias) * Math.min(10, Math.max(futuresVolumeSpike, spotVolumeSpike) * 4) - Math.sign(futuresBias + spotBias) * fundingPenalty;
+  const status: WhaleStatus = conflicted ? "CONFLICTED" : combined >= 22 ? "ACCUMULATION" : combined <= -22 ? "DISTRIBUTION" : "NEUTRAL";
+  const activityScore = clampNumber(Math.abs(combined) + Math.min(24, Math.abs(oiChange) * 4500) + Math.min(18, Math.max(futuresVolumeSpike, spotVolumeSpike) * 6) + Math.min(14, Math.abs(linearBook.imbalance + spotBook.imbalance) * 40), 0, 100);
+  const confidence = status === "NEUTRAL" ? clampNumber(Math.round(activityScore * 0.55), 25, 58) : clampNumber(Math.round(activityScore - (conflicted ? 12 : 0)), 45, 94);
+  return {
+    symbol: pair,
+    status,
+    confidence,
+    score: Math.round(activityScore),
+    futuresBias: Math.round(futuresBias),
+    spotBias: Math.round(spotBias),
+    priceChange,
+    oiChange,
+    fundingRate,
+    volumeSpike: Math.max(futuresVolumeSpike, spotVolumeSpike),
+    liquidationPressure,
+    reasons: whaleReasons({ status, priceChange, oiChange, fundingRate, futuresVolumeSpike, spotVolumeSpike, futuresBias, spotBias, liquidationPressure, accountRatio, spotImbalance: spotBook.imbalance })
+  };
+}
+
+function formatWhaleScanner(rows: WhaleRow[], filter: WhaleFilter) {
+  const title = filter === "accumulation" ? "🐋 Whale Flow Scanner — accumulation" : filter === "distribution" ? "🐋 Whale Flow Scanner — distribution" : filter === "strongest" ? "🐋 Whale Flow Scanner — strongest" : "🐋 Whale Flow Scanner";
+  if (!rows.length) return [title, "", "Немає достатньо сильного whale flow зараз.", "Futures + Spot перевірені; чекаємо чистіший imbalance."].join("\n");
+  return [title, "", ...rows.slice(0, 12).map(formatWhaleRow)].join("\n\n");
+}
+
+function formatWhaleCoin(row: WhaleRow) {
+  return [
+    `🐋 ${row.symbol}`,
+    "",
+    "Статус:",
+    `${whaleStatusLabel(row.status)}`,
+    "",
+    `Confidence: ${row.confidence}%`,
+    `Whale score: ${row.score}/100`,
+    "",
+    "Що бачимо:",
+    ...row.reasons.slice(0, 6).map((reason) => `• ${reason}`),
+    "",
+    "Висновок:",
+    row.status === "ACCUMULATION" ? "➡️ Smart money accumulation" : row.status === "DISTRIBUTION" ? "➡️ Distribution / exit behavior" : row.status === "CONFLICTED" ? "➡️ ⚠️ CONFLICTED FLOW — futures і spot не підтверджують одне одного" : "➡️ Нейтрально, немає якісної переваги"
+  ].join("\n");
+}
+
+function formatWhaleRow(row: WhaleRow) {
+  return [`${whaleStatusIcon(row.status)} ${row.symbol} — ${whaleStatusText(row.status)}`, `Confidence: ${row.confidence}%`, `Whale score: ${row.score}/100`, "", "Причина:", ...row.reasons.slice(0, 4).map((reason) => `• ${reason}`)].join("\n");
+}
+
+function whaleStatusLabel(status: WhaleStatus) {
+  return `${whaleStatusIcon(status)} ${whaleStatusText(status)}`;
+}
+
+function whaleStatusIcon(status: WhaleStatus) {
+  if (status === "ACCUMULATION") return "🟢";
+  if (status === "DISTRIBUTION") return "🔴";
+  if (status === "CONFLICTED") return "⚠️";
+  return "⚪";
+}
+
+function whaleStatusText(status: WhaleStatus) {
+  if (status === "ACCUMULATION") return "КИТИ НАБИРАЮТЬ";
+  if (status === "DISTRIBUTION") return "КИТИ ЗЛИВАЮТЬ";
+  if (status === "CONFLICTED") return "CONFLICTED FLOW";
+  return "НЕЙТРАЛЬНО";
+}
+
+function whaleReasons(input: { status: WhaleStatus; priceChange: number; oiChange: number; fundingRate: number; futuresVolumeSpike: number; spotVolumeSpike: number; futuresBias: number; spotBias: number; liquidationPressure: WhaleRow["liquidationPressure"]; accountRatio: number; spotImbalance: number }) {
+  const out = [];
+  out.push(`Futures: ${input.priceChange >= 0 ? "Price ↑" : "Price ↓"} + ${input.oiChange >= 0 ? "OI ↑" : "OI ↓"}`);
+  out.push(input.spotBias > 12 ? "Spot: buy pressure / accumulation flow" : input.spotBias < -12 ? "Spot: sell pressure / distribution flow" : "Spot: neutral flow");
+  if (Math.max(input.futuresVolumeSpike, input.spotVolumeSpike) > 1.35) out.push(`volume spike ${Math.max(input.futuresVolumeSpike, input.spotVolumeSpike).toFixed(1)}x`);
+  if (input.liquidationPressure !== "neutral") out.push(`Liquidation pressure: ${input.liquidationPressure}`);
+  if (Math.abs(input.accountRatio) > 0.08) out.push(`Positioning: ${input.accountRatio > 0 ? "long" : "short"} skew`);
+  if (Math.abs(input.fundingRate) > 0.00035) out.push(`Funding: ${input.fundingRate > 0 ? "positive" : "negative"} ${input.fundingRate.toFixed(5)}`);
+  if (input.status === "CONFLICTED") out.unshift(input.futuresBias > 0 ? "⚠️ Futures bullish, але Spot selling" : "⚠️ Futures bearish, але Spot buying");
+  if (!out.length) out.push("No abnormal whale activity");
+  return out;
+}
+
+function futuresDirection(priceChange: number, oiChange: number, imbalance: number, accountRatio: number) {
+  let score = 0;
+  if (priceChange > 0.002 && oiChange > 0.001) score += 34;
+  else if (priceChange > 0.002 && oiChange < -0.001) score += 10;
+  else if (priceChange < -0.002 && oiChange > 0.001) score -= 34;
+  else if (priceChange < -0.002 && oiChange < -0.001) score -= 24;
+  score += clampNumber(imbalance * 55, -18, 18);
+  score += clampNumber(accountRatio * 70, -16, 16);
+  return score;
+}
+
+function spotDirection(priceChange: number, volumeSpike: number, imbalance: number) {
+  let score = clampNumber(imbalance * 70, -34, 34);
+  if (volumeSpike > 1.35 && priceChange >= -0.001) score += 26;
+  if (volumeSpike > 1.35 && priceChange < -0.001) score -= 26;
+  if (priceChange > 0.003) score += 10;
+  if (priceChange < -0.003) score -= 10;
+  return score;
+}
+
+function squeezePressure(candles: Candle[], volumeSpike: number, priceChange: number): WhaleRow["liquidationPressure"] {
+  const last = candles.at(-1);
+  if (!last || volumeSpike < 1.5) return "neutral";
+  const range = Math.max(last.high - last.low, last.close * 0.0001);
+  const upperWick = (last.high - Math.max(last.open, last.close)) / range;
+  const lowerWick = (Math.min(last.open, last.close) - last.low) / range;
+  if (priceChange > 0.002 && upperWick > 0.35) return "short squeeze";
+  if (priceChange < -0.002 && lowerWick > 0.35) return "long squeeze";
+  return "neutral";
+}
+
+function changeFrom(candles: Candle[], bars: number) {
+  const last = candles.at(-1);
+  const prev = candles.length > bars ? candles.at(-bars) : candles[0];
+  return last && prev?.close ? (last.close - prev.close) / prev.close : 0;
+}
+
+function volumeSpikeRatio(candles: Candle[]) {
+  if (candles.length < 12) return 1;
+  const recent = candles.slice(-3).reduce((sum, candle) => sum + candle.volume, 0) / 3;
+  const base = candles.slice(-15, -3).reduce((sum, candle) => sum + candle.volume, 0) / 12;
+  return base > 0 ? recent / base : 1;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function sampleWhaleRows(): WhaleRow[] {
+  return [
+    { symbol: "BTCUSDT", status: "ACCUMULATION", confidence: 82, score: 88, futuresBias: 45, spotBias: 39, priceChange: 0.006, oiChange: 0.004, fundingRate: 0.0001, volumeSpike: 1.8, liquidationPressure: "short squeeze", reasons: ["Futures: Price ↑ + OI ↑", "Spot: buy pressure / accumulation flow", "volume spike 1.8x", "Positioning: long skew"] },
+    { symbol: "PEPEUSDT", status: "DISTRIBUTION", confidence: 74, score: 79, futuresBias: -38, spotBias: -31, priceChange: -0.005, oiChange: -0.002, fundingRate: 0.0002, volumeSpike: 1.6, liquidationPressure: "long squeeze", reasons: ["Spot: sell pressure / distribution flow", "Futures: Price ↓ + OI ↓", "volume spike 1.6x", "Liquidation pressure: long squeeze"] }
+  ];
+}
+
+function normalizeWhalePair(input: string) {
+  const pair = normalizePriorityPair(input);
+  return pair.endsWith("USDT") ? pair : `${pair}USDT`;
 }
 
 function signalMenuText() {
@@ -877,7 +1132,17 @@ function topText() {
 }
 
 function topSignals() {
-  return [...state.activeSignals, ...state.watchlist, ...state.history].filter((signal) => signal.side !== "NO_TRADE" && signal.score >= 72).sort((a, b) => b.score - a.score).slice(0, 5);
+  const seen = new Set<string>();
+  return [...state.activeSignals, ...state.watchlist, ...state.history]
+    .filter((signal) => signal.side !== "NO_TRADE" && signal.score >= 72)
+    .sort((a, b) => b.score - a.score)
+    .filter((signal) => {
+      const key = signalKey(signal);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 5);
 }
 
 function watchlistText() {
@@ -986,20 +1251,12 @@ function signalSummary(signal: Signal) {
 }
 
 function compactSignalCard(signal: Signal) {
+  return formatDecisionSignal(signal);
+}
+
+function signalKey(signal: Signal) {
   const side = signal.side === "BUY" ? "LONG" : signal.side;
-  const icon = side === "SHORT" ? "🔴" : side === "WATCHLIST" ? "⚠️" : "🟢";
-  return [
-    `${icon} ${side} — ${signal.symbol}`,
-    "",
-    signal.entryStatus === "ENTER_NOW" ? "✅ REAL ENTRY" : side === "WATCHLIST" ? "INTERNAL MONITOR" : "NO ACTIVE ENTRY",
-    "",
-    `Score: ${signal.score}%`,
-    `Entry: ${fmt(signal.entry[0])}-${fmt(signal.entry[1])}`,
-    `SL: ${fmt(signal.stopLoss)}`,
-    `TP: ${signal.takeProfit.map(fmt).join(" / ")}`,
-    "",
-    signal.side === "WATCHLIST" ? `Readiness: ${readinessLabel(signal)}` : signal.management
-  ].join("\n");
+  return [signal.symbol, side, signal.mode, fmt(signal.entry[0]), fmt(signal.entry[1])].join(":");
 }
 
 function topLine(signal: Signal) {
@@ -1498,13 +1755,13 @@ function isMenuButton(text: string) {
   return buttonAction(text) !== null;
 }
 
-type ButtonAction = "menu" | "back" | "signals" | "search_pair" | "watchlist" | "settings" | "signal_pair" | "watch_add" | "watch_remove" | "top" | "signals_refresh" | "positions" | "stats" | "new_tokens" | "watch_status" | "monitoring" | "intelligence" | "pump_detector" | "whale_bias" | "liquidation_status" | "market_regime" | "market" | "btc" | "diagnostics" | "balance" | "leverage" | "x2" | "x3" | "notifications" | "telegram_ux" | "risk_mode" | "conservative" | "balanced" | "aggressive";
+type ButtonAction = "menu" | "back" | "signals" | "search_pair" | "watchlist" | "settings" | "signal_pair" | "watch_add" | "watch_remove" | "top" | "signals_refresh" | "positions" | "stats" | "new_tokens" | "watch_status" | "monitoring" | "whales" | "whales_accumulation" | "whales_distribution" | "whales_strongest" | "whales_check" | "intelligence" | "pump_detector" | "whale_bias" | "liquidation_status" | "market_regime" | "market" | "btc" | "diagnostics" | "balance" | "leverage" | "x2" | "x3" | "notifications" | "telegram_ux" | "risk_mode" | "conservative" | "balanced" | "aggressive";
 
 function buttonAction(text: string): ButtonAction | null {
   const normalized = normalizeButtonText(text).toLowerCase();
   const stripped = normalized.replace(/[^\p{L}\p{N}₿]+/gu, " ").replace(/\s+/g, " ").trim();
   const aliases: [ButtonAction, string[]][] = [
-    ["menu", ["меню", "menu"]],
+    ["menu", ["меню", "головне меню", "home", "menu"]],
     ["back", ["назад", "back"]],
     ["signals", ["сигнали", "signals"]],
     ["search_pair", ["search pair", "пошук по парах", "пошук пари", "пошук", "search"]],
@@ -1513,13 +1770,18 @@ function buttonAction(text: string): ButtonAction | null {
     ["signal_pair", ["аналіз пари", "аналіз", "analyze pair", "signal pair"]],
     ["watch_add", ["додати пару", "add pair", "watch add"]],
     ["watch_remove", ["видалити пару", "remove pair", "watch remove"]],
-    ["top", ["найкращі сигнали", "топ сетапи", "top setups"]],
+    ["top", ["найкращі сигнали", "топ сетапи", "сетапи", "top", "top setups"]],
     ["signals_refresh", ["оновити сигнали", "refresh signals", "signals refresh"]],
     ["positions", ["активні угоди", "позиції", "оновити позиції", "positions"]],
     ["stats", ["статистика", "stats"]],
     ["new_tokens", ["new tokens"]],
     ["watch_status", ["watch status"]],
     ["monitoring", ["моніторинг", "monitoring"]],
+    ["whales", ["рух китів", "кити", "whales", "whale flow"]],
+    ["whales_accumulation", ["тільки accumulation", "accumulation", "whales accumulation"]],
+    ["whales_distribution", ["тільки distribution", "distribution", "whales distribution"]],
+    ["whales_strongest", ["найсильніші рухи", "strongest whale moves", "whales strongest"]],
+    ["whales_check", ["перевірити монету", "check coin", "whales check"]],
     ["intelligence", ["intelligence", "інтелект"]],
     ["pump_detector", ["pump detector", "pump"]],
     ["whale_bias", ["whale bias", "whale"]],
