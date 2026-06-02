@@ -67,6 +67,7 @@ async function main() {
   checks["inline_ui_market_regime"] = last(notifier).includes("Режим ринку") || last(notifier).includes("Дані ще формуються");
   await click(center, checks, "₿ BTC Фільтр", "BTC Фільтр");
   await click(center, checks, "🧪 Діагностика", "Діагностика");
+  await click(center, checks, "/okxdebug", "OKX DEBUG");
   await click(center, checks, "⚙️ Налаштування", "Налаштування");
   await click(center, checks, "💰 Баланс", "Поточний баланс");
   await click(center, checks, String(originalSettings.balanceUsdt), "Баланс оновлено");

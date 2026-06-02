@@ -519,8 +519,8 @@ export class Scanner {
 }
 
 function autoScalpAllowed(move: { score: number; scalpGrade?: string; risk: string }) {
-  if (move.scalpGrade === "S" || move.scalpGrade === "A") return move.score >= 72;
-  if (move.scalpGrade === "B") return move.score >= 82 && move.risk !== "High";
+  if (move.scalpGrade === "S" || move.scalpGrade === "A") return move.score >= 68;
+  if (move.scalpGrade === "B") return move.score >= 76 && move.risk !== "High";
   return false;
 }
 

@@ -46,9 +46,9 @@ const MOVE_THRESHOLDS = [
 ];
 
 const SCALP_THRESHOLDS = [
-  { timeframe: "1m" as const, interval: "1", bars: 1, levels: [0.28, 0.55, 0.9] },
-  { timeframe: "3m" as const, interval: "3", bars: 1, levels: [0.45, 0.9, 1.4] },
-  { timeframe: "5m" as const, interval: "5", bars: 1, levels: [0.65, 1.2, 2.0] }
+  { timeframe: "1m" as const, interval: "1", bars: 1, levels: [0.22, 0.45, 0.8] },
+  { timeframe: "3m" as const, interval: "3", bars: 1, levels: [0.35, 0.75, 1.25] },
+  { timeframe: "5m" as const, interval: "5", bars: 1, levels: [0.5, 1.0, 1.8] }
 ];
 
 type SignalDedupeEntry = { sentAt: number; score: number; movePct: number; setupType: SetupType; direction: Direction; price: number; scalpSetup?: MomentumMove["scalpSetup"]; entryType?: EntryType };
@@ -237,10 +237,10 @@ export class MomentumScanner {
     const spotBySymbol = new Map(spot.map((item) => [item.symbol, item]));
     const btcMove1m = pctMove(btcCandles, 1);
     const candidates = linear
-      .filter((item) => item.symbol.endsWith("USDT") && item.lastPrice > 0 && item.turnover24h >= 150_000 && spread(item) <= 0.02)
+      .filter((item) => item.symbol.endsWith("USDT") && item.lastPrice > 0 && item.turnover24h >= 120_000 && spread(item) <= 0.024)
       .map((item) => ({ item, spot: spotBySymbol.get(item.symbol), rank: scalpCandidateRank(item, spotBySymbol.get(item.symbol), this.recentMovePct(item.symbol)) }))
       .sort((a, b) => b.rank - a.rank)
-      .slice(0, auto ? 10 : 16);
+      .slice(0, auto ? 14 : 24);
 
     const rows = (await Promise.all(candidates.map(({ item, spot }) => this.analyzeScalp(item, spot, btcMove1m).catch(() => null))))
       .filter((row): row is MomentumMove => Boolean(row));
@@ -253,7 +253,7 @@ export class MomentumScanner {
 
   private async analyzeScalp(ticker: Ticker, spotTicker: Ticker | undefined, btcMove1m: number, force = false): Promise<MomentumMove | null> {
     const spreadPct = spread(ticker);
-    if (!force && (ticker.turnover24h < 150_000 || spreadPct > 0.02)) return null;
+    if (!force && (ticker.turnover24h < 120_000 || spreadPct > 0.024)) return null;
     const [candles1, candles3, candles5, spot1, oiChange, orderBook, accountRatio] = await Promise.all([
       this.client.bybitKlines(ticker.symbol, "1", "linear", 40),
       this.client.bybitKlines(ticker.symbol, "3", "linear", 30),
@@ -276,7 +276,7 @@ export class MomentumScanner {
     const wickTrap = extendedWickAgainst(direction, trigger.candles);
     const score = scoreScalp(trigger.movePct, volumeSpike, acceleration, whaleScore, liquidationPressure, ticker.turnover24h, fake.reasons.length, spreadPct, mtf, wickTrap);
     const grade = scalpGrade(score, { volumeSpike, whaleScore, liquidationPressure, spreadPct, riskCount: fake.reasons.length, mtf, wickTrap });
-    if (!force && (grade === "C" || volumeSpike < 1.12 && Math.abs(trigger.movePct) < 0.8)) return null;
+    if (!force && (grade === "C" || volumeSpike < 1.08 && Math.abs(trigger.movePct) < 0.65)) return null;
     const range = lastRange(trigger.candles);
     const retest = scalpEntryZone(direction, trigger.toPrice, range, score >= 72 && volumeSpike >= 1.8);
     const setup = scalpSetupFor(liquidationPressure, acceleration, marketEntryCandidate(score, volumeSpike, acceleration, spreadPct), wickTrap);
@@ -591,9 +591,9 @@ function scalpMtfAlignment(direction: Direction, candles1: Candle[], candles3: C
 
 function scalpGrade(score: number, input: { volumeSpike: number; whaleScore: number; liquidationPressure: number; spreadPct: number; riskCount: number; mtf: number; wickTrap: boolean }): "S" | "A" | "B" | "C" {
   const whaleOk = input.whaleScore >= 62 || input.whaleScore <= 38;
-  if (score >= 88 && input.volumeSpike >= 1.8 && input.mtf >= 2 && input.spreadPct <= 0.012 && !input.wickTrap && (whaleOk || input.liquidationPressure >= 50)) return "S";
-  if (score >= 76 && input.volumeSpike >= 1.45 && input.mtf >= 2 && input.riskCount <= 2) return "A";
-  if (score >= 64 && input.volumeSpike >= 1.2 && input.mtf >= 1 && input.spreadPct <= 0.018) return "B";
+  if (score >= 86 && input.volumeSpike >= 1.65 && input.mtf >= 2 && input.spreadPct <= 0.014 && !input.wickTrap && (whaleOk || input.liquidationPressure >= 50)) return "S";
+  if (score >= 72 && input.volumeSpike >= 1.32 && input.mtf >= 2 && input.riskCount <= 2) return "A";
+  if (score >= 58 && input.volumeSpike >= 1.12 && input.mtf >= 1 && input.spreadPct <= 0.022) return "B";
   return "C";
 }
 

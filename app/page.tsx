@@ -109,7 +109,10 @@ export default function Dashboard() {
   const active = state?.activeSignals ?? [];
   const watchlist = state?.watchlist ?? [];
   const history = state?.history ?? [];
-  const strongest = uniqueSignals([...active, ...watchlist, ...history]).sort((a, b) => b.score - a.score).slice(0, 5);
+  const strongest = uniqueSignals([...active, ...watchlist, ...history])
+    .filter((signal) => setupBucket(signal.score) !== "ignore")
+    .sort((a, b) => bucketRank(b.score) - bucketRank(a.score) || b.score - a.score)
+    .slice(0, 5);
 
   return (
     <main className="min-h-screen px-4 py-5 md:px-8">
@@ -265,6 +268,8 @@ function sideClass(side: Side) { return side === "LONG" || side === "BUY" ? "tex
 function connectionTitle(mode: ConnectionMode) { return mode === "local" || mode === "remote" ? "🟡 ЛОКАЛЬНИЙ РЕЖИМ" : mode === "engine-required" ? "⚠️ ЛОКАЛЬНИЙ РУШІЙ ПОТРІБЕН" : "ПЕРЕВІРКА ПІДКЛЮЧЕННЯ"; }
 function sideUa(side: Side) { return side === "NO_TRADE" ? "НЕ ВХОДИТИ" : side === "WATCHLIST" ? "СПОСТЕРЕЖЕННЯ" : side; }
 function entryStatusUa(status: Signal["entryStatus"]) { return status === "ENTER_NOW" ? "ЗАХОДИТИ ЗАРАЗ" : status === "WAIT_FOR_ENTRY" ? "ЧЕКАТИ ЗОНУ ВХОДУ" : "НЕ ВХОДИТИ"; }
+function setupBucket(score: number) { return score < 40 ? "ignore" : score < 60 ? "weak" : score < 75 ? "possible" : score < 85 ? "strong" : "entry"; }
+function bucketRank(score: number) { const bucket = setupBucket(score); return bucket === "entry" ? 5 : bucket === "strong" ? 4 : bucket === "possible" ? 3 : bucket === "weak" ? 2 : 0; }
 function modeUa(mode: string) { return mode === "futures" ? "ф'ючерси" : mode === "spot" ? "спот" : mode === "LOCAL_ONLY" ? "локальний" : mode; }
 function regimeUa(regime: string) { return ({ TRENDING: "трендовий", RANGING: "боковий", VOLATILE: "волатильний", NEWS_DRIVEN: "новинний", MANIPULATION_RISK: "ризик маніпуляції" } as Record<string, string>)[regime] ?? regime; }
 function formatUsd(value: number) { return value >= 1_000_000_000 ? `$${(value / 1_000_000_000).toFixed(2)}B` : value >= 1_000_000 ? `$${(value / 1_000_000).toFixed(1)}M` : value >= 1_000 ? `$${(value / 1_000).toFixed(1)}K` : `$${Math.round(value)}`; }

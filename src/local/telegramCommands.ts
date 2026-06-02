@@ -256,6 +256,7 @@ export class TelegramCommandCenter {
 
     if (command === "/help") return this.notifier.send(helpText(), mainMenuKeyboard());
     if (command === "/status") return this.notifier.send(statusText(), mainMenuKeyboard());
+    if (command === "/okxdebug") return this.sendOkxDebug();
     if (command === "/signals") return this.sendTopSetups();
     if (command === "/diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
     if (command === "/market") return this.notifier.send(marketText(), marketActionsKeyboard());
@@ -578,6 +579,25 @@ export class TelegramCommandCenter {
     if ("error" in signal) return this.notifier.send(`Futures raw analysis failed: ${signal.error}`, mainMenuKeyboard());
     return this.notifier.send(futuresProfessionalAnalysisText(signal, undefined, undefined), pairSearchKeyboard(signal.symbol, true, false));
   }
+
+  private async sendOkxDebug(): Promise<void> {
+    const env = okxEnvDebug();
+    const auth = await this.whaleClient.okxAuthCheck()
+      .then((result) => ({ ok: true, detail: `Account level: ${result.accountLevel ?? "unknown"}; permissions: ${result.permissions ?? "unknown"}` }))
+      .catch((error) => ({ ok: false, detail: okxErrorReason(error instanceof Error ? error.message : String(error)) }));
+    return this.notifier.send([
+      "🧪 OKX DEBUG",
+      "",
+      `API KEY: ${env.key}`,
+      `SECRET: ${env.secret}`,
+      `PASSPHRASE: ${env.passphrase}`,
+      "",
+      `AUTH STATUS: ${auth.ok ? "OK" : "FAIL"}`,
+      `ERROR REASON: ${auth.detail}`,
+      "",
+      auth.ok ? "✅ OKX private endpoints працюють." : "⚠️ Якщо причина Wrong passphrase / 50105: passphrase не відповідає цьому OKX API key. Потрібно створити/вставити правильну пару key+secret+passphrase."
+    ].join("\n"), diagnosticsActionsKeyboard());
+  }
 }
 
 async function answerCallback(callbackQueryId: string) {
@@ -615,6 +635,28 @@ function readPollingLock(): { pid: number; updatedAt: number } | null {
 
 function writePollingLock() {
   writeFileSync(telegramLockPath(), JSON.stringify({ pid: process.pid, updatedAt: Date.now() }));
+}
+
+function okxEnvDebug() {
+  return {
+    key: envLoaded(config.OKX_API_KEY),
+    secret: envLoaded(config.OKX_API_SECRET),
+    passphrase: envLoaded(config.OKX_API_PASSPHRASE)
+  };
+}
+
+function envLoaded(value?: string) {
+  if (!value) return "not loaded";
+  const problems = [value !== value.trim() ? "whitespace" : "", /^['"]|['"]$/.test(value) ? "quotes" : "", /[\r\n]/.test(value) ? "newline" : ""].filter(Boolean);
+  return problems.length ? `loaded (${problems.join(", ")})` : "loaded";
+}
+
+function okxErrorReason(message: string) {
+  if (/50105|passphrase/i.test(message)) return "Wrong passphrase / OKX 50105: passphrase не відповідає API key або key створено з іншим passphrase.";
+  if (/50113|signature/i.test(message)) return "Signature error: перевірити secret, timestamp і method/path signing.";
+  if (/timestamp|50102/i.test(message)) return "Timestamp sync error: системний час або OKX timestamp window.";
+  if (/incomplete/i.test(message)) return "Credentials incomplete: відсутній API key, secret або passphrase.";
+  return message.slice(0, 220);
 }
 
 function isProcessAlive(pid: number) {
@@ -1284,7 +1326,7 @@ function topText() {
 function topSignals() {
   const seen = new Set<string>();
   return [...state.activeSignals, ...state.watchlist, ...state.history]
-    .filter((signal) => signal.side !== "NO_TRADE" && signal.score >= 72)
+    .filter((signal) => signal.side !== "NO_TRADE" && setupBucket(signal.score) !== "ignore")
     .sort((a, b) => b.score - a.score)
     .filter((signal) => {
       const key = signalKey(signal);
@@ -1316,7 +1358,7 @@ function watchStatusText() {
 
 function rankedWatchlist() {
   return state.watchlist
-    .filter((signal) => signal.mode === "futures" && signal.score >= 72)
+    .filter((signal) => signal.mode === "futures" && signal.score >= 40)
     .sort((a, b) => readinessScore(b) - readinessScore(a));
 }
 
@@ -1425,7 +1467,24 @@ function entryStatusUa(status: Signal["entryStatus"]) {
 function topLine(signal: Signal) {
   const side = signal.side === "BUY" ? "LONG" : signal.side;
   const icon = side === "SHORT" ? "🔴" : side === "WATCHLIST" ? "⚠️" : "🟢";
-  return `${icon} ${sideUa(side as Signal["side"])} ${signal.symbol} — ${signal.score}%`;
+  return `${icon} ${sideUa(side as Signal["side"])} ${signal.symbol} — ${signal.score}% · ${setupBucketUa(signal.score)}`;
+}
+
+function setupBucket(score: number) {
+  if (score < 40) return "ignore";
+  if (score < 60) return "weak";
+  if (score < 75) return "possible";
+  if (score < 85) return "strong";
+  return "entry";
+}
+
+function setupBucketUa(score: number) {
+  const bucket = setupBucket(score);
+  if (bucket === "weak") return "слабкий watchlist";
+  if (bucket === "possible") return "можливий сетап";
+  if (bucket === "strong") return "сильний сетап";
+  if (bucket === "entry") return "кандидат на вхід";
+  return "ігнор";
 }
 
 function positionSummary(signal: Signal) {
