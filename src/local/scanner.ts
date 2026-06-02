@@ -495,7 +495,7 @@ export class Scanner {
       const scalpMoves = await this.momentumScanner.scanAutoScalpSignals(2);
       const moves = [...safeMoves, ...scalpMoves].sort((a, b) => b.score - a.score).slice(0, 4);
       for (const move of moves) {
-        if (move.mode === "SCALP" ? move.score < 68 : move.score < 70) continue;
+        if (move.mode === "SCALP" ? !autoScalpAllowed(move) : move.score < 70) continue;
         const cooldownMinutes = smartCooldownMinutes(move.score, move.mode === "SCALP");
         const dedupe = this.momentumScanner.signalDedupeDecision(move, cooldownMinutes);
         if (!dedupe.allowed) {
@@ -516,6 +516,12 @@ export class Scanner {
       this.momentumScanning = false;
     }
   }
+}
+
+function autoScalpAllowed(move: { score: number; scalpGrade?: string; risk: string }) {
+  if (move.scalpGrade === "S" || move.scalpGrade === "A") return move.score >= 72;
+  if (move.scalpGrade === "B") return move.score >= 82 && move.risk !== "High";
+  return false;
 }
 
 function smartCooldownMinutes(score: number, scalp = false) {

@@ -10,6 +10,8 @@ const schema = z.object({
   OKX_API_KEY: z.string().optional(),
   OKX_API_SECRET: z.string().optional(),
   OKX_API_PASSPHRASE: z.string().optional(),
+  OKX_SECRET: z.string().optional(),
+  OKX_PASSPHRASE: z.string().optional(),
   KUCOIN_API_KEY: z.string().optional(),
   KUCOIN_API_SECRET: z.string().optional(),
   KUCOIN_API_PASSPHRASE: z.string().optional(),
@@ -27,7 +29,16 @@ const schema = z.object({
   BOT_MODE: z.enum(["LOCAL_ONLY", "HYBRID", "OFFLINE_TEST"]).optional()
 });
 
-const env = schema.parse(process.env);
+const parsed = schema.parse(process.env);
+const env = {
+  ...parsed,
+  OKX_API_KEY: cleanSecret(parsed.OKX_API_KEY),
+  OKX_API_SECRET: cleanSecret(parsed.OKX_API_SECRET ?? parsed.OKX_SECRET),
+  OKX_API_PASSPHRASE: cleanSecret(parsed.OKX_API_PASSPHRASE ?? parsed.OKX_PASSPHRASE),
+  KUCOIN_API_KEY: cleanSecret(parsed.KUCOIN_API_KEY),
+  KUCOIN_API_SECRET: cleanSecret(parsed.KUCOIN_API_SECRET),
+  KUCOIN_API_PASSPHRASE: cleanSecret(parsed.KUCOIN_API_PASSPHRASE)
+};
 const partialMode = !env.OKX_API_PASSPHRASE;
 const mode: Mode = env.BOT_MODE ?? "LOCAL_ONLY";
 
@@ -43,3 +54,9 @@ export const config = {
   maxSignalsPerDay: env.SMALL_BALANCE_GROWTH_MODE === "0" ? 5 : 2,
   minSignalCooldownMinutes: env.SMALL_BALANCE_GROWTH_MODE === "0" ? 20 : 45
 };
+
+function cleanSecret(value?: string) {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  return trimmed.replace(/^['"]|['"]$/g, "");
+}

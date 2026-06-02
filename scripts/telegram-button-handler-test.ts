@@ -41,7 +41,7 @@ async function main() {
   await click(center, checks, "🚨 Великі рухи", "Сканер сильних рухів");
   await click(center, checks, "/momentum", "Сканер сильних рухів");
   await click(center, checks, "/moves", "Сканер сильних рухів");
-  await click(center, checks, "/scalp", "QUICK SCALP SIGNAL");
+  await click(center, checks, "/scalp", "ШВИДКИЙ СКАЛЬП-СИГНАЛ");
   await click(center, checks, "/scalplong", "Scalp LONG");
   await click(center, checks, "/scalpshort", "Scalp SHORT");
   await click(center, checks, "/longmovers", "Лідери LONG");
@@ -55,7 +55,7 @@ async function main() {
   await click(center, checks, "кити", "Сканер руху китів");
   await click(center, checks, "/whales", "Сканер руху китів");
   await click(center, checks, "🔍 Перевірити монету", "Перевірити великий рух");
-  await click(center, checks, "btc", "QUICK SCALP SIGNAL");
+  await click(center, checks, "btc", "ШВИДКИЙ СКАЛЬП-СИГНАЛ");
   await click(center, checks, "🧠 Інтелект", "Інтелект");
   await center.handleCallbackForTest("ui:pump_detector");
   checks["inline_ui_pump_detector"] = last(notifier).includes("Детектор пампу") || last(notifier).includes("Дані ще формуються");
@@ -108,7 +108,7 @@ async function main() {
   await center.handleCallbackForTest("ui:momentum");
   checks["inline_ui_momentum"] = last(notifier).includes("Сканер сильних рухів");
   await center.handleCallbackForTest("ui:momentum_scalp");
-  checks["inline_ui_momentum_scalp"] = last(notifier).includes("QUICK SCALP SIGNAL");
+  checks["inline_ui_momentum_scalp"] = last(notifier).includes("ШВИДКИЙ СКАЛЬП-СИГНАЛ");
   await center.handleCallbackForTest("ui:momentum_scalp_long");
   checks["inline_ui_momentum_scalp_long"] = last(notifier).includes("Scalp LONG");
   await center.handleCallbackForTest("ui:momentum_scalp_short");

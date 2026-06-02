@@ -10,13 +10,10 @@ function visible(value: string | undefined) {
   return {
     loaded: true,
     length: value.length,
-    startsWith: value.slice(0, 4),
-    endsWith: value.slice(-4),
     hasLeadingSpace: value !== value.trimStart(),
     hasTrailingSpace: value !== value.trimEnd(),
     hasNewline: /[\r\n]/.test(value),
-    hasQuotes: /^['"]|['"]$/.test(value),
-    exactPassphraseMatch: value === "BotTrade2026!OKX"
+    hasQuotes: /^['"]|['"]$/.test(value)
   };
 }
 
@@ -39,7 +36,7 @@ async function rest(base: string, path: string) {
   try {
     res = await fetch(url, { headers });
   } catch (error) {
-    return { base, endpoint: path, request: { timestamp, method: "GET", path, signature, passphraseHeader: headers["OK-ACCESS-PASSPHRASE"], keyHeaderLoaded: Boolean(headers["OK-ACCESS-KEY"]) }, response: { status: 0, raw: error instanceof Error ? error.message : String(error) } };
+    return { base, endpoint: path, request: { timestamp, method: "GET", path, signatureLoaded: Boolean(signature), passphraseHeaderLoaded: Boolean(headers["OK-ACCESS-PASSPHRASE"]), keyHeaderLoaded: Boolean(headers["OK-ACCESS-KEY"]) }, response: { status: 0, raw: error instanceof Error ? error.message : String(error) } };
   }
   const raw = await res.text();
   return {
@@ -49,8 +46,8 @@ async function rest(base: string, path: string) {
       timestamp,
       method: "GET",
       path,
-      signature,
-      passphraseHeader: headers["OK-ACCESS-PASSPHRASE"],
+      signatureLoaded: Boolean(signature),
+      passphraseHeaderLoaded: Boolean(headers["OK-ACCESS-PASSPHRASE"]),
       keyHeaderLoaded: Boolean(headers["OK-ACCESS-KEY"])
     },
     response: { status: res.status, raw: raw.slice(0, 1000) }

@@ -32,6 +32,8 @@ export type MomentumMove = {
   retest: [number, number];
   potential: "MEDIUM" | "HIGH" | "VERY HIGH";
   risk: "Low" | "Medium" | "High";
+  scalpGrade?: "S" | "A" | "B" | "C";
+  scalpSetup?: "breakout" | "retest" | "squeeze";
   expectedHoldMinutes?: string;
   reasons: string[];
   score: number;
@@ -49,7 +51,7 @@ const SCALP_THRESHOLDS = [
   { timeframe: "5m" as const, interval: "5", bars: 1, levels: [0.65, 1.2, 2.0] }
 ];
 
-type SignalDedupeEntry = { sentAt: number; score: number; movePct: number; setupType: SetupType; direction: Direction; price: number };
+type SignalDedupeEntry = { sentAt: number; score: number; movePct: number; setupType: SetupType; direction: Direction; price: number; scalpSetup?: MomentumMove["scalpSetup"]; entryType?: EntryType };
 type SignalDedupeDecision = { allowed: boolean; reason: string; timeLeftMs: number; previous?: SignalDedupeEntry };
 
 const DEDUPE_FILE = resolve(process.cwd(), "data", "auto-signal-dedupe.json");
@@ -270,11 +272,15 @@ export class MomentumScanner {
     const whaleScore = whaleScoreFor(direction, oiChange, orderBook.imbalance, accountRatio, spotConfirm, volumeSpike);
     const fake = fakeMoveRisk(direction, trigger.candles, volumeSpike, orderBook, spotConfirm, btcMove1m);
     const liquidationPressure = liquidationCascadeScore(direction, oiChange, orderBook.imbalance, accountRatio, volumeSpike);
-    const score = scoreScalp(trigger.movePct, volumeSpike, acceleration, whaleScore, liquidationPressure, ticker.turnover24h, fake.reasons.length, spreadPct);
-    if (!force && (score < 56 || volumeSpike < 1.12 && Math.abs(trigger.movePct) < 0.8)) return null;
+    const mtf = scalpMtfAlignment(direction, candles1, candles3, candles5);
+    const wickTrap = extendedWickAgainst(direction, trigger.candles);
+    const score = scoreScalp(trigger.movePct, volumeSpike, acceleration, whaleScore, liquidationPressure, ticker.turnover24h, fake.reasons.length, spreadPct, mtf, wickTrap);
+    const grade = scalpGrade(score, { volumeSpike, whaleScore, liquidationPressure, spreadPct, riskCount: fake.reasons.length, mtf, wickTrap });
+    if (!force && (grade === "C" || volumeSpike < 1.12 && Math.abs(trigger.movePct) < 0.8)) return null;
     const range = lastRange(trigger.candles);
     const retest = scalpEntryZone(direction, trigger.toPrice, range, score >= 72 && volumeSpike >= 1.8);
-    const marketEntry = score >= 74 && volumeSpike >= 1.7 && acceleration >= 0 && spreadPct <= 0.012;
+    const setup = scalpSetupFor(liquidationPressure, acceleration, marketEntryCandidate(score, volumeSpike, acceleration, spreadPct), wickTrap);
+    const marketEntry = score >= 74 && volumeSpike >= 1.7 && acceleration >= 0 && spreadPct <= 0.012 && setup !== "retest";
     const risk: MomentumMove["risk"] = fake.reasons.length >= 2 || ticker.turnover24h < 500_000 || spreadPct > 0.012 ? "High" : "Medium";
     return {
       symbol: ticker.symbol,
@@ -297,8 +303,10 @@ export class MomentumScanner {
       retest,
       potential: score >= 82 ? "VERY HIGH" : score >= 68 ? "HIGH" : "MEDIUM",
       risk,
+      scalpGrade: grade,
+      scalpSetup: setup,
       expectedHoldMinutes: "2–10 хв",
-      reasons: scalpReasons(volumeSpike, acceleration, whaleScore, liquidationPressure, orderBook.imbalance, fake.reasons),
+      reasons: scalpReasons(volumeSpike, acceleration, whaleScore, liquidationPressure, orderBook.imbalance, mtf, wickTrap, fake.reasons),
       score
     };
   }
@@ -357,13 +365,13 @@ export function formatQuickScalpSignal(move: MomentumMove) {
   const icon = move.direction === "LONG" ? "🟢" : "🔴";
   const plan = smallBalancePlan(move);
   return [
-    "⚡ QUICK SCALP SIGNAL",
+    "⚡ ШВИДКИЙ СКАЛЬП-СИГНАЛ",
     "",
     `🪙 Монета: ${move.symbol}`,
     `📍 Напрямок: ${move.direction} ${icon}`,
-    `⚡ Тип: 1–5m momentum scalp (${timeframeUa(move.timeframe)})`,
+    `⚡ Тип: 1–5m імпульсний скальп (${timeframeUa(move.timeframe)})`,
     "",
-    move.score >= 68 ? "✅ МОЖНА ВХОДИТИ" : "🟡 SHORT-TERM SCALP / ризиковий вхід",
+    move.score >= 68 ? "✅ МОЖНА ВХОДИТИ" : "🟡 КОРОТКИЙ СКАЛЬП / ризиковий вхід",
     "",
     "Тип входу:",
     move.entryType === "MARKET ENTRY" ? "Вхід по ринку" : "Лімітний вхід",
@@ -380,8 +388,10 @@ export function formatQuickScalpSignal(move: MomentumMove) {
     `⏱ Очікуваний час: ${move.expectedHoldMinutes ?? "2–10 хв"}`,
     "",
     `⚠️ Ризик: ${move.risk === "High" ? "Високий" : "Підвищений"}`,
-    `Confidence: ${move.score}/100`,
+    `🏆 Якість: рівень ${move.scalpGrade ?? scalpGradeFromScore(move.score)}`,
+    `Впевненість: ${move.score}/100`,
     `Позиція: ${formatAmount(plan.positionSize)} USDT (${plan.leverage}x), ризик ~${formatAmount(plan.maxLoss)} USDT`,
+    `RR: 1:${plan.rr.toFixed(1)}`,
     "",
     "Причина:",
     ...move.reasons.slice(0, 7).map((reason) => `• ${reasonUa(reason)}`)
@@ -562,15 +572,46 @@ function liquidationCascadeScore(direction: Direction, oiChange: number, imbalan
   return [squeezeOi, bookPressure, crowdPressure, volumeSpike >= 1.8].filter(Boolean).length * 25;
 }
 
-function scoreScalp(movePct: number, volumeSpike: number, acceleration: number, whaleScore: number, liquidationPressure: number, turnover24h: number, riskCount: number, spreadPct: number) {
+function scoreScalp(movePct: number, volumeSpike: number, acceleration: number, whaleScore: number, liquidationPressure: number, turnover24h: number, riskCount: number, spreadPct: number, mtf: number, wickTrap: boolean) {
   const moveScore = Math.min(28, Math.abs(movePct) * 16);
   const volumeScore = Math.min(24, volumeSpike * 10);
   const accelerationScore = Math.min(16, Math.max(0, acceleration) * 16);
   const whale = whaleScore * 0.18;
   const liq = liquidationPressure * 0.16;
+  const mtfScore = mtf * 4;
   const liquidity = Math.min(8, Math.log10(Math.max(turnover24h, 1)));
-  const penalty = riskCount * 5 + Math.max(0, spreadPct - 0.008) * 450;
-  return Math.round(clamp(moveScore + volumeScore + accelerationScore + whale + liq + liquidity - penalty, 0, 100));
+  const penalty = riskCount * 5 + Math.max(0, spreadPct - 0.008) * 450 + (wickTrap ? 8 : 0);
+  return Math.round(clamp(moveScore + volumeScore + accelerationScore + whale + liq + mtfScore + liquidity - penalty, 0, 100));
+}
+
+function scalpMtfAlignment(direction: Direction, candles1: Candle[], candles3: Candle[], candles5: Candle[]) {
+  const sign = direction === "LONG" ? 1 : -1;
+  return [candles1, candles3, candles5].filter((candles) => Math.sign(pctMove(candles, 1)) === sign).length;
+}
+
+function scalpGrade(score: number, input: { volumeSpike: number; whaleScore: number; liquidationPressure: number; spreadPct: number; riskCount: number; mtf: number; wickTrap: boolean }): "S" | "A" | "B" | "C" {
+  const whaleOk = input.whaleScore >= 62 || input.whaleScore <= 38;
+  if (score >= 88 && input.volumeSpike >= 1.8 && input.mtf >= 2 && input.spreadPct <= 0.012 && !input.wickTrap && (whaleOk || input.liquidationPressure >= 50)) return "S";
+  if (score >= 76 && input.volumeSpike >= 1.45 && input.mtf >= 2 && input.riskCount <= 2) return "A";
+  if (score >= 64 && input.volumeSpike >= 1.2 && input.mtf >= 1 && input.spreadPct <= 0.018) return "B";
+  return "C";
+}
+
+function scalpGradeFromScore(score: number) {
+  if (score >= 88) return "S";
+  if (score >= 76) return "A";
+  if (score >= 64) return "B";
+  return "C";
+}
+
+function marketEntryCandidate(score: number, volumeSpike: number, acceleration: number, spreadPct: number) {
+  return score >= 74 && volumeSpike >= 1.7 && acceleration >= 0 && spreadPct <= 0.012;
+}
+
+function scalpSetupFor(liquidationPressure: number, acceleration: number, marketEntry: boolean, wickTrap: boolean): MomentumMove["scalpSetup"] {
+  if (liquidationPressure >= 50) return "squeeze";
+  if (!marketEntry || acceleration < 0 || wickTrap) return "retest";
+  return "breakout";
 }
 
 function scalpEntryZone(direction: Direction, price: number, range: number, market: boolean): [number, number] {
@@ -579,11 +620,13 @@ function scalpEntryZone(direction: Direction, price: number, range: number, mark
   return [price + range * 0.12, price + range * 0.32];
 }
 
-function scalpReasons(volumeSpike: number, acceleration: number, whaleScore: number, liquidationPressure: number, imbalance: number, fakeReasons: string[]) {
+function scalpReasons(volumeSpike: number, acceleration: number, whaleScore: number, liquidationPressure: number, imbalance: number, mtf: number, wickTrap: boolean, fakeReasons: string[]) {
   const reasons = [`volume spike ${volumeSpike.toFixed(1)}x`, "momentum acceleration"];
+  reasons.push(`multi timeframe alignment ${mtf}/3`);
   if (whaleScore >= 60 || whaleScore <= 40) reasons.push("whale activity");
   if (Math.abs(imbalance) >= 0.12) reasons.push("orderbook imbalance");
   if (liquidationPressure >= 50) reasons.push("short squeeze probability / liquidation cascade");
+  if (wickTrap) reasons.push("wick trap risk, wait retest");
   if (acceleration < 0) reasons.push("acceleration fading, use limit only");
   return [...reasons, ...fakeReasons.map((reason) => `risk penalty: ${reason}`)];
 }
@@ -753,8 +796,11 @@ function reasonUa(reason: string) {
     .replace(/whale activity/gi, "активність китів")
     .replace(/orderbook imbalance/gi, "дисбаланс стакана")
     .replace(/short squeeze probability \/ liquidation cascade/gi, "ймовірність squeeze / каскад ліквідацій")
+    .replace(/multi timeframe alignment (\d)\/3/gi, "узгодження 1m/3m/5m $1/3")
+    .replace(/wick trap risk, wait retest/gi, "ризик wick trap, чекати ретест")
     .replace(/acceleration fading, use limit only/gi, "імпульс слабшає, тільки лімітний вхід")
     .replace(/risk penalty:/gi, "ризик враховано:")
+    .replace(/BTC mixed/gi, "BTC змішаний")
     .replace(/volume anomaly too weak/gi, "аномальний обсяг слабкий")
     .replace(/OI confirmation/gi, "OI підтверджує")
     .replace(/OI neutral/gi, "OI нейтральний")
@@ -786,12 +832,13 @@ function signalDedupeDecision(move: MomentumMove, cooldownMinutes = DEFAULT_HARD
   const priceMovedEnough = priceDistance >= MIN_REPEAT_PRICE_DISTANCE_PCT;
   if (!priceMovedEnough) return { allowed: false, reason: `cooldown active; price distance ${priceDistance.toFixed(2)}% < ${MIN_REPEAT_PRICE_DISTANCE_PCT}%`, timeLeftMs, previous: prev };
   if (confidenceDelta >= MATERIAL_CONFIDENCE_IMPROVEMENT) return { allowed: true, reason: `confidence improved +${confidenceDelta}`, timeLeftMs, previous: prev };
-  if (move.setupType !== prev.setupType && confidenceDelta >= SETUP_CHANGE_CONFIDENCE_IMPROVEMENT) return { allowed: true, reason: `setup changed with confidence improvement +${confidenceDelta}`, timeLeftMs, previous: prev };
+  const setupChanged = move.setupType !== prev.setupType || Boolean(move.scalpSetup && prev.scalpSetup && move.scalpSetup !== prev.scalpSetup) || Boolean(move.entryType && prev.entryType && move.entryType !== prev.entryType);
+  if (setupChanged && confidenceDelta >= SETUP_CHANGE_CONFIDENCE_IMPROVEMENT) return { allowed: true, reason: `setup changed with confidence improvement +${confidenceDelta}`, timeLeftMs, previous: prev };
   return { allowed: false, reason: `cooldown active; confidence delta +${confidenceDelta} is not material`, timeLeftMs, previous: prev };
 }
 
 function markSignalDedupe(move: MomentumMove) {
-  alertCooldown.set(move.symbol, { sentAt: Date.now(), score: move.score, movePct: move.movePct, setupType: move.setupType, direction: move.direction, price: move.toPrice });
+  alertCooldown.set(move.symbol, { sentAt: Date.now(), score: move.score, movePct: move.movePct, setupType: move.setupType, direction: move.direction, price: move.toPrice, scalpSetup: move.scalpSetup, entryType: move.entryType });
   saveSignalDedupe();
 }
 
@@ -823,7 +870,7 @@ function clearSignalDedupeForTest() {
 }
 
 function seedSignalDedupeForTest(move: MomentumMove, minutesAgo: number) {
-  alertCooldown.set(move.symbol, { sentAt: Date.now() - minutesAgo * 60_000, score: move.score, movePct: move.movePct, setupType: move.setupType, direction: move.direction, price: move.toPrice });
+  alertCooldown.set(move.symbol, { sentAt: Date.now() - minutesAgo * 60_000, score: move.score, movePct: move.movePct, setupType: move.setupType, direction: move.direction, price: move.toPrice, scalpSetup: move.scalpSetup, entryType: move.entryType });
 }
 
 function clamp(value: number, min: number, max: number) {
