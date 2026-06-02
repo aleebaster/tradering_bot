@@ -23,6 +23,7 @@ async function main() {
   await click(center, checks, "🔍 Аналіз пари", "Введіть пару");
   await click(center, checks, "BTCUSDT", "Аналіз");
   await click(center, checks, "🔥 Топ Сетапи", "Топ Сетапи");
+  await click(center, checks, "/signals", "Топ Сетапи");
   await click(center, checks, "🔍 Пошук по парах", "Введіть пару");
   await click(center, checks, "📊 Статистика", "Торгова статистика");
   checks["pending_search_does_not_block_stats"] = center.status().pendingAction === null;
@@ -39,6 +40,9 @@ async function main() {
   await click(center, checks, "📈 Ринок", "Ринок");
   await click(center, checks, "🚨 Великі рухи", "Сканер сильних рухів");
   await click(center, checks, "/momentum", "Сканер сильних рухів");
+  await click(center, checks, "/moves", "Сканер сильних рухів");
+  await click(center, checks, "/longmovers", "Лідери LONG");
+  await click(center, checks, "/shortmovers", "Лідери SHORT");
   await click(center, checks, "📈 Лідери LONG", "Лідери LONG");
   await click(center, checks, "📉 Лідери SHORT", "Лідери SHORT");
   await click(center, checks, "🔥 Найсильніші рухи", "Найсильніші рухи");
@@ -94,12 +98,26 @@ async function main() {
   checks["inline_ui_search_pair"] = last(notifier).includes("Введіть пару");
   await center.handleCallbackForTest("ui:top");
   checks["inline_ui_top"] = last(notifier).includes("Топ Сетапи");
+  await center.handleCallbackForTest("top");
+  checks["stale_inline_top"] = last(notifier).includes("Топ Сетапи");
+  await center.handleCallbackForTest("top_setups");
+  checks["stale_inline_top_setups"] = last(notifier).includes("Топ Сетапи");
   await center.handleCallbackForTest("ui:momentum");
   checks["inline_ui_momentum"] = last(notifier).includes("Сканер сильних рухів");
+  await center.handleCallbackForTest("momentum");
+  checks["stale_inline_momentum"] = last(notifier).includes("Сканер сильних рухів");
+  await center.handleCallbackForTest("big_moves");
+  checks["stale_inline_big_moves"] = last(notifier).includes("Сканер сильних рухів");
   await center.handleCallbackForTest("ui:momentum_check");
   checks["inline_ui_momentum_check"] = last(notifier).includes("Перевірити великий рух");
   await center.handleCallbackForTest("ui:whales");
   checks["inline_ui_whales"] = last(notifier).includes("Сканер руху китів");
+  await center.handleCallbackForTest("whales");
+  checks["stale_inline_whales"] = last(notifier).includes("Сканер руху китів");
+  await center.handleCallbackForTest("whale_flow");
+  checks["stale_inline_whale_flow"] = last(notifier).includes("Сканер руху китів");
+  await center.handleCallbackForTest("intelligence");
+  checks["stale_inline_intelligence"] = last(notifier).includes("Інтелект") || last(notifier).includes("Дані ще формуються");
   await center.handleCallbackForTest("ui:whales_check");
   checks["inline_ui_whales_check"] = last(notifier).includes("Перевірити монету");
 

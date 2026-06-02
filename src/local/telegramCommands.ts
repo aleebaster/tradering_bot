@@ -463,6 +463,7 @@ export class TelegramCommandCenter {
     const [action, rawSymbol] = data.split(":", 2);
     logger.info({ data, action, rawSymbol }, "Telegram callback handler executed");
     if (action === "ui") return this.handleUiCallback(rawSymbol ?? "");
+    if (!rawSymbol && buttonAction(action)) return this.handleUiCallback(action);
     const pair = normalizePriorityPair(rawSymbol ?? "");
     if (!pair) return this.notifier.send("Пара не розпізнана", mainMenuKeyboard());
     if (action === "watch") return this.handle(`/watch ${pair}`);
