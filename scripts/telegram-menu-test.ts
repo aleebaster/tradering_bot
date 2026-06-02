@@ -14,18 +14,16 @@ class CaptureNotifier extends TelegramNotifier {
 const notifier = new CaptureNotifier();
 
 const mainMenu: TelegramReplyMarkup = {
-  keyboard: [
-    [{ text: "📊 Сигнали" }, { text: "🔎 Пошук по парах" }],
-    [{ text: "👀 Список моніторингу" }, { text: "📈 Ринок" }],
-    [{ text: "₿ BTC Фільтр" }, { text: "🔥 Топ Сетапи" }],
-    [{ text: "🚨 Великі рухи" }, { text: "🐋 Рух китів" }],
-    [{ text: "🧠 Інтелект" }, { text: "🪙 Нові монети" }],
-    [{ text: "📊 Статистика" }, { text: "⚙️ Налаштування" }],
-    [{ text: "🧪 Діагностика" }, { text: "📁 Позиції" }],
-    [{ text: "🏠 Головне меню" }]
-  ],
-  resize_keyboard: true,
-  is_persistent: true
+  inline_keyboard: [
+    [btn("📊 Сигнали", "signals"), btn("🔎 Пошук по парах", "search_pair")],
+    [btn("👀 Список моніторингу", "watchlist"), btn("📈 Ринок", "market")],
+    [btn("₿ BTC Фільтр", "btc"), btn("🔥 Топ Сетапи", "top")],
+    [btn("🚨 Великі рухи", "momentum"), btn("🐋 Рух китів", "whales")],
+    [btn("🧠 Інтелект", "intelligence"), btn("🪙 Нові монети", "new_tokens")],
+    [btn("📊 Статистика", "stats"), btn("⚙️ Налаштування", "settings")],
+    [btn("🧪 Діагностика", "diagnostics"), btn("📁 Позиції", "positions")],
+    [btn("🏠 Головне меню", "menu")]
+  ]
 };
 
 const signalActions: TelegramReplyMarkup = {
@@ -62,11 +60,11 @@ async function main() {
     ok: true,
     sent: ["main_menu", "signal_menu", "watchlist_menu", "market_actions", "settings_menu", "leverage_menu", "risk_menu", "inline_signal_quick_actions", "real_status_outputs"],
     proof: {
-      persistentMenuRows: mainMenu.keyboard?.length,
-      persistentMenuVisible: mainMenu.is_persistent === true,
-      duplicateSearchButtons: mainMenu.keyboard?.flat().filter((button) => button.text.includes("Пошук по парах")).length ?? 0,
-      momentumButtonVisible: Boolean(mainMenu.keyboard?.flat().some((button) => button.text === "🚨 Великі рухи")),
-      whaleButtonVisible: Boolean(mainMenu.keyboard?.flat().some((button) => button.text === "🐋 Рух китів")),
+      inlineMenuRows: mainMenu.inline_keyboard?.length,
+      inlineMenuVisible: Boolean(mainMenu.inline_keyboard?.length),
+      duplicateSearchButtons: mainMenu.inline_keyboard?.flat().filter((button) => button.text.includes("Пошук по парах")).length ?? 0,
+      momentumButtonVisible: Boolean(mainMenu.inline_keyboard?.flat().some((button) => button.text === "🚨 Великі рухи")),
+      whaleButtonVisible: Boolean(mainMenu.inline_keyboard?.flat().some((button) => button.text === "🐋 Рух китів")),
       inlineKeyboardRows: signalActions.inline_keyboard?.length,
       noLiveTelegramSpam: notifier.messages.length === 13,
       buttons: ["📊 Сигнали", "🔎 Пошук по парах", "👀 Список моніторингу", "📈 Ринок", "₿ BTC Фільтр", "🔥 Топ Сетапи", "🚨 Великі рухи", "🐋 Рух китів", "🧠 Інтелект", "🪙 Нові монети", "📊 Статистика", "⚙️ Налаштування", "🧪 Діагностика", "📁 Позиції", "🏠 Головне меню", "🔍 Аналіз пари", "➕ Додати пару", "📄 Мій список", "👀 Статус моніторингу", "❌ Видалити пару", "🔴 Моніторинг", "💰 Баланс", "⚡ Плече", "x2", "x3", "🔔 Сповіщення", "🎯 Режим ризику", "Обережний", "Збалансований", "Агресивний", "🟢 Моніторити", "🔄 Оновити Аналіз", "❌ Видалити", "📖 Детальний аналіз", "🛠 Сирі технічні дані"]

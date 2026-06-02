@@ -197,8 +197,11 @@ export interface PositionSizing {
   tp1ClosePercent?: number;
   tp2ClosePercent?: number;
   runnerPercent?: number;
+  runnerAllowed?: boolean;
   tp2ProtectionAction?: string;
   trailingStopRule?: string;
+  runnerTrailingRule?: string;
+  runnerAutoKillRule?: string;
   antiGivebackRule?: string;
   maxProfitGivebackPercent?: number;
   trendProtectionRule?: string;

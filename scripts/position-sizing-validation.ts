@@ -36,15 +36,16 @@ async function main() {
 
 function validateBreakevenAndMarginRules() {
   updateTelegramSettings({ balanceUsdt: 50, maxLeverage: "x5", riskMode: "Conservative", notifications: true });
-  const longLarge = calculatePositionSizing({ symbol: "BTCUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "ISOLATED" });
+  const longLarge = calculatePositionSizing({ symbol: "BTCUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "ISOLATED", marketRegime: "TRENDING", fakeBreakoutRisk: false });
   updateTelegramSettings({ balanceUsdt: 5, maxLeverage: "x5", riskMode: "Conservative", notifications: true });
-  const long = calculatePositionSizing({ symbol: "BTCUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "ISOLATED" });
-  const short = calculatePositionSizing({ symbol: "BTCUSDT", mode: "futures", side: "SHORT", score: 96, entry: [100, 100], stopLoss: 102, takeProfit: [97, 95, 92], volatilityPct: 0.02, momentumScore: 60, volumeScore: 55, btcStable: false, orderFlowScore: 50, sniperConfidence: 65, marginMode: "ISOLATED" });
+  const long = calculatePositionSizing({ symbol: "BTCUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "ISOLATED", marketRegime: "TRENDING", fakeBreakoutRisk: false });
+  const short = calculatePositionSizing({ symbol: "BTCUSDT", mode: "futures", side: "SHORT", score: 96, entry: [100, 100], stopLoss: 102, takeProfit: [97, 95, 92], volatilityPct: 0.02, momentumScore: 60, volumeScore: 55, btcStable: false, orderFlowScore: 50, sniperConfidence: 65, marginMode: "ISOLATED", marketRegime: "TRENDING", fakeBreakoutRisk: false });
   const cross = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "CROSS" });
-  const tinyWeak = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 92, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 80, volumeScore: 80, btcStable: true, orderFlowScore: 75, sniperConfidence: 80, marginMode: "ISOLATED" });
+  const tinyWeak = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 92, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 80, volumeScore: 80, btcStable: true, orderFlowScore: 75, sniperConfidence: 80, marginMode: "ISOLATED", marketRegime: "TRENDING", fakeBreakoutRisk: false });
+  const fakeBreakoutRunner = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 90, volumeScore: 90, btcStable: true, orderFlowScore: 90, sniperConfidence: 90, marginMode: "ISOLATED", marketRegime: "TRENDING", fakeBreakoutRisk: true });
   const highVol = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.02, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "ISOLATED" });
   const choppy = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.006, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "ISOLATED", marketRegime: "CHOPPY" });
-  if (!longLarge || !long || !short || !cross || !tinyWeak || !highVol || !choppy) throw new Error("BE+/margin validation setup failed");
+  if (!longLarge || !long || !short || !cross || !tinyWeak || !highVol || !choppy || !fakeBreakoutRunner) throw new Error("BE+/margin validation setup failed");
   assert(long.breakevenPlusPrice! > long.averageEntry, "LONG TP1 -> BE+ must move SL above entry");
   assert(short.breakevenPlusPrice! < short.averageEntry, "SHORT TP1 -> BE+ must move SL below entry");
   assert((long.breakevenPlusNetBufferPercent ?? 0) >= 0.15, "BE+ net buffer must be at least 0.15%");
@@ -57,10 +58,12 @@ function validateBreakevenAndMarginRules() {
   assert(short.antiShakeoutRule?.includes("liquidity-sweep"), "BE+ must include anti-shakeout liquidity sweep rule");
   assert(cross.marginMode === "CROSS" && cross.protectiveStopRequired && cross.leverage === "x2", "Cross margin must force strict x2 protective SL behavior");
   assert(tinyWeak.leverage === "x2" && tinyWeak.breakevenContinuationMode === "tighten", "Tiny account must use x2 and prioritize protection after confirmation");
-  assert(longLarge.profitProtectionMode === "trail" && longLarge.tp2ProtectionAction?.includes("trail below structure/ATR"), "Strong TP2 continuation must use trailing protection");
+  assert(longLarge.profitProtectionMode === "trail" && longLarge.runnerAllowed && longLarge.runnerPercent === 25 && longLarge.tp2ProtectionAction?.includes("trail below structure/ATR"), "Strong TP2 continuation must use trailing protection and runner");
   assert(short.profitProtectionMode === "tighten" && short.tp2ProtectionAction?.includes("tighten faster"), "Weak TP2 continuation must tighten faster");
   assert(long.tp1ClosePercent! >= 25 && long.tp1ClosePercent! <= 40 && long.tp2ClosePercent! > 0, "Tiny account must close partial size at TP1 and TP2");
-  assert(tinyWeak.runnerPercent === 0, "Tiny account must leave runner only when momentum is strong");
+  assert(long.runnerAllowed && long.runnerPercent === 15, "Tiny strong trend runner must be capped to 10-20%");
+  assert(tinyWeak.runnerPercent === 0 && !tinyWeak.runnerAllowed, "Tiny account must leave runner only when momentum is strong");
+  assert(!fakeBreakoutRunner.runnerAllowed && fakeBreakoutRunner.runnerPercent === 0, "Fake-breakout risk must disable runner");
   assert(longLarge.maxProfitGivebackPercent === 50 && longLarge.antiGivebackRule?.includes("50% giveback"), "Anti-giveback rule must cap profit giveback at 50%");
   assert(choppy.profitProtectionMode === "tighten" && choppy.trendProtectionRule?.includes("Choppy/sideways"), "Choppy market must use tighter protection");
   console.log("✅ BE+/margin rules: LONG, SHORT, fees, TP1 confirmation, volatility delay, anti-shakeout, TP2 trailing/tightening, partials, anti-giveback, CROSS, ISOLATED, tiny account protections passed\n");

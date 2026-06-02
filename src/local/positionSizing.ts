@@ -21,6 +21,7 @@ export interface PositionSizingInput {
   btcStable?: boolean;
   orderFlowScore?: number;
   sniperConfidence?: number;
+  fakeBreakoutRisk?: boolean;
   marginMode?: "ISOLATED" | "CROSS";
 }
 
@@ -91,8 +92,11 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
     tp1ClosePercent: profitProtection.tp1ClosePercent,
     tp2ClosePercent: profitProtection.tp2ClosePercent,
     runnerPercent: profitProtection.runnerPercent,
+    runnerAllowed: profitProtection.runnerAllowed,
     tp2ProtectionAction: profitProtection.tp2Action,
     trailingStopRule: profitProtection.trailingStopRule,
+    runnerTrailingRule: profitProtection.runnerTrailingRule,
+    runnerAutoKillRule: profitProtection.runnerAutoKillRule,
     antiGivebackRule: profitProtection.antiGivebackRule,
     maxProfitGivebackPercent: profitProtection.maxGivebackPercent,
     trendProtectionRule: profitProtection.trendRule,
@@ -122,15 +126,18 @@ function chooseLeverage(input: PositionSizingInput, priceRiskPercent: number, ma
   return 2;
 }
 
-export function smartProfitProtection(input: Pick<PositionSizingInput, "marketRegime" | "volatilityPct" | "momentumScore" | "volumeScore" | "btcStable" | "orderFlowScore" | "sniperConfidence">, smallAccount = false) {
+export function smartProfitProtection(input: Pick<PositionSizingInput, "marketRegime" | "volatilityPct" | "momentumScore" | "volumeScore" | "btcStable" | "orderFlowScore" | "sniperConfidence" | "fakeBreakoutRisk">, smallAccount = false) {
   const volatilityPct = Math.max(0, input.volatilityPct ?? 0);
   const choppy = input.marketRegime === "SIDEWAYS" || input.marketRegime === "CHOPPY" || input.marketRegime === "RANGING" || input.marketRegime === "LOW_VOLATILITY";
+  const trendRegime = input.marketRegime === "TRENDING" || input.marketRegime === "BREAKOUT" || input.marketRegime === "EXPANSION";
   const highVolatility = volatilityPct >= 0.018 || input.marketRegime === "HIGH_VOLATILITY" || input.marketRegime === "VOLATILE";
-  const strongContinuation = (input.momentumScore ?? 0) >= 82 && (input.volumeScore ?? 0) >= 78 && (input.orderFlowScore ?? 0) >= 70 && (input.sniperConfidence ?? 0) >= 75 && input.btcStable !== false;
-  const weakContinuation = (input.momentumScore ?? 100) < 70 || (input.volumeScore ?? 100) < 65 || (input.orderFlowScore ?? 100) < 60 || input.btcStable === false || choppy;
-  const mode: "trail" | "tighten" = strongContinuation && !choppy ? "trail" : "tighten";
-  const tp1ClosePercent = smallAccount ? weakContinuation ? 40 : 35 : 40;
-  const runnerPercent = smallAccount ? strongContinuation ? 20 : 0 : strongContinuation ? 30 : 10;
+  const noExhaustion = !input.fakeBreakoutRisk && !highVolatility;
+  const strongContinuation = trendRegime && noExhaustion && (input.momentumScore ?? 0) >= 82 && (input.volumeScore ?? 0) >= 78 && (input.orderFlowScore ?? 0) >= 70 && (input.sniperConfidence ?? 0) >= 75 && input.btcStable !== false;
+  const weakContinuation = (input.momentumScore ?? 100) < 70 || (input.volumeScore ?? 100) < 65 || (input.orderFlowScore ?? 100) < 60 || input.btcStable === false || choppy || input.fakeBreakoutRisk === true;
+  const runnerAllowed = strongContinuation;
+  const mode: "trail" | "tighten" = runnerAllowed ? "trail" : "tighten";
+  const tp1ClosePercent = smallAccount ? runnerAllowed ? 35 : 50 : runnerAllowed ? 40 : 50;
+  const runnerPercent = runnerAllowed ? smallAccount ? 15 : 25 : 0;
   const tp2ClosePercent = Math.max(0, 100 - tp1ClosePercent - runnerPercent);
   const trailingStopRule = mode === "trail"
     ? `${highVolatility ? "Wide" : "Normal"} ATR/structure trail after TP2; do not aggressively tighten while momentum/orderflow/BTC remain supportive.`
@@ -138,13 +145,17 @@ export function smartProfitProtection(input: Pick<PositionSizingInput, "marketRe
   const tp2Action = mode === "trail"
     ? "TP2 hit with strong continuation -> keep runner and trail below structure/ATR/volatility."
     : "TP2 hit with weak continuation -> close additional size and tighten faster.";
+  const runnerTrailingRule = runnerAllowed
+    ? `${highVolatility ? "Wide" : "Adaptive"} runner trail: ATR + structure lows/highs + volatility; tighten on momentum decay or orderflow weakening.`
+    : "No runner: trend quality is not high enough; close planned size by TP2.";
+  const runnerAutoKillRule = "Auto-close runner on BTC instability, sharp momentum collapse, fake-breakout signs, strong reversal candle, or volatility spike against the trade.";
   const antiGivebackRule = "After strong unrealized profit, never allow more than 50% giveback from peak; ratchet stop dynamically as peak profit expands.";
   const trendRule = choppy
     ? "Choppy/sideways: tighter protection and smaller/no runner."
     : strongContinuation
       ? "Strong trend: wider trailing stop to avoid cutting runner too early."
       : "Mixed trend: protect capital first, use tighter trail.";
-  return { mode, tp1ClosePercent, tp2ClosePercent, runnerPercent, trailingStopRule, tp2Action, antiGivebackRule, maxGivebackPercent: 50, trendRule };
+  return { mode, tp1ClosePercent, tp2ClosePercent, runnerPercent, runnerAllowed, trailingStopRule, runnerTrailingRule, runnerAutoKillRule, tp2Action, antiGivebackRule, maxGivebackPercent: 50, trendRule };
 }
 
 export function breakevenPlus(input: Pick<PositionSizingInput, "side" | "volatilityPct" | "momentumScore" | "volumeScore" | "btcStable" | "orderFlowScore" | "sniperConfidence">, averageEntry: number, leverage: number, smallAccount = false) {

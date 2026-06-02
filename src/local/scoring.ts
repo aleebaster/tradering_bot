@@ -156,7 +156,8 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
     volumeScore: volume,
     btcStable: snapshot.btcStable,
     orderFlowScore: orderFlow.score,
-    sniperConfidence: sniper.score
+    sniperConfidence: sniper.score,
+    fakeBreakoutRisk: fakeBreakout.risk
   });
   const management = managementText(qualifiedSide, entryStatus);
   const signal: Signal = {

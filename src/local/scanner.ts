@@ -13,7 +13,7 @@ import { notificationsEnabled } from "./telegramSettings";
 import { recordTradeMemory } from "./tradeMemory";
 import { recordProtectionOutcome, signalsPaused } from "./lossProtection";
 import { LiqBot, MarketReportBot, PumpDetectorBot, WhaleTrackerBot } from "./bots";
-import { formatAutoEntrySignal, momentumActionsKeyboard, MomentumScanner } from "./momentumScanner";
+import { MomentumScanner } from "./momentumScanner";
 
 type Broadcast = (payload: unknown) => void;
 
@@ -494,18 +494,7 @@ export class Scanner {
       const safeMoves = await this.momentumScanner.scanAutoSignals(3);
       const scalpMoves = await this.momentumScanner.scanAutoScalpSignals(2);
       const moves = [...safeMoves, ...scalpMoves].sort((a, b) => b.score - a.score).slice(0, 4);
-      for (const move of moves) {
-        if (move.mode === "SCALP" ? !autoScalpAllowed(move) : move.score < 70) continue;
-        const cooldownMinutes = smartCooldownMinutes(move.score, move.mode === "SCALP");
-        const dedupe = this.momentumScanner.signalDedupeDecision(move, cooldownMinutes);
-        if (!dedupe.allowed) {
-          logger.info({ symbol: move.symbol, reason: dedupe.reason, timeLeft: `${Math.ceil(dedupe.timeLeftMs / 60_000)}m`, score: move.score, setupType: move.setupType }, "🚫 signal suppressed");
-          continue;
-        }
-        this.momentumScanner.shouldSendAlert(move, cooldownMinutes);
-        logger.info({ symbol: move.symbol, direction: move.direction, mode: move.mode ?? "SAFE", score: move.score, setupType: move.setupType, movePct: move.movePct }, "auto entry signal confirmed");
-        await this.notifier.send(formatAutoEntrySignal(move), momentumActionsKeyboard()).catch((err) => logger.warn({ err, symbol: move.symbol }, "Auto entry Telegram send failed"));
-      }
+      for (const move of moves) logger.info({ symbol: move.symbol, direction: move.direction, mode: move.mode ?? "SAFE", score: move.score, setupType: move.setupType, movePct: move.movePct }, "auto momentum candidate tracked silently");
       state.diagnostics.apiStatus.autoSignals = `active; cycle ${Date.now() - startedAt}ms; safe ${safeMoves.length}; scalp ${scalpMoves.length}`;
     } catch (err) {
       state.diagnostics.apiStatus.autoSignals = "skipped; market data unavailable";
@@ -518,25 +507,12 @@ export class Scanner {
   }
 }
 
-function autoScalpAllowed(move: { score: number; scalpGrade?: string; risk: string }) {
-  if (move.scalpGrade === "S" || move.scalpGrade === "A") return move.score >= 68;
-  if (move.scalpGrade === "B") return move.score >= 76 && move.risk !== "High";
-  return false;
-}
-
 function redactedOkxStartupError(message: string) {
   if (/50105|passphrase|60024/i.test(message)) return "OKX authentication failed: wrong passphrase for the configured API key (50105/60024).";
   if (/50113|signature/i.test(message)) return "OKX authentication failed: signature rejected. Check OKX_SECRET_KEY.";
   if (/50102|timestamp/i.test(message)) return "OKX authentication failed: timestamp outside OKX window.";
   if (/incomplete/i.test(message)) return "OKX authentication failed: credentials incomplete in .env.";
   return message.replace(/[A-Za-z0-9_-]{24,}/g, "[redacted]").slice(0, 240);
-}
-
-function smartCooldownMinutes(score: number, scalp = false) {
-  if (scalp) return score >= 82 ? 12 : score >= 74 ? 18 : 25;
-  if (score >= 90) return 30;
-  if (score >= 80) return 45;
-  return 75;
 }
 
 export function activationConfirmed(signal: Signal, evolution: WatchlistEvolution) {

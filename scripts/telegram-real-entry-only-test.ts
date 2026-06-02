@@ -31,8 +31,8 @@ async function main() {
   const checks = {
     realEntryGate: isRealEntrySignal(real) && !isRealEntrySignal(weak) && !isRealEntrySignal(watch) && !isRealEntrySignal(outsideZone) && !isRealEntrySignal(fakeBreakout),
     oneAutomaticMessage: notifier.messages.length === 1,
-    requiredHeader: message.includes("🟢 SIGNAL — BTCUSDT"),
-    requiredFields: ["🟢 SIGNAL — BTCUSDT", "🟢 LONG — МОЖНА ВХОДИТИ", "📍 НАПРЯМОК: LONG 🟢", "SETUP SCORE:", "ENTRY CONFIDENCE:", "⚡ EXECUTION:", "🟡 LIMIT ENTRY —", "Qty: ~", "auto from $5 balance", "💰 Bank: $5 USDT", "💵 Margin used: $2.5 USDT", "⚙️ Margin: Isolated 2x", "📦 Position size:", "🛑 SL:", "🎯 TP1:", "Закрити: 40%", "🎯 TP2:", "Закрити: 30%", "🎯 TP3:", "Закрити: 20%", "⚠️ Risk:", "ROI", "Причина:"].every((field) => message.includes(field)),
+    requiredHeader: message.includes("🚨 СИГНАЛ — BTCUSDT"),
+    requiredFields: ["🚨 СИГНАЛ — BTCUSDT", "📍 НАПРЯМОК:", "🟢 LONG", "✅ МОЖНА ВХОДИТИ", "Оцінка сетапу:", "Впевненість входу:", "⚡ Виконання:", "Кількість: ~", "⚙️ Margin: ISOLATED 2x", "🛡 Breakeven:", "TP2 protection:", "Runner: disabled", "Anti-giveback:", "📦 Розмір позиції:", "🛑 SL:", "🎯 TP1:", "Закрити: 50%", "🎯 TP2:", "Закрити: 50%", "🎯 TP3:", "Runner: 0%", "⚠️ Ризик:", "ROI", "Причина:"].every((field) => message.includes(field)),
     spamRemoved: forbidden.every((item) => !message.includes(item))
   };
   const failed = Object.entries(checks).filter(([, ok]) => !ok);
@@ -68,7 +68,7 @@ function signal(patch: Partial<Signal> & { fakeBreakoutRisk?: boolean }): Signal
     stopLoss: side === "SHORT" ? 102 : 98,
     takeProfit: side === "SHORT" ? [99, 97, 95] : [102, 104, 106],
     leverage: "x2",
-    positionSizing: { balanceUsdt: 5, marginUsdt: 2.5, leverage: "x2", positionSizeUsdt: 5, quantity: 0.05, baseAsset: "BTC", entryRange: [100, 101], averageEntry: 100.5, stopLoss: side === "SHORT" ? 102 : 98, takeProfit: side === "SHORT" ? [99, 97, 95] : [102, 104, 106], maxRiskPercent: 2, accountRiskPercent: 1.5, priceRiskPercent: 2.5, potentialLossUsdt: 0.08, potentialProfitUsdt: [0.12, 0.22, 0.35], liquidationSafety: "safe", liquidationSafetyPercent: 50 },
+    positionSizing: { balanceUsdt: 5, marginUsdt: 2.5, leverage: "x2", positionSizeUsdt: 5, quantity: 0.05, baseAsset: "BTC", entryRange: [100, 101], averageEntry: 100.5, stopLoss: side === "SHORT" ? 102 : 98, takeProfit: side === "SHORT" ? [99, 97, 95] : [102, 104, 106], maxRiskPercent: 2, accountRiskPercent: 1.5, priceRiskPercent: 2.5, potentialLossUsdt: 0.08, potentialProfitUsdt: [0.12, 0.22, 0.35], liquidationSafety: "safe", liquidationSafetyPercent: 50, marginMode: "ISOLATED", breakevenPlusPrice: 100.76, tp1ClosePercent: 50, tp2ClosePercent: 50, runnerPercent: 0, runnerAllowed: false, tp2ProtectionAction: "TP2 hit with weak continuation -> close additional size and tighten faster.", antiGivebackRule: "After strong unrealized profit, never allow more than 50% giveback from peak; ratchet stop dynamically as peak profit expands." },
     riskReward: "1:3.0",
     invalidationLevel: side === "SHORT" ? 102 : 98,
     holdTime: "30 хвилин до 6 годин",

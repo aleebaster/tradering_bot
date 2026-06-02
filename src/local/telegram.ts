@@ -178,6 +178,8 @@ function confirmedSignalText(signal: Signal, direction: ReturnType<typeof setupD
     `Activation: ${plan.breakevenActivationRule}`,
     `Anti-shakeout: ${plan.antiShakeoutRule}`,
     `TP2 protection: ${plan.tp2ProtectionAction}`,
+    `Runner: ${plan.runnerAllowed ? `${plan.split[2]}% enabled` : "disabled"}`,
+    ...(plan.runnerAllowed ? [`Runner trail: ${plan.runnerTrailingRule}`, `Runner auto-kill: ${plan.runnerAutoKillRule}`] : []),
     `Anti-giveback: ${plan.antiGivebackRule}`,
     `Risk mode: ${plan.riskMode}`,
     ...(plan.marginMode === "CROSS" ? ["⚠ Margin: CROSS -> strict protection enabled"] : []),
@@ -289,7 +291,7 @@ function executionReasons(signal: Signal, canEnter: boolean) {
 }
 
 function tpSplit(_signal: Signal, sizing?: Signal["positionSizing"]) {
-  return [sizing?.tp1ClosePercent ?? 40, sizing?.tp2ClosePercent ?? 30, sizing?.runnerPercent ?? 20];
+  return [sizing?.tp1ClosePercent ?? 50, sizing?.tp2ClosePercent ?? 50, sizing?.runnerPercent ?? 0];
 }
 
 function positionPlan(signal: Signal, balance: number) {
@@ -317,6 +319,9 @@ function positionPlan(signal: Signal, balance: number) {
       breakevenActivationRule: existing.breakevenActivationRule ?? breakevenPlus(signal, existing.averageEntry, leverage).activationRule,
       antiShakeoutRule: existing.antiShakeoutRule ?? breakevenPlus(signal, existing.averageEntry, leverage).antiShakeoutRule,
       tp2ProtectionAction: existing.tp2ProtectionAction ?? "TP2 hit -> protect profit dynamically.",
+      runnerAllowed: existing.runnerAllowed ?? false,
+      runnerTrailingRule: existing.runnerTrailingRule ?? "No runner unless trend quality is high.",
+      runnerAutoKillRule: existing.runnerAutoKillRule ?? "Close runner on BTC instability, reversal, fake-breakout, or volatility spike.",
       antiGivebackRule: existing.antiGivebackRule ?? "Never allow more than 50% profit giveback from peak.",
       trailingStopRule: existing.trailingStopRule ?? "Trail by structure/ATR after TP2.",
       trendProtectionRule: existing.trendProtectionRule ?? "Trend-aware trailing protection."
@@ -331,7 +336,7 @@ function positionPlan(signal: Signal, balance: number) {
   const split = tpSplit(signal);
   const tpProfits = signal.takeProfit.map((tp, index) => tpProfitUsdt(signal, qty, split[index] ?? 0, tp));
   const be = breakevenPlus(signal, avgEntry, leverage);
-  return { balance, leverage, positionSizeUsdt, qty, maxLossUsdt: maxLoss, maxLossRoi: roi(maxLoss, marginUsdt), split, marginUsdt, tpProfits, roiByTp: tpProfits.map((profit) => roi(profit, marginUsdt)), marginMode: "ISOLATED" as const, riskMode: "safe" as const, breakevenPlusPrice: be.price, breakevenAction: be.action, breakevenActivationRule: be.activationRule, antiShakeoutRule: be.antiShakeoutRule, tp2ProtectionAction: "TP2 hit -> protect profit dynamically.", antiGivebackRule: "Never allow more than 50% profit giveback from peak.", trailingStopRule: "Trail by structure/ATR after TP2.", trendProtectionRule: "Trend-aware trailing protection." };
+  return { balance, leverage, positionSizeUsdt, qty, maxLossUsdt: maxLoss, maxLossRoi: roi(maxLoss, marginUsdt), split, marginUsdt, tpProfits, roiByTp: tpProfits.map((profit) => roi(profit, marginUsdt)), marginMode: "ISOLATED" as const, riskMode: "safe" as const, breakevenPlusPrice: be.price, breakevenAction: be.action, breakevenActivationRule: be.activationRule, antiShakeoutRule: be.antiShakeoutRule, tp2ProtectionAction: "TP2 hit -> protect profit dynamically.", runnerAllowed: false, runnerTrailingRule: "No runner unless trend quality is high.", runnerAutoKillRule: "Close runner on BTC instability, reversal, fake-breakout, or volatility spike.", antiGivebackRule: "Never allow more than 50% profit giveback from peak.", trailingStopRule: "Trail by structure/ATR after TP2.", trendProtectionRule: "Trend-aware trailing protection." };
 }
 
 function tpPlanLines(signal: Signal, plan: ReturnType<typeof positionPlan>) {

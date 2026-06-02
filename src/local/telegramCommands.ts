@@ -25,7 +25,7 @@ type PendingAction = "signal" | "watch" | "unwatch" | "balance" | "newsignal" | 
 type TelegramUpdate = {
   update_id: number;
   message?: { text?: string; chat?: { id?: number | string } };
-  callback_query?: { id: string; data?: string; message?: { chat?: { id?: number | string } } };
+  callback_query?: { id: string; data?: string; from?: { id?: number | string }; message?: { chat?: { id?: number | string } } };
 };
 
 export interface TelegramCommandHandler {
@@ -139,15 +139,23 @@ export class TelegramCommandCenter {
       const updates = json.result ?? [];
       if (updates.length) logger.info({ count: updates.length, offset: this.offset }, "Telegram updates received");
       for (const update of updates) {
+        logger.info({ update }, "Telegram raw update received");
         this.offset = Math.max(this.offset, update.update_id + 1);
         this.processedUpdates += 1;
         this.lastUpdateAt = new Date().toISOString();
         if (update.callback_query) {
           const chatId = String(update.callback_query.message?.chat?.id ?? "");
-          if (chatId !== String(config.TELEGRAM_CHAT_ID)) continue;
+          const fromId = String(update.callback_query.from?.id ?? "");
+          const callbackData = update.callback_query.data ?? "";
+          const authorized = chatId === String(config.TELEGRAM_CHAT_ID) || fromId === String(config.TELEGRAM_CHAT_ID);
+          logger.info({ callbackQueryId: update.callback_query.id, chatId, fromId, callbackData, authorized }, "Telegram callback_query received");
+          if (!authorized) {
+            await answerCallback(update.callback_query.id, "Unauthorized chat");
+            logger.warn({ chatId, fromId, callbackData }, "Telegram callback ignored: unauthorized chat");
+            continue;
+          }
           this.handledCallbacks += 1;
-          logger.info({ data: update.callback_query.data }, "Telegram callback received");
-          await this.handleCallback(update.callback_query.id, update.callback_query.data ?? "");
+          await this.handleCallback(update.callback_query.id, callbackData);
           continue;
         }
         const chatId = String(update.message?.chat?.id ?? "");
@@ -175,17 +183,21 @@ export class TelegramCommandCenter {
     return this.handleCallback("test", data, false);
   }
 
+  async sendFreshMenu(): Promise<void> {
+    return this.notifier.send(mainMenuText(), mainMenuKeyboard());
+  }
+
   private async resetPollingOffset() {
     if (!config.TELEGRAM_BOT_TOKEN) return;
     try {
       await telegramFetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/deleteWebhook`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ drop_pending_updates: false })
+        body: JSON.stringify({ drop_pending_updates: true })
       }).catch((error) => logger.warn({ err: error }, "Telegram deleteWebhook timed out; continuing with polling"));
       this.offset = 0;
       this.offsetInitialized = true;
-      logger.info({ offset: this.offset }, "Telegram polling initialized without discarding pending updates");
+      logger.info({ offset: this.offset }, "Telegram polling initialized; stale pending updates discarded");
     } catch (err) {
       logger.warn({ err }, "Telegram polling offset initialization failed");
     }
@@ -316,7 +328,9 @@ export class TelegramCommandCenter {
   }
 
   private async askPair(action: PendingAction): Promise<void> {
+    const previous = this.pendingAction;
     this.pendingAction = action;
+    logger.info({ previousPendingAction: previous, nextPendingAction: action }, "Telegram state transition");
     if (action === "balance") return this.notifier.send(["💰 Баланс", "", `Поточний баланс: ${loadTelegramSettings().balanceUsdt} USDT`, "", "Введіть новий баланс у USDT:", "Наприклад: 5"].join("\n"), backKeyboard());
     if (action === "whale_check") return this.notifier.send(["🐋 Перевірити монету", "", "Введіть монету або пару:", "BTC", "ETH", "PEPE", "DOGE", "BTCUSDT", "", "Я нормалізую btc → BTCUSDT."].join("\n"), whaleActionsKeyboard());
     if (action === "momentum_check") return this.notifier.send(["🚨 Перевірити великий рух", "", "Введіть монету або пару:", "ESPORTS", "BTC", "ETH", "PEPE", "DOGE", "", "Я нормалізую btc → BTCUSDT."].join("\n"), momentumActionsKeyboard());
@@ -328,6 +342,7 @@ export class TelegramCommandCenter {
   private async handlePendingInput(text: string): Promise<void> {
     const action = this.pendingAction;
     this.pendingAction = null;
+    logger.info({ previousPendingAction: action, nextPendingAction: null, text }, "Telegram state transition");
     if (action === "balance") return this.setBalance(text);
     if (action === "search") return this.sendPairSearch(text);
     if (action === "whale_check") return this.sendWhaleCoin(text);
@@ -466,22 +481,34 @@ export class TelegramCommandCenter {
   }
 
   private async handleCallback(id: string, data: string, answer = true): Promise<void> {
+    const previousPendingAction = this.pendingAction;
     if (answer) await answerCallback(id);
     const [action, rawSymbol] = data.split(":", 2);
-    logger.info({ data, action, rawSymbol }, "Telegram callback handler executed");
-    if (action === "ui") return this.handleUiCallback(rawSymbol ?? "");
-    if (!rawSymbol && buttonAction(action)) return this.handleUiCallback(action);
+    logger.info({ callbackData: data, action, rawSymbol, previousPendingAction }, "Telegram callback routing started");
+    if (action === "ui") return this.routeCallback(`ui:${rawSymbol ?? ""}`, () => this.handleUiCallback(rawSymbol ?? ""), previousPendingAction);
+    if (!rawSymbol && buttonAction(action)) return this.routeCallback(`legacy-ui:${action}`, () => this.handleUiCallback(action), previousPendingAction);
     const pair = normalizePriorityPair(rawSymbol ?? "");
-    if (!pair) return this.notifier.send("Пара не розпізнана", mainMenuKeyboard());
-    if (action === "watch") return this.handle(`/watch ${pair}`);
-    if (action === "refresh") return this.handle(`/signal ${pair}`);
-    if (action === "analyze_futures") return this.sendFuturesAnalysis(pair);
-    if (action === "analyze_spot") return this.sendSpotAnalysis(pair);
-    if (action === "raw_futures") return this.sendRawFuturesAnalysis(pair);
-    if (action === "raw_spot") return this.sendRawSpotAnalysis(pair);
-    if (action === "search_add") return this.handle(`/watch ${pair}`);
-    if (action === "remove") return this.handle(`/unwatch ${pair}`);
-    if (action === "full") return this.notifier.send(fullAnalysisText(pair), signalQuickActions(pair));
+    if (!pair) {
+      logger.warn({ callbackData: data, action, rawSymbol }, "Telegram callback routing failed: pair not recognized");
+      return this.notifier.send("Пара не розпізнана", mainMenuKeyboard());
+    }
+    if (action === "watch") return this.routeCallback("watch", () => this.handle(`/watch ${pair}`), previousPendingAction);
+    if (action === "refresh") return this.routeCallback("refresh", () => this.handle(`/signal ${pair}`), previousPendingAction);
+    if (action === "analyze_futures") return this.routeCallback("analyze_futures", () => this.sendFuturesAnalysis(pair), previousPendingAction);
+    if (action === "analyze_spot") return this.routeCallback("analyze_spot", () => this.sendSpotAnalysis(pair), previousPendingAction);
+    if (action === "raw_futures") return this.routeCallback("raw_futures", () => this.sendRawFuturesAnalysis(pair), previousPendingAction);
+    if (action === "raw_spot") return this.routeCallback("raw_spot", () => this.sendRawSpotAnalysis(pair), previousPendingAction);
+    if (action === "search_add") return this.routeCallback("search_add", () => this.handle(`/watch ${pair}`), previousPendingAction);
+    if (action === "remove") return this.routeCallback("remove", () => this.handle(`/unwatch ${pair}`), previousPendingAction);
+    if (action === "full") return this.routeCallback("full", () => this.notifier.send(fullAnalysisText(pair), signalQuickActions(pair)), previousPendingAction);
+    logger.warn({ callbackData: data, action, rawSymbol, pair }, "Telegram callback routing failed: no matched handler");
+    return this.notifier.send(mainMenuText(), mainMenuKeyboard());
+  }
+
+  private async routeCallback(handler: string, fn: () => Promise<void>, previousPendingAction: PendingAction | null): Promise<void> {
+    logger.info({ matchedHandler: handler, previousPendingAction }, "Telegram callback matched handler");
+    await fn();
+    logger.info({ matchedHandler: handler, previousPendingAction, nextPendingAction: this.pendingAction }, "Telegram callback state transition completed");
   }
 
   private async handleUiCallback(action: string): Promise<void> {
@@ -494,7 +521,10 @@ export class TelegramCommandCenter {
     if (action === "momentum_strongest") return this.sendMomentum("strongest");
     if (action === "momentum_check") return this.askPair("momentum_check");
     const button = buttonAction(action);
-    if (!button) return this.notifier.send(mainMenuText(), mainMenuKeyboard());
+    if (!button) {
+      logger.warn({ action }, "Telegram UI callback routing failed: no button alias");
+      return this.notifier.send(mainMenuText(), mainMenuKeyboard());
+    }
     if (this.pendingAction) this.pendingAction = null;
     if (button === "menu" || button === "back") return this.notifier.send(mainMenuText(), mainMenuKeyboard());
     if (button === "signals") return this.sendTopSetups();
@@ -600,13 +630,18 @@ export class TelegramCommandCenter {
   }
 }
 
-async function answerCallback(callbackQueryId: string) {
+async function answerCallback(callbackQueryId: string, text?: string) {
   if (!config.TELEGRAM_BOT_TOKEN) return;
-  await telegramFetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
+  const res = await telegramFetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ callback_query_id: callbackQueryId })
-  }).catch(() => undefined);
+    body: JSON.stringify({ callback_query_id: callbackQueryId, ...(text ? { text, show_alert: false } : {}) })
+  }).catch((error) => {
+    logger.warn({ err: error, callbackQueryId }, "Telegram answerCallbackQuery failed");
+    return null;
+  });
+  if (res?.ok) logger.info({ callbackQueryId }, "Telegram callback_query acknowledged");
+  else if (res) logger.warn({ callbackQueryId, status: res.status }, "Telegram answerCallbackQuery returned non-OK");
 }
 
 async function telegramFetch(url: string, init?: RequestInit, timeoutMs = 8_000) {
@@ -683,18 +718,16 @@ function startOneShotAnalysis(pair: string) {
 
 function mainMenuKeyboard(): TelegramReplyMarkup {
   return {
-    keyboard: [
-      [{ text: "📊 Сигнали" }, { text: "🔎 Пошук по парах" }],
-      [{ text: "👀 Список моніторингу" }, { text: "📈 Ринок" }],
-      [{ text: "₿ BTC Фільтр" }, { text: "🔥 Топ Сетапи" }],
-      [{ text: "🚨 Великі рухи" }, { text: "🐋 Рух китів" }],
-      [{ text: "🧠 Інтелект" }, { text: "🪙 Нові монети" }],
-      [{ text: "📊 Статистика" }, { text: "⚙️ Налаштування" }],
-      [{ text: "🧪 Діагностика" }, { text: "📁 Позиції" }],
-      [{ text: "🏠 Головне меню" }]
-    ],
-    resize_keyboard: true,
-    is_persistent: true
+    inline_keyboard: [
+      [uiButton("📊 Сигнали", "signals"), uiButton("🔎 Пошук по парах", "search_pair")],
+      [uiButton("👀 Список моніторингу", "watchlist"), uiButton("📈 Ринок", "market")],
+      [uiButton("₿ BTC Фільтр", "btc"), uiButton("🔥 Топ Сетапи", "top")],
+      [uiButton("🚨 Великі рухи", "momentum"), uiButton("🐋 Рух китів", "whales")],
+      [uiButton("🧠 Інтелект", "intelligence"), uiButton("🪙 Нові монети", "new_tokens")],
+      [uiButton("📊 Статистика", "stats"), uiButton("⚙️ Налаштування", "settings")],
+      [uiButton("🧪 Діагностика", "diagnostics"), uiButton("📁 Позиції", "positions")],
+      [uiButton("🏠 Головне меню", "menu")]
+    ]
   };
 }
 

@@ -86,7 +86,7 @@ async function analyzeAndSend(sendWatchlist: boolean, priorityMode: boolean, can
   const qualified = selected.score >= 85 && confirmations.volume && confirmations.momentum && confirmations.smc && confirmations.orderbook && confirmations.btc && confirmations.breakout;
   const watchlist = !qualified && selected.score >= 80 && selected.score < 85;
   const invalidated = priorityMode && canInvalidate && selected.score < 80 && (!confirmations.momentum || !confirmations.volume || !confirmations.btc || !confirmations.breakout);
-  const positionSizing = calculatePositionSizing({ symbol, mode: "futures", side, score: selected.score, entry: levels.entry, stopLoss: levels.stopLoss, takeProfit: levels.takeProfit, marketRegime: regime, volatilityPct, momentumScore: selected.parts.momentum, volumeScore: selected.parts.volume, btcStable: btcOk, orderFlowScore: selected.parts.orderbook, sniperConfidence: selected.parts.smc });
+  const positionSizing = calculatePositionSizing({ symbol, mode: "futures", side, score: selected.score, entry: levels.entry, stopLoss: levels.stopLoss, takeProfit: levels.takeProfit, marketRegime: regime, volatilityPct, momentumScore: selected.parts.momentum, volumeScore: selected.parts.volume, btcStable: btcOk, orderFlowScore: selected.parts.orderbook, sniperConfidence: selected.parts.smc, fakeBreakoutRisk: fakeBreakoutRisk.high });
   const leverage = positionSizing?.leverage ?? leverageFor(selected.score, volatilityPct);
   const activationMessage = qualified ? conciseTradeMessage(symbol, side, levels, leverage, positionSizing) : `INTERNAL ANALYSIS — ${symbol}`;
   const raw = [

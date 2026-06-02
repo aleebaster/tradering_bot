@@ -20,6 +20,14 @@ app.get("/state", (_req, res) => res.json(state));
 app.get("/signals", (_req, res) => res.json({ active: state.activeSignals, watchlist: state.watchlist, history: state.history }));
 app.get("/diagnostics", (_req, res) => res.json(state.diagnostics));
 app.get("/telegram/status", (_req, res) => res.json(telegramCommands.status()));
+app.post("/telegram/menu", async (_req, res) => {
+  try {
+    await telegramCommands.sendFreshMenu();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+});
 app.get("/markets", async (_req, res) => {
   try { res.json({ ok: true, ...(await marketRegistry()) }); }
   catch (err) { res.status(502).json({ ok: false, error: err instanceof Error ? err.message : String(err) }); }
