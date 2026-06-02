@@ -184,6 +184,7 @@ export class TelegramCommandCenter {
   }
 
   async sendFreshMenu(): Promise<void> {
+    await this.notifier.send("Оновлюю меню: прибираю стару клавіатуру.", removeKeyboard());
     return this.notifier.send(mainMenuText(), mainMenuKeyboard());
   }
 
@@ -857,6 +858,10 @@ function intelligenceKeyboard(): TelegramReplyMarkup {
 
 function backKeyboard(): TelegramReplyMarkup {
   return { inline_keyboard: [[uiButton("🔙 Назад", "back")]] };
+}
+
+function removeKeyboard(): TelegramReplyMarkup {
+  return { remove_keyboard: true };
 }
 
 function pairSearchKeyboard(symbol: string, hasFutures: boolean, hasSpot: boolean): TelegramReplyMarkup {
