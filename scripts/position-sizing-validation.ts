@@ -22,7 +22,8 @@ async function main() {
     console.log(`📍 Entry: ${fmt(setup.entry[0])}-${fmt(setup.entry[1])}`);
     console.log(`⚡ Leverage: ${sizing?.leverage ?? "n/a"}`);
     console.log(`⚙️ Margin: ${sizing?.marginMode ?? "n/a"}`);
-    console.log(`🛡 BE+: ${sizing?.breakevenPlusPrice ? fmt(sizing.breakevenPlusPrice) : "n/a"} offset=${sizing?.breakevenPlusOffsetPercent ?? "n/a"}% netBuffer=${sizing?.breakevenPlusNetBufferPercent ?? "n/a"}%`);
+    console.log(`🛡 BE+: ${sizing?.breakevenPlusPrice ? fmt(sizing.breakevenPlusPrice) : "n/a"} offset=${sizing?.breakevenPlusOffsetPercent ?? "n/a"}% netBuffer=${sizing?.breakevenPlusNetBufferPercent ?? "n/a"}% mode=${sizing?.breakevenContinuationMode ?? "n/a"}`);
+    console.log(`Activation: ${sizing?.breakevenActivationRule ?? "n/a"}`);
     console.log(`💰 Position size: ${sizing ? `${sizing.balanceUsdt} USDT -> ${sizing.positionSizeUsdt} USDT` : "n/a"}`);
     console.log(`🪙 Coin amount: ${sizing ? `${sizing.quantity} ${sizing.baseAsset}` : "n/a"}`);
     console.log(`🛑 Risk: SL=${fmt(setup.stopLoss)} maxLoss=${sizing?.potentialLossUsdt ?? "n/a"} USDT accountRisk=${sizing?.accountRiskPercent ?? "n/a"}%`);
@@ -33,19 +34,28 @@ async function main() {
 }
 
 function validateBreakevenAndMarginRules() {
+  updateTelegramSettings({ balanceUsdt: 50, maxLeverage: "x5", riskMode: "Conservative", notifications: true });
+  const longLarge = calculatePositionSizing({ symbol: "BTCUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "ISOLATED" });
+  updateTelegramSettings({ balanceUsdt: 5, maxLeverage: "x5", riskMode: "Conservative", notifications: true });
   const long = calculatePositionSizing({ symbol: "BTCUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "ISOLATED" });
   const short = calculatePositionSizing({ symbol: "BTCUSDT", mode: "futures", side: "SHORT", score: 96, entry: [100, 100], stopLoss: 102, takeProfit: [97, 95, 92], volatilityPct: 0.02, momentumScore: 60, volumeScore: 55, btcStable: false, orderFlowScore: 50, sniperConfidence: 65, marginMode: "ISOLATED" });
   const cross = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "CROSS" });
   const tinyWeak = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 92, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 80, volumeScore: 80, btcStable: true, orderFlowScore: 75, sniperConfidence: 80, marginMode: "ISOLATED" });
-  if (!long || !short || !cross || !tinyWeak) throw new Error("BE+/margin validation setup failed");
+  const highVol = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.02, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "ISOLATED" });
+  if (!longLarge || !long || !short || !cross || !tinyWeak || !highVol) throw new Error("BE+/margin validation setup failed");
   assert(long.breakevenPlusPrice! > long.averageEntry, "LONG TP1 -> BE+ must move SL above entry");
   assert(short.breakevenPlusPrice! < short.averageEntry, "SHORT TP1 -> BE+ must move SL below entry");
   assert((long.breakevenPlusNetBufferPercent ?? 0) >= 0.15, "BE+ net buffer must be at least 0.15%");
   assert((short.breakevenPlusNetBufferPercent ?? 0) <= 0.35, "BE+ net buffer must not exceed 0.35%");
   assert((long.breakevenPlusOffsetPercent ?? 0) > (long.breakevenPlusNetBufferPercent ?? 0), "BE+ offset must include Bybit fees");
+  assert(long.breakevenActivationRule?.includes("Do not move on first TP1 wick"), "BE+ must not activate on first TP1 wick");
+  assert(highVol.breakevenDelay?.includes("wait one extra confirmation candle"), "High volatility must delay BE+ confirmation");
+  assert(longLarge.breakevenContinuationMode === "delay", "Strong continuation must allow room before tightening outside small-account mode");
+  assert(short.breakevenContinuationMode === "tighten", "Weak continuation must tighten faster after confirmation");
+  assert(short.antiShakeoutRule?.includes("liquidity-sweep"), "BE+ must include anti-shakeout liquidity sweep rule");
   assert(cross.marginMode === "CROSS" && cross.protectiveStopRequired && cross.leverage === "x2", "Cross margin must force strict x2 protective SL behavior");
-  assert(tinyWeak.leverage === "x2", "Tiny account weak setup must not use x3/x5");
-  console.log("✅ BE+/margin rules: LONG, SHORT, fees, CROSS, ISOLATED, tiny account protections passed\n");
+  assert(tinyWeak.leverage === "x2" && tinyWeak.breakevenContinuationMode === "tighten", "Tiny account must use x2 and prioritize protection after confirmation");
+  console.log("✅ BE+/margin rules: LONG, SHORT, fees, TP1 confirmation, volatility delay, anti-shakeout, CROSS, ISOLATED, tiny account protections passed\n");
 }
 
 function assert(condition: unknown, message: string) {

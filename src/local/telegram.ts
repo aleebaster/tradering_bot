@@ -127,6 +127,7 @@ function potentialSignalText(signal: Signal, direction: ReturnType<typeof setupD
     "",
     `⚙️ Margin: ${plan.marginMode} ${plan.leverage}x`,
     `🛡 Breakeven: BE+ active at ${fmt(plan.breakevenPlusPrice)} (+fees protected)`,
+    `Activation: ${plan.breakevenActivationRule}`,
     `Risk mode: ${plan.riskMode}`,
     `📦 Розмір позиції: ${formatAmount(plan.positionSizeUsdt)} USDT`,
     `🪙 Кількість: ~${formatQty(plan.qty)} ${baseAsset(signal.symbol)}`,
@@ -174,6 +175,8 @@ function confirmedSignalText(signal: Signal, direction: ReturnType<typeof setupD
     `Кількість: ~${formatQty(plan.qty)} ${baseAsset(signal.symbol)} (від банку ${formatAmount(balance)} USDT)`,
     `⚙️ Margin: ${plan.marginMode} ${plan.leverage}x`,
     `🛡 Breakeven: Move to ${fmt(plan.breakevenPlusPrice)} (+fees protected)`,
+    `Activation: ${plan.breakevenActivationRule}`,
+    `Anti-shakeout: ${plan.antiShakeoutRule}`,
     `Risk mode: ${plan.riskMode}`,
     ...(plan.marginMode === "CROSS" ? ["⚠ Margin: CROSS -> strict protection enabled"] : []),
     `📦 Розмір позиції: ${formatAmount(plan.positionSizeUsdt)} USDT`,
@@ -306,7 +309,9 @@ function positionPlan(signal: Signal, balance: number) {
       marginMode: existing.marginMode ?? "ISOLATED",
       riskMode: existing.riskMode ?? "safe",
       breakevenPlusPrice: existing.breakevenPlusPrice ?? breakevenPlus(signal, existing.averageEntry, leverage).price,
-      breakevenAction: existing.breakevenAction ?? breakevenPlus(signal, existing.averageEntry, leverage).action
+      breakevenAction: existing.breakevenAction ?? breakevenPlus(signal, existing.averageEntry, leverage).action,
+      breakevenActivationRule: existing.breakevenActivationRule ?? breakevenPlus(signal, existing.averageEntry, leverage).activationRule,
+      antiShakeoutRule: existing.antiShakeoutRule ?? breakevenPlus(signal, existing.averageEntry, leverage).antiShakeoutRule
     };
   }
   const leverage = Math.min(3, maxLeverageNumber(), balance <= 15 ? 2 : maxLeverageNumber());
@@ -318,7 +323,7 @@ function positionPlan(signal: Signal, balance: number) {
   const split = tpSplit(signal);
   const tpProfits = signal.takeProfit.map((tp, index) => tpProfitUsdt(signal, qty, split[index] ?? 0, tp));
   const be = breakevenPlus(signal, avgEntry, leverage);
-  return { balance, leverage, positionSizeUsdt, qty, maxLossUsdt: maxLoss, maxLossRoi: roi(maxLoss, marginUsdt), split, marginUsdt, tpProfits, roiByTp: tpProfits.map((profit) => roi(profit, marginUsdt)), marginMode: "ISOLATED" as const, riskMode: "safe" as const, breakevenPlusPrice: be.price, breakevenAction: be.action };
+  return { balance, leverage, positionSizeUsdt, qty, maxLossUsdt: maxLoss, maxLossRoi: roi(maxLoss, marginUsdt), split, marginUsdt, tpProfits, roiByTp: tpProfits.map((profit) => roi(profit, marginUsdt)), marginMode: "ISOLATED" as const, riskMode: "safe" as const, breakevenPlusPrice: be.price, breakevenAction: be.action, breakevenActivationRule: be.activationRule, antiShakeoutRule: be.antiShakeoutRule };
 }
 
 function tpPlanLines(signal: Signal, plan: ReturnType<typeof positionPlan>) {

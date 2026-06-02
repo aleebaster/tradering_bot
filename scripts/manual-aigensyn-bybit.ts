@@ -155,7 +155,7 @@ async function monitorActivatedTrade(analysis: ActiveAnalysis) {
           : hitTp2
             ? `🟠 ${analysis.symbol}\n\nTP2 HIT\n✅ Trail by ATR`
             : hitTp1
-              ? [`🟠 ${analysis.symbol}`, "", "TP1 HIT", `✅ Move SL to BE+ ${fmt(analysis.positionSizing?.breakevenPlusPrice ?? (analysis.levels.entry[0] + analysis.levels.entry[1]) / 2)} (+fees protected)`, analysis.positionSizing?.breakevenAction ?? "Fee-aware breakeven protection active"].join("\n")
+              ? [`🟠 ${analysis.symbol}`, "", "TP1 TOUCHED", "⏳ Do not move on first wick", analysis.positionSizing?.breakevenActivationRule ?? "Wait for TP1 hold, candle close beyond TP1, or strong post-TP1 momentum.", `BE+ target after confirmation: ${fmt(analysis.positionSizing?.breakevenPlusPrice ?? (analysis.levels.entry[0] + analysis.levels.entry[1]) / 2)} (+fees protected)`].join("\n")
               : `🟢 ${analysis.symbol}\n\nENTRY OPENED`;
     if (sent.has(action)) continue;
     sent.add(action);

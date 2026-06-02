@@ -195,7 +195,7 @@ function simulatePaperTrade(trade: PaperMemoryTrade, currentPrice: number): Part
   const durationMinutes = Math.max(0, Math.round((Date.now() - new Date(trade.openedAt).getTime()) / 60000));
   if (hitTp3) return closePaper(trade, currentPrice, "WIN", "TP3", 3, durationMinutes);
   if (hitTp2 && trade.highestStage !== "TP2") return { highestStage: "TP2", activeStopLoss: paperBreakevenPlus(trade), durationMinutes };
-  if (hitTp1 && trade.highestStage === "NONE") return { highestStage: "TP1", activeStopLoss: paperBreakevenPlus(trade), durationMinutes };
+  if (hitTp1 && trade.highestStage === "NONE") return { highestStage: "TP1", durationMinutes };
   if (hitSl && trade.highestStage !== "NONE") return closePaper(trade, currentPrice, "BREAKEVEN", trade.highestStage, 0, durationMinutes);
   if (hitSl) return closePaper(trade, currentPrice, "LOSS", "NONE", -1, durationMinutes);
   if (durationMinutes > 360) return closePaper(trade, currentPrice, "EXPIRED", trade.highestStage, trade.highestStage === "TP2" ? 2 : trade.highestStage === "TP1" ? 1 : 0, durationMinutes);

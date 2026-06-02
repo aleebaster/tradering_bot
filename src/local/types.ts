@@ -189,6 +189,10 @@ export interface PositionSizing {
   breakevenPlusFeePercent?: number;
   breakevenTrigger?: "TP1";
   breakevenAction?: string;
+  breakevenActivationRule?: string;
+  breakevenDelay?: string;
+  breakevenContinuationMode?: "delay" | "normal" | "tighten";
+  antiShakeoutRule?: string;
   protectiveStopRequired?: boolean;
   marginProtection?: string;
   entryPlan?: string;

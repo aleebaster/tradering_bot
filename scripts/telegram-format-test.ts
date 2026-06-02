@@ -31,7 +31,7 @@ async function main() {
     waitStatus: wait.includes("⚪ СИГНАЛ — PEPEUSDT") && wait.includes("📍 ПОТЕНЦІЙНИЙ НАПРЯМОК:") && wait.includes("🟢 LONG") && wait.includes("❌ ЩЕ НЕ ВХОДИТИ") && !wait.includes("✅ МОЖНА ВХОДИТИ"),
     scoreSplit: long.includes("Оцінка сетапу: 94/100") && /Впевненість входу: \d+\/100/.test(long) && wait.includes("Оцінка сетапу: 72/100") && /Впевненість входу: \d+\/100/.test(wait),
     activeAllocation: long.includes("🎯 TP1: 72600.00") && long.includes("Закрити: 40%") && long.includes("🎯 TP2: 73100.00") && long.includes("Закрити: 30%") && long.includes("🎯 TP3: 73800.00") && long.includes("Закрити: 20%"),
-    activeRisk: long.includes("Кількість: ~") && long.includes("⚙️ Margin: ISOLATED 2x") && long.includes("🛡 Breakeven: Move to") && long.includes("+fees protected") && long.includes("Risk mode: safe") && long.includes("📦 Розмір позиції:") && long.includes("⚠️ Ризик: ~") && long.includes("ROI"),
+    activeRisk: long.includes("Кількість: ~") && long.includes("⚙️ Margin: ISOLATED 2x") && long.includes("🛡 Breakeven: Move to") && long.includes("+fees protected") && long.includes("Activation: Do not move on first TP1 wick") && long.includes("Anti-shakeout:") && long.includes("Risk mode: safe") && long.includes("📦 Розмір позиції:") && long.includes("⚠️ Ризик: ~") && long.includes("ROI"),
     entryTypeExplained: long.includes("Вхід по ринку") || long.includes("Очікуємо лімітний вхід") && wait.includes("Очікування ретесту"),
     inactiveRiskForWait: wait.includes("⚠️ Ризик: вхід неактивний") && wait.includes("слабкий обсяг") && wait.includes("виконання не підтверджене")
   };

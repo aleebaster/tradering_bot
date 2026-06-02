@@ -54,7 +54,7 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
   const potentialProfitUsdt = input.takeProfit.map((tp) => roundMoney(quantity * Math.abs(tp - averageEntry))) as [number, number, number];
   const accountRiskPercent = roundPercent(balanceUsdt > 0 ? potentialLossUsdt / balanceUsdt * 100 : 0);
   const liquidationSafetyPercent = roundPercent(Math.max(0, 100 / leverage - priceRiskPercent));
-  const breakeven = breakevenPlus(input, averageEntry, leverage);
+  const breakeven = breakevenPlus(input, averageEntry, leverage, balanceUsdt <= 15);
 
   return {
     balanceUsdt,
@@ -82,6 +82,10 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
     breakevenPlusFeePercent: BYBIT_ROUND_TRIP_TAKER_FEE_PERCENT,
     breakevenTrigger: "TP1",
     breakevenAction: breakeven.action,
+    breakevenActivationRule: breakeven.activationRule,
+    breakevenDelay: breakeven.delay,
+    breakevenContinuationMode: breakeven.continuationMode,
+    antiShakeoutRule: breakeven.antiShakeoutRule,
     protectiveStopRequired: true,
     marginProtection: marginProtectionText(marginMode),
     entryPlan: starterEntry ? "50% starter entry, add only after confirmation" : "single confirmed entry",
@@ -108,19 +112,33 @@ function chooseLeverage(input: PositionSizingInput, priceRiskPercent: number, ma
   return 2;
 }
 
-export function breakevenPlus(input: Pick<PositionSizingInput, "side" | "volatilityPct" | "momentumScore" | "volumeScore" | "btcStable" | "orderFlowScore" | "sniperConfidence">, averageEntry: number, leverage: number) {
+export function breakevenPlus(input: Pick<PositionSizingInput, "side" | "volatilityPct" | "momentumScore" | "volumeScore" | "btcStable" | "orderFlowScore" | "sniperConfidence">, averageEntry: number, leverage: number, smallAccount = false) {
   const volatilityPct = Math.max(0, input.volatilityPct ?? 0);
   const weakMomentum = (input.momentumScore ?? 100) < 70 || (input.volumeScore ?? 100) < 65 || input.btcStable === false || (input.orderFlowScore ?? 100) < 60 || (input.sniperConfidence ?? 100) < 70;
   const strongMomentum = !weakMomentum && (input.momentumScore ?? 0) >= 82 && (input.volumeScore ?? 0) >= 78 && (input.orderFlowScore ?? 0) >= 70 && (input.sniperConfidence ?? 0) >= 82;
+  const highVolatility = volatilityPct >= 0.018;
+  const mediumVolatility = volatilityPct >= 0.012;
   const leverageBuffer = leverage >= 3 ? 0.05 : 0;
-  const volatilityBuffer = volatilityPct >= 0.018 ? 0.1 : volatilityPct >= 0.012 ? 0.06 : 0;
+  const volatilityBuffer = highVolatility ? 0.1 : mediumVolatility ? 0.06 : 0;
   const weaknessBuffer = weakMomentum ? 0.04 : 0;
   const netBufferPercent = roundPercent(Math.min(0.35, Math.max(0.15, 0.15 + leverageBuffer + volatilityBuffer + weaknessBuffer)));
   const offsetPercent = roundPercent(BYBIT_ROUND_TRIP_TAKER_FEE_PERCENT + netBufferPercent);
   const side = input.side === "SHORT" ? "SHORT" : "LONG";
   const price = side === "SHORT" ? averageEntry * (1 - offsetPercent / 100) : averageEntry * (1 + offsetPercent / 100);
-  const pace = strongMomentum ? "strong momentum: keep room toward TP2 after TP1" : weakMomentum ? "weak momentum: tighten faster immediately after TP1" : "normal momentum: activate BE+ after TP1";
-  return { price: roundPrice(price), offsetPercent, netBufferPercent, action: `TP1 hit -> move SL to BE+ ${roundPrice(price)} (${pace}; fees protected)` };
+  const continuationMode: "delay" | "normal" | "tighten" = strongMomentum && !smallAccount ? "delay" : weakMomentum || smallAccount ? "tighten" : "normal";
+  const activationRule = "Do not move on first TP1 wick. Activate only after TP1 touch holds/retests, a candle closes beyond TP1, or post-TP1 momentum stays strong.";
+  const delay = highVolatility
+    ? "High volatility: wait one extra confirmation candle or sustained post-TP1 momentum before BE+."
+    : mediumVolatility
+      ? "Medium volatility: confirm TP1 hold/close before BE+."
+      : "Low volatility: normal TP1 hold/close confirmation is enough.";
+  const continuation = continuationMode === "delay"
+    ? "Strong continuation: allow breathing room toward TP2 before tightening."
+    : continuationMode === "tighten"
+      ? "Weak continuation or small account: tighten after confirmation, not on the first wick."
+      : "Normal continuation: activate after TP1 confirmation.";
+  const antiShakeoutRule = "Never move BE+ into an obvious TP1 wick/liquidity-sweep zone; wait for hold, close, or continuation confirmation.";
+  return { price: roundPrice(price), offsetPercent, netBufferPercent, continuationMode, activationRule, delay, antiShakeoutRule, action: `TP1 confirmation -> move SL to BE+ ${roundPrice(price)} (${continuation}; fees protected)` };
 }
 
 function detectedMarginMode(input?: "ISOLATED" | "CROSS") {
