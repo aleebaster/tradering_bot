@@ -10,6 +10,7 @@ const schema = z.object({
   OKX_API_KEY: z.string().optional(),
   OKX_API_SECRET: z.string().optional(),
   OKX_API_PASSPHRASE: z.string().optional(),
+  OKX_SECRET_KEY: z.string().optional(),
   OKX_SECRET: z.string().optional(),
   OKX_PASSPHRASE: z.string().optional(),
   KUCOIN_API_KEY: z.string().optional(),
@@ -33,13 +34,13 @@ const parsed = schema.parse(process.env);
 const env = {
   ...parsed,
   OKX_API_KEY: cleanSecret(parsed.OKX_API_KEY),
-  OKX_API_SECRET: cleanSecret(parsed.OKX_API_SECRET ?? parsed.OKX_SECRET),
-  OKX_API_PASSPHRASE: cleanSecret(parsed.OKX_API_PASSPHRASE ?? parsed.OKX_PASSPHRASE),
+  OKX_API_SECRET: cleanSecret(parsed.OKX_SECRET_KEY ?? parsed.OKX_API_SECRET ?? parsed.OKX_SECRET),
+  OKX_API_PASSPHRASE: cleanSecret(parsed.OKX_PASSPHRASE ?? parsed.OKX_API_PASSPHRASE),
   KUCOIN_API_KEY: cleanSecret(parsed.KUCOIN_API_KEY),
   KUCOIN_API_SECRET: cleanSecret(parsed.KUCOIN_API_SECRET),
   KUCOIN_API_PASSPHRASE: cleanSecret(parsed.KUCOIN_API_PASSPHRASE)
 };
-const partialMode = !env.OKX_API_PASSPHRASE;
+const partialMode = !env.OKX_API_KEY || !env.OKX_API_SECRET || !env.OKX_API_PASSPHRASE;
 const mode: Mode = env.BOT_MODE ?? "LOCAL_ONLY";
 
 export const config = {

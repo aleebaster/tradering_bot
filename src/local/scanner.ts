@@ -262,8 +262,8 @@ export class Scanner {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       state.diagnostics.apiStatus.okx = "помилка автентифікації; public market confirmation активне";
-      state.diagnostics.authErrors.okx = message;
-      logger.error({ err }, "Помилка автентифікації OKX");
+      state.diagnostics.authErrors.okx = redactedOkxStartupError(message);
+      logger.error({ okxError: redactedOkxStartupError(message) }, "Помилка автентифікації OKX; перевірте OKX_API_KEY, OKX_SECRET_KEY та OKX_PASSPHRASE у .env");
     }
   }
 
@@ -522,6 +522,14 @@ function autoScalpAllowed(move: { score: number; scalpGrade?: string; risk: stri
   if (move.scalpGrade === "S" || move.scalpGrade === "A") return move.score >= 68;
   if (move.scalpGrade === "B") return move.score >= 76 && move.risk !== "High";
   return false;
+}
+
+function redactedOkxStartupError(message: string) {
+  if (/50105|passphrase|60024/i.test(message)) return "OKX authentication failed: wrong passphrase for the configured API key (50105/60024).";
+  if (/50113|signature/i.test(message)) return "OKX authentication failed: signature rejected. Check OKX_SECRET_KEY.";
+  if (/50102|timestamp/i.test(message)) return "OKX authentication failed: timestamp outside OKX window.";
+  if (/incomplete/i.test(message)) return "OKX authentication failed: credentials incomplete in .env.";
+  return message.replace(/[A-Za-z0-9_-]{24,}/g, "[redacted]").slice(0, 240);
 }
 
 function smartCooldownMinutes(score: number, scalp = false) {

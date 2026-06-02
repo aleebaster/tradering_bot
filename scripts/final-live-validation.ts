@@ -16,12 +16,12 @@ const preferred = [
 ];
 
 async function main() {
-  const valid = await bybitLinearSymbols().catch(() => new Set(preferred));
-  const symbols = preferred.filter((s) => valid.has(s)).slice(0, 20);
-  const invalid = preferred.slice(0, 20).filter((s) => !valid.has(s));
+  const [bybitValid, okxValid] = await Promise.all([bybitLinearSymbols().catch(() => new Set(preferred)), okxSwapSymbols()]);
+  const symbols = preferred.filter((s) => bybitValid.has(s) && okxValid.has(s)).slice(0, 20);
+  const invalid = preferred.filter((s) => !bybitValid.has(s) || !okxValid.has(s));
   if (symbols.length < 20) throw new Error(`Лише ${symbols.length} обраних символів валідні для Bybit linear. Невалідні: ${invalid.join(",")}`);
   console.log(`ПОЧАТОК LIVE-ВАЛІДАЦІЇ ${new Date().toISOString()}`);
-  console.log(`Перевірені валідні символи Bybit: ${symbols.join(", ")}`);
+  console.log(`Перевірені валідні символи Bybit+OKX futures: ${symbols.join(", ")}`);
   console.log("Помилки невалідних символів: 0");
 
   const btcCandles = await loadBybitCandles("BTCUSDT");
@@ -31,6 +31,7 @@ async function main() {
 
   for (const symbol of symbols) {
     const candles = symbol === "BTCUSDT" ? btcCandles : await loadBybitCandles(symbol);
+    const okxCandles = await loadOkxCandles(symbol);
     const [orderBook, fundingRate, openInterestChange] = await Promise.all([
       retry(() => client.bybitOrderBookStats(symbol)).catch(() => ({ spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false })),
       retry(() => client.fundingRate(symbol)).catch(() => 0),
@@ -50,7 +51,7 @@ async function main() {
       symbol,
       mode: "futures",
       candles,
-      okxCandles: {},
+      okxCandles,
       kucoinCandles: {},
       krakenCandles: {},
       binanceCandles: {},
@@ -61,7 +62,7 @@ async function main() {
       whaleScore: intelligence.whale.smartMoneyScore,
       btcStable: symbol === "BTCUSDT" ? true : btcOk,
       regime,
-      confirmations: { bybit: true, okx: false, kucoin: false, kraken: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit: live validation"] },
+      confirmations: liveConfirmations(candles, okxCandles),
       intelligence
     };
     const signal = buildSignal(snapshot);
@@ -79,6 +80,13 @@ async function bybitLinearSymbols() {
   return retry(() => client.bybitInstrumentSymbols("linear"));
 }
 
+async function okxSwapSymbols() {
+  const res = await fetch("https://www.okx.com/api/v5/public/instruments?instType=SWAP", { headers: { "user-agent": "tradering-bot/1.0" }, signal: AbortSignal.timeout(12000) });
+  const body = await res.json() as { code?: string; data?: Array<{ instId?: string; state?: string }> };
+  if (!res.ok || body.code !== "0" || !body.data?.length) throw new Error("OKX futures symbols unavailable");
+  return new Set(body.data.filter((item) => item.state === "live" && item.instId?.endsWith("-USDT-SWAP")).map((item) => item.instId!.replace(/-USDT-SWAP$/, "USDT")));
+}
+
 async function loadBybitCandles(symbol: string): Promise<Record<string, Candle[]>> {
   const out: Record<string, Candle[]> = {};
   for (const tf of ["1", "5", "15", "60", "240"]) {
@@ -86,6 +94,45 @@ async function loadBybitCandles(symbol: string): Promise<Record<string, Candle[]
     await wait(450);
   }
   return out;
+}
+
+async function loadOkxCandles(symbol: string): Promise<Record<string, Candle[]>> {
+  const out: Record<string, Candle[]> = {};
+  for (const tf of ["15", "60", "240"]) {
+    out[tf] = await retry(() => client.okxKlines(symbol, tf, 120)).catch(() => []);
+    await wait(350);
+  }
+  if (!out["15"]?.length) throw new Error(`OKX futures market data unavailable for ${symbol}`);
+  return out;
+}
+
+function liveConfirmations(bybit: Record<string, Candle[]>, okx: Record<string, Candle[]>) {
+  const bybitDir = directionOf(bybit["15"]);
+  const okxDir = directionOf(okx["15"]);
+  const okxAligned = okxDir !== 0 && okxDir === bybitDir;
+  return {
+    bybit: bybitDir !== 0,
+    okx: okxAligned,
+    kucoin: false,
+    kraken: false,
+    binance: false,
+    alignedCount: [bybitDir !== 0, okxAligned].filter(Boolean).length,
+    conflict: okxDir !== 0 && bybitDir !== 0 && okxDir !== bybitDir,
+    details: [`Bybit: ${dirText(bybitDir)}`, `OKX: ${dirText(okxDir)}`]
+  };
+}
+
+function directionOf(candles: Candle[] | undefined) {
+  if (!candles || candles.length < 55) return 0;
+  const recent = candles.at(-1)!;
+  const prev = candles.at(-20)!;
+  if (recent.close > prev.close) return 1;
+  if (recent.close < prev.close) return -1;
+  return 0;
+}
+
+function dirText(dir: number) {
+  return dir > 0 ? "вгору" : dir < 0 ? "вниз" : "немає даних";
 }
 
 function liquidity(candles: Candle[]) {

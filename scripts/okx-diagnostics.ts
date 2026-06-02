@@ -54,6 +54,17 @@ async function rest(base: string, path: string) {
   };
 }
 
+async function publicRest(base: string, path: string) {
+  const url = `${base}${path}`;
+  try {
+    const res = await fetch(url, { headers: { "user-agent": "tradering-bot/1.0" }, signal: AbortSignal.timeout(10000) });
+    const raw = await res.text();
+    return { base, endpoint: path, response: { status: res.status, raw: raw.slice(0, 1000) } };
+  } catch (error) {
+    return { base, endpoint: path, response: { status: 0, raw: error instanceof Error ? error.message : String(error) } };
+  }
+}
+
 function wsLogin() {
   return new Promise((resolve) => {
     const ws = new WebSocket("wss://ws.okx.com:8443/ws/v5/private");
@@ -84,15 +95,20 @@ async function main() {
   for (const base of bases) {
     for (const endpoint of endpoints) restResults.push(await rest(base, endpoint));
   }
+  const marketData = await publicRest("https://www.okx.com", "/api/v5/market/candles?instId=BTC-USDT-SWAP&bar=15m&limit=60");
+  const futuresSymbols = await publicRest("https://www.okx.com", "/api/v5/public/instruments?instType=SWAP");
   const ws = await wsLogin();
   console.log(JSON.stringify({
     env: {
       OKX_API_KEY: visible(config.OKX_API_KEY),
-      OKX_API_SECRET: visible(config.OKX_API_SECRET),
-      OKX_API_PASSPHRASE: visible(config.OKX_API_PASSPHRASE),
-      legacy_OKX_PASSPHRASE_present: Boolean(process.env.OKX_PASSPHRASE)
+      OKX_SECRET_KEY: visible(config.OKX_API_SECRET),
+      OKX_PASSPHRASE: visible(config.OKX_API_PASSPHRASE),
+      legacy_OKX_API_SECRET_present: Boolean(process.env.OKX_API_SECRET),
+      legacy_OKX_API_PASSPHRASE_present: Boolean(process.env.OKX_API_PASSPHRASE)
     },
     rest: restResults,
+    marketData,
+    futuresSymbols,
     websocket: ws
   }, null, 2));
 }

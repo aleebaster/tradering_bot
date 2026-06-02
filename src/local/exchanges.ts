@@ -191,10 +191,20 @@ export class ExchangeClient {
   }
 
   async okxKlines(symbol: string, interval: string, limit = 220): Promise<Candle[]> {
-    const instId = symbol.replace("USDT", "-USDT-SWAP");
     const bar = interval === "D" ? "1D" : `${interval}m`;
-    const body = await json<{ data: string[][] }>(`${OKX}/api/v5/market/candles?instId=${instId}&bar=${bar}&limit=${limit}`);
-    return body.data.reverse().map((r) => ({ exchange: "okx", symbol, timeframe: interval, openTime: Number(r[0]), open: Number(r[1]), high: Number(r[2]), low: Number(r[3]), close: Number(r[4]), volume: Number(r[5]) }));
+    let lastError: unknown;
+    for (const instId of okxSwapInstrumentCandidates(symbol)) {
+      try {
+        const body = await json<{ code?: string; msg?: string; data?: string[][] }>(`${OKX}/api/v5/market/candles?instId=${instId}&bar=${bar}&limit=${limit}`);
+        if (body.code && body.code !== "0") throw new Error(`OKX candles failed ${body.code}: ${body.msg ?? "unknown"}`);
+        const rows = body.data ?? [];
+        if (!rows.length) throw new Error(`OKX candles empty for ${instId}`);
+        return rows.reverse().map((r) => ({ exchange: "okx", symbol, timeframe: interval, openTime: Number(r[0]), open: Number(r[1]), high: Number(r[2]), low: Number(r[3]), close: Number(r[4]), volume: Number(r[5]) }));
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
   }
 
   async okxAuthCheck(): Promise<{ ok: boolean; accountLevel?: string; permissions?: string }> {
@@ -395,6 +405,13 @@ export class ExchangeClient {
 function krakenSpotPair(symbol: string) {
   const base = symbol.replace("USDT", "");
   return `${base === "BTC" ? "XBT" : base}USDT`;
+}
+
+function okxSwapInstrumentCandidates(symbol: string) {
+  const base = symbol.replace(/USDT$/, "");
+  const candidates = [`${base}-USDT-SWAP`];
+  if (/^1000[A-Z0-9]+$/.test(base)) candidates.push(`${base.slice(4)}-USDT-SWAP`);
+  return candidates;
 }
 
 function krakenFuturesSymbol(symbol: string) {
