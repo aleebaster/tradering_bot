@@ -150,10 +150,10 @@ async function monitorActivatedTrade(analysis: ActiveAnalysis) {
       ? `🔴 ${analysis.symbol}\n\n❌ Stop loss triggered\nTRADE CLOSED`
       : hitTp3
         ? `🟢 ${analysis.symbol}\n\nTP3 HIT\n✅ Trade closed`
-        : !btcOk
-          ? `⚠️ ${analysis.symbol}\n\nBTC risk increased`
+          : !btcOk
+            ? `⚠️ ${analysis.symbol}\n\nBTC risk increased`
           : hitTp2
-            ? `🟠 ${analysis.symbol}\n\nTP2 HIT\n✅ Trail by ATR`
+            ? [`🟠 ${analysis.symbol}`, "", "TP2 HIT", analysis.positionSizing?.tp2ProtectionAction ?? "✅ Use smart trailing protection", analysis.positionSizing?.antiGivebackRule ?? "Never allow >50% profit giveback from peak"].join("\n")
             : hitTp1
               ? [`🟠 ${analysis.symbol}`, "", "TP1 TOUCHED", "⏳ Do not move on first wick", analysis.positionSizing?.breakevenActivationRule ?? "Wait for TP1 hold, candle close beyond TP1, or strong post-TP1 momentum.", `BE+ target after confirmation: ${fmt(analysis.positionSizing?.breakevenPlusPrice ?? (analysis.levels.entry[0] + analysis.levels.entry[1]) / 2)} (+fees protected)`].join("\n")
               : `🟢 ${analysis.symbol}\n\nENTRY OPENED`;

@@ -177,6 +177,8 @@ function confirmedSignalText(signal: Signal, direction: ReturnType<typeof setupD
     `🛡 Breakeven: Move to ${fmt(plan.breakevenPlusPrice)} (+fees protected)`,
     `Activation: ${plan.breakevenActivationRule}`,
     `Anti-shakeout: ${plan.antiShakeoutRule}`,
+    `TP2 protection: ${plan.tp2ProtectionAction}`,
+    `Anti-giveback: ${plan.antiGivebackRule}`,
     `Risk mode: ${plan.riskMode}`,
     ...(plan.marginMode === "CROSS" ? ["⚠ Margin: CROSS -> strict protection enabled"] : []),
     `📦 Розмір позиції: ${formatAmount(plan.positionSizeUsdt)} USDT`,
@@ -286,8 +288,8 @@ function executionReasons(signal: Signal, canEnter: boolean) {
   return [...positive, ...blockers.filter((reason) => !positive.includes(reason))].slice(0, 5);
 }
 
-function tpSplit(_signal: Signal) {
-  return [40, 30, 20];
+function tpSplit(_signal: Signal, sizing?: Signal["positionSizing"]) {
+  return [sizing?.tp1ClosePercent ?? 40, sizing?.tp2ClosePercent ?? 30, sizing?.runnerPercent ?? 20];
 }
 
 function positionPlan(signal: Signal, balance: number) {
@@ -295,6 +297,8 @@ function positionPlan(signal: Signal, balance: number) {
   if (existing) {
     const leverage = Number(existing.leverage.replace("x", ""));
     const maxLossUsdt = existing.potentialLossUsdt;
+    const split = tpSplit(signal, existing);
+    const tpProfits = existing.takeProfit.map((tp, index) => tpProfitUsdt(signal, existing.quantity, split[index] ?? 0, tp));
     return {
       balance: existing.balanceUsdt,
       leverage,
@@ -302,16 +306,20 @@ function positionPlan(signal: Signal, balance: number) {
       qty: existing.quantity,
       maxLossUsdt,
       maxLossRoi: roi(maxLossUsdt, existing.marginUsdt),
-      split: tpSplit(signal),
+      split,
       marginUsdt: existing.marginUsdt,
-      tpProfits: existing.potentialProfitUsdt,
-      roiByTp: existing.potentialProfitUsdt.map((profit) => roi(profit, existing.marginUsdt)),
+      tpProfits,
+      roiByTp: tpProfits.map((profit) => roi(profit, existing.marginUsdt)),
       marginMode: existing.marginMode ?? "ISOLATED",
       riskMode: existing.riskMode ?? "safe",
       breakevenPlusPrice: existing.breakevenPlusPrice ?? breakevenPlus(signal, existing.averageEntry, leverage).price,
       breakevenAction: existing.breakevenAction ?? breakevenPlus(signal, existing.averageEntry, leverage).action,
       breakevenActivationRule: existing.breakevenActivationRule ?? breakevenPlus(signal, existing.averageEntry, leverage).activationRule,
-      antiShakeoutRule: existing.antiShakeoutRule ?? breakevenPlus(signal, existing.averageEntry, leverage).antiShakeoutRule
+      antiShakeoutRule: existing.antiShakeoutRule ?? breakevenPlus(signal, existing.averageEntry, leverage).antiShakeoutRule,
+      tp2ProtectionAction: existing.tp2ProtectionAction ?? "TP2 hit -> protect profit dynamically.",
+      antiGivebackRule: existing.antiGivebackRule ?? "Never allow more than 50% profit giveback from peak.",
+      trailingStopRule: existing.trailingStopRule ?? "Trail by structure/ATR after TP2.",
+      trendProtectionRule: existing.trendProtectionRule ?? "Trend-aware trailing protection."
     };
   }
   const leverage = Math.min(3, maxLeverageNumber(), balance <= 15 ? 2 : maxLeverageNumber());
@@ -323,14 +331,15 @@ function positionPlan(signal: Signal, balance: number) {
   const split = tpSplit(signal);
   const tpProfits = signal.takeProfit.map((tp, index) => tpProfitUsdt(signal, qty, split[index] ?? 0, tp));
   const be = breakevenPlus(signal, avgEntry, leverage);
-  return { balance, leverage, positionSizeUsdt, qty, maxLossUsdt: maxLoss, maxLossRoi: roi(maxLoss, marginUsdt), split, marginUsdt, tpProfits, roiByTp: tpProfits.map((profit) => roi(profit, marginUsdt)), marginMode: "ISOLATED" as const, riskMode: "safe" as const, breakevenPlusPrice: be.price, breakevenAction: be.action, breakevenActivationRule: be.activationRule, antiShakeoutRule: be.antiShakeoutRule };
+  return { balance, leverage, positionSizeUsdt, qty, maxLossUsdt: maxLoss, maxLossRoi: roi(maxLoss, marginUsdt), split, marginUsdt, tpProfits, roiByTp: tpProfits.map((profit) => roi(profit, marginUsdt)), marginMode: "ISOLATED" as const, riskMode: "safe" as const, breakevenPlusPrice: be.price, breakevenAction: be.action, breakevenActivationRule: be.activationRule, antiShakeoutRule: be.antiShakeoutRule, tp2ProtectionAction: "TP2 hit -> protect profit dynamically.", antiGivebackRule: "Never allow more than 50% profit giveback from peak.", trailingStopRule: "Trail by structure/ATR after TP2.", trendProtectionRule: "Trend-aware trailing protection." };
 }
 
 function tpPlanLines(signal: Signal, plan: ReturnType<typeof positionPlan>) {
   return signal.takeProfit.flatMap((tp, index) => {
     const pct = plan.split[index] ?? 0;
     const profit = plan.tpProfits[index] ?? tpProfitUsdt(signal, plan.qty, pct, tp);
-    return [`🎯 TP${index + 1}: ${fmt(tp)}`, `Закрити: ${pct}%`, `≈ +${formatAmount(profit)} USDT (${formatPercent(plan.roiByTp[index] ?? 0)}% ROI)`, ""];
+    const label = index === 2 ? `Runner: ${pct}%` : `Закрити: ${pct}%`;
+    return [`🎯 TP${index + 1}: ${fmt(tp)}`, label, `≈ +${formatAmount(profit)} USDT (${formatPercent(plan.roiByTp[index] ?? 0)}% ROI)`, ""];
   }).slice(0, -1);
 }
 

@@ -24,6 +24,7 @@ async function main() {
     console.log(`⚙️ Margin: ${sizing?.marginMode ?? "n/a"}`);
     console.log(`🛡 BE+: ${sizing?.breakevenPlusPrice ? fmt(sizing.breakevenPlusPrice) : "n/a"} offset=${sizing?.breakevenPlusOffsetPercent ?? "n/a"}% netBuffer=${sizing?.breakevenPlusNetBufferPercent ?? "n/a"}% mode=${sizing?.breakevenContinuationMode ?? "n/a"}`);
     console.log(`Activation: ${sizing?.breakevenActivationRule ?? "n/a"}`);
+    console.log(`Profit protection: TP1 ${sizing?.tp1ClosePercent ?? "n/a"}% / TP2 ${sizing?.tp2ClosePercent ?? "n/a"}% / runner ${sizing?.runnerPercent ?? "n/a"}% / ${sizing?.profitProtectionMode ?? "n/a"}`);
     console.log(`💰 Position size: ${sizing ? `${sizing.balanceUsdt} USDT -> ${sizing.positionSizeUsdt} USDT` : "n/a"}`);
     console.log(`🪙 Coin amount: ${sizing ? `${sizing.quantity} ${sizing.baseAsset}` : "n/a"}`);
     console.log(`🛑 Risk: SL=${fmt(setup.stopLoss)} maxLoss=${sizing?.potentialLossUsdt ?? "n/a"} USDT accountRisk=${sizing?.accountRiskPercent ?? "n/a"}%`);
@@ -42,7 +43,8 @@ function validateBreakevenAndMarginRules() {
   const cross = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "CROSS" });
   const tinyWeak = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 92, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.01, momentumScore: 80, volumeScore: 80, btcStable: true, orderFlowScore: 75, sniperConfidence: 80, marginMode: "ISOLATED" });
   const highVol = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.02, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "ISOLATED" });
-  if (!longLarge || !long || !short || !cross || !tinyWeak || !highVol) throw new Error("BE+/margin validation setup failed");
+  const choppy = calculatePositionSizing({ symbol: "ETHUSDT", mode: "futures", side: "LONG", score: 96, entry: [100, 100], stopLoss: 98, takeProfit: [103, 105, 108], volatilityPct: 0.006, momentumScore: 86, volumeScore: 82, btcStable: true, orderFlowScore: 75, sniperConfidence: 88, marginMode: "ISOLATED", marketRegime: "CHOPPY" });
+  if (!longLarge || !long || !short || !cross || !tinyWeak || !highVol || !choppy) throw new Error("BE+/margin validation setup failed");
   assert(long.breakevenPlusPrice! > long.averageEntry, "LONG TP1 -> BE+ must move SL above entry");
   assert(short.breakevenPlusPrice! < short.averageEntry, "SHORT TP1 -> BE+ must move SL below entry");
   assert((long.breakevenPlusNetBufferPercent ?? 0) >= 0.15, "BE+ net buffer must be at least 0.15%");
@@ -55,7 +57,13 @@ function validateBreakevenAndMarginRules() {
   assert(short.antiShakeoutRule?.includes("liquidity-sweep"), "BE+ must include anti-shakeout liquidity sweep rule");
   assert(cross.marginMode === "CROSS" && cross.protectiveStopRequired && cross.leverage === "x2", "Cross margin must force strict x2 protective SL behavior");
   assert(tinyWeak.leverage === "x2" && tinyWeak.breakevenContinuationMode === "tighten", "Tiny account must use x2 and prioritize protection after confirmation");
-  console.log("✅ BE+/margin rules: LONG, SHORT, fees, TP1 confirmation, volatility delay, anti-shakeout, CROSS, ISOLATED, tiny account protections passed\n");
+  assert(longLarge.profitProtectionMode === "trail" && longLarge.tp2ProtectionAction?.includes("trail below structure/ATR"), "Strong TP2 continuation must use trailing protection");
+  assert(short.profitProtectionMode === "tighten" && short.tp2ProtectionAction?.includes("tighten faster"), "Weak TP2 continuation must tighten faster");
+  assert(long.tp1ClosePercent! >= 25 && long.tp1ClosePercent! <= 40 && long.tp2ClosePercent! > 0, "Tiny account must close partial size at TP1 and TP2");
+  assert(tinyWeak.runnerPercent === 0, "Tiny account must leave runner only when momentum is strong");
+  assert(longLarge.maxProfitGivebackPercent === 50 && longLarge.antiGivebackRule?.includes("50% giveback"), "Anti-giveback rule must cap profit giveback at 50%");
+  assert(choppy.profitProtectionMode === "tighten" && choppy.trendProtectionRule?.includes("Choppy/sideways"), "Choppy market must use tighter protection");
+  console.log("✅ BE+/margin rules: LONG, SHORT, fees, TP1 confirmation, volatility delay, anti-shakeout, TP2 trailing/tightening, partials, anti-giveback, CROSS, ISOLATED, tiny account protections passed\n");
 }
 
 function assert(condition: unknown, message: string) {

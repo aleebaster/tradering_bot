@@ -194,7 +194,7 @@ function simulatePaperTrade(trade: PaperMemoryTrade, currentPrice: number): Part
   const hitTp3 = long ? currentPrice >= trade.takeProfit[2] : currentPrice <= trade.takeProfit[2];
   const durationMinutes = Math.max(0, Math.round((Date.now() - new Date(trade.openedAt).getTime()) / 60000));
   if (hitTp3) return closePaper(trade, currentPrice, "WIN", "TP3", 3, durationMinutes);
-  if (hitTp2 && trade.highestStage !== "TP2") return { highestStage: "TP2", activeStopLoss: paperBreakevenPlus(trade), durationMinutes };
+  if (hitTp2 && trade.highestStage !== "TP2") return { highestStage: "TP2", activeStopLoss: paperProfitTrailStop(trade, currentPrice), durationMinutes };
   if (hitTp1 && trade.highestStage === "NONE") return { highestStage: "TP1", durationMinutes };
   if (hitSl && trade.highestStage !== "NONE") return closePaper(trade, currentPrice, "BREAKEVEN", trade.highestStage, 0, durationMinutes);
   if (hitSl) return closePaper(trade, currentPrice, "LOSS", "NONE", -1, durationMinutes);
@@ -261,6 +261,12 @@ function pnlPercent(trade: PaperMemoryTrade, currentPrice: number) {
 
 function paperBreakevenPlus(trade: PaperMemoryTrade) {
   return breakevenPlus({ side: trade.direction, volatilityPct: Math.abs(trade.takeProfit[0] - trade.entry) / trade.entry, momentumScore: trade.confidence, volumeScore: trade.score, btcStable: true, orderFlowScore: trade.score, sniperConfidence: trade.confidence }, trade.entry, 2).price;
+}
+
+function paperProfitTrailStop(trade: PaperMemoryTrade, currentPrice: number) {
+  const be = paperBreakevenPlus(trade);
+  if (trade.direction === "LONG") return Math.max(be, trade.entry + Math.max(0, currentPrice - trade.entry) * 0.5);
+  return Math.min(be, trade.entry - Math.max(0, trade.entry - currentPrice) * 0.5);
 }
 
 function average(values: number[]) {

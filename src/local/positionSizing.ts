@@ -55,6 +55,7 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
   const accountRiskPercent = roundPercent(balanceUsdt > 0 ? potentialLossUsdt / balanceUsdt * 100 : 0);
   const liquidationSafetyPercent = roundPercent(Math.max(0, 100 / leverage - priceRiskPercent));
   const breakeven = breakevenPlus(input, averageEntry, leverage, balanceUsdt <= 15);
+  const profitProtection = smartProfitProtection(input, balanceUsdt <= 20);
 
   return {
     balanceUsdt,
@@ -86,6 +87,15 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
     breakevenDelay: breakeven.delay,
     breakevenContinuationMode: breakeven.continuationMode,
     antiShakeoutRule: breakeven.antiShakeoutRule,
+    profitProtectionMode: profitProtection.mode,
+    tp1ClosePercent: profitProtection.tp1ClosePercent,
+    tp2ClosePercent: profitProtection.tp2ClosePercent,
+    runnerPercent: profitProtection.runnerPercent,
+    tp2ProtectionAction: profitProtection.tp2Action,
+    trailingStopRule: profitProtection.trailingStopRule,
+    antiGivebackRule: profitProtection.antiGivebackRule,
+    maxProfitGivebackPercent: profitProtection.maxGivebackPercent,
+    trendProtectionRule: profitProtection.trendRule,
     protectiveStopRequired: true,
     marginProtection: marginProtectionText(marginMode),
     entryPlan: starterEntry ? "50% starter entry, add only after confirmation" : "single confirmed entry",
@@ -110,6 +120,31 @@ function chooseLeverage(input: PositionSizingInput, priceRiskPercent: number, ma
     if (candidate * priceRiskPercent <= maxRiskPercent) return candidate;
   }
   return 2;
+}
+
+export function smartProfitProtection(input: Pick<PositionSizingInput, "marketRegime" | "volatilityPct" | "momentumScore" | "volumeScore" | "btcStable" | "orderFlowScore" | "sniperConfidence">, smallAccount = false) {
+  const volatilityPct = Math.max(0, input.volatilityPct ?? 0);
+  const choppy = input.marketRegime === "SIDEWAYS" || input.marketRegime === "CHOPPY" || input.marketRegime === "RANGING" || input.marketRegime === "LOW_VOLATILITY";
+  const highVolatility = volatilityPct >= 0.018 || input.marketRegime === "HIGH_VOLATILITY" || input.marketRegime === "VOLATILE";
+  const strongContinuation = (input.momentumScore ?? 0) >= 82 && (input.volumeScore ?? 0) >= 78 && (input.orderFlowScore ?? 0) >= 70 && (input.sniperConfidence ?? 0) >= 75 && input.btcStable !== false;
+  const weakContinuation = (input.momentumScore ?? 100) < 70 || (input.volumeScore ?? 100) < 65 || (input.orderFlowScore ?? 100) < 60 || input.btcStable === false || choppy;
+  const mode: "trail" | "tighten" = strongContinuation && !choppy ? "trail" : "tighten";
+  const tp1ClosePercent = smallAccount ? weakContinuation ? 40 : 35 : 40;
+  const runnerPercent = smallAccount ? strongContinuation ? 20 : 0 : strongContinuation ? 30 : 10;
+  const tp2ClosePercent = Math.max(0, 100 - tp1ClosePercent - runnerPercent);
+  const trailingStopRule = mode === "trail"
+    ? `${highVolatility ? "Wide" : "Normal"} ATR/structure trail after TP2; do not aggressively tighten while momentum/orderflow/BTC remain supportive.`
+    : "Tighten after TP2 because continuation is weak/choppy; protect realized profit before runner.";
+  const tp2Action = mode === "trail"
+    ? "TP2 hit with strong continuation -> keep runner and trail below structure/ATR/volatility."
+    : "TP2 hit with weak continuation -> close additional size and tighten faster.";
+  const antiGivebackRule = "After strong unrealized profit, never allow more than 50% giveback from peak; ratchet stop dynamically as peak profit expands.";
+  const trendRule = choppy
+    ? "Choppy/sideways: tighter protection and smaller/no runner."
+    : strongContinuation
+      ? "Strong trend: wider trailing stop to avoid cutting runner too early."
+      : "Mixed trend: protect capital first, use tighter trail.";
+  return { mode, tp1ClosePercent, tp2ClosePercent, runnerPercent, trailingStopRule, tp2Action, antiGivebackRule, maxGivebackPercent: 50, trendRule };
 }
 
 export function breakevenPlus(input: Pick<PositionSizingInput, "side" | "volatilityPct" | "momentumScore" | "volumeScore" | "btcStable" | "orderFlowScore" | "sniperConfidence">, averageEntry: number, leverage: number, smallAccount = false) {

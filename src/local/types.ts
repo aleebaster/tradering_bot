@@ -193,6 +193,15 @@ export interface PositionSizing {
   breakevenDelay?: string;
   breakevenContinuationMode?: "delay" | "normal" | "tighten";
   antiShakeoutRule?: string;
+  profitProtectionMode?: "trail" | "tighten";
+  tp1ClosePercent?: number;
+  tp2ClosePercent?: number;
+  runnerPercent?: number;
+  tp2ProtectionAction?: string;
+  trailingStopRule?: string;
+  antiGivebackRule?: string;
+  maxProfitGivebackPercent?: number;
+  trendProtectionRule?: string;
   protectiveStopRequired?: boolean;
   marginProtection?: string;
   entryPlan?: string;
