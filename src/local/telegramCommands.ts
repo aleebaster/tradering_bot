@@ -184,7 +184,7 @@ export class TelegramCommandCenter {
   }
 
   async sendFreshMenu(): Promise<void> {
-    await this.notifier.send("Оновлюю меню: прибираю стару клавіатуру.", removeKeyboard());
+    await this.notifier.send("📌 Навігаційне меню відновлено.", persistentMenuKeyboard());
     return this.notifier.send(mainMenuText(), mainMenuKeyboard());
   }
 
@@ -224,7 +224,7 @@ export class TelegramCommandCenter {
     if (command === "/longmovers") return this.sendMomentum("long");
     if (command === "/shortmovers") return this.sendMomentum("short");
 
-    if (["/start", "/menu"].includes(command) || button === "menu" || button === "back") return this.notifier.send(mainMenuText(), mainMenuKeyboard());
+    if (["/start", "/menu"].includes(command) || button === "menu" || button === "back") return this.sendFreshMenu();
     if (button === "signals") return this.sendTopSetups();
     if (button === "search_pair") return this.askPair("search");
     if (button === "watchlist") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
@@ -732,6 +732,23 @@ function mainMenuKeyboard(): TelegramReplyMarkup {
   };
 }
 
+function persistentMenuKeyboard(): TelegramReplyMarkup {
+  return {
+    keyboard: [
+      [{ text: "📊 Сигнали" }, { text: "🔎 Пошук по парах" }],
+      [{ text: "👀 Список моніторингу" }, { text: "📈 Ринок" }],
+      [{ text: "₿ BTC Фільтр" }, { text: "🔥 Топ Сетапи" }],
+      [{ text: "🚨 Великі рухи" }, { text: "🐋 Рух китів" }],
+      [{ text: "🧠 Інтелект" }, { text: "🪙 Нові монети" }],
+      [{ text: "📊 Статистика" }, { text: "⚙️ Налаштування" }],
+      [{ text: "🧪 Діагностика" }, { text: "📁 Позиції" }],
+      [{ text: "🏠 Головне меню" }]
+    ],
+    resize_keyboard: true,
+    is_persistent: true
+  };
+}
+
 function signalMenuKeyboard(): TelegramReplyMarkup {
   return {
     inline_keyboard: [
@@ -858,10 +875,6 @@ function intelligenceKeyboard(): TelegramReplyMarkup {
 
 function backKeyboard(): TelegramReplyMarkup {
   return { inline_keyboard: [[uiButton("🔙 Назад", "back")]] };
-}
-
-function removeKeyboard(): TelegramReplyMarkup {
-  return { remove_keyboard: true };
 }
 
 function pairSearchKeyboard(symbol: string, hasFutures: boolean, hasSpot: boolean): TelegramReplyMarkup {

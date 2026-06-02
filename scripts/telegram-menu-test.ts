@@ -13,6 +13,21 @@ class CaptureNotifier extends TelegramNotifier {
 
 const notifier = new CaptureNotifier();
 
+const sidebarMenu: TelegramReplyMarkup = {
+  keyboard: [
+    [{ text: "📊 Сигнали" }, { text: "🔎 Пошук по парах" }],
+    [{ text: "👀 Список моніторингу" }, { text: "📈 Ринок" }],
+    [{ text: "₿ BTC Фільтр" }, { text: "🔥 Топ Сетапи" }],
+    [{ text: "🚨 Великі рухи" }, { text: "🐋 Рух китів" }],
+    [{ text: "🧠 Інтелект" }, { text: "🪙 Нові монети" }],
+    [{ text: "📊 Статистика" }, { text: "⚙️ Налаштування" }],
+    [{ text: "🧪 Діагностика" }, { text: "📁 Позиції" }],
+    [{ text: "🏠 Головне меню" }]
+  ],
+  resize_keyboard: true,
+  is_persistent: true
+};
+
 const mainMenu: TelegramReplyMarkup = {
   inline_keyboard: [
     [btn("📊 Сигнали", "signals"), btn("🔎 Пошук по парах", "search_pair")],
@@ -43,6 +58,7 @@ const marketActions: TelegramReplyMarkup = { inline_keyboard: [[btn("🔄 Оно
 const watchlistActions: TelegramReplyMarkup = { inline_keyboard: [[btn("📄 Мій список", "watchlist"), btn("👀 Статус моніторингу", "watch_status")], [btn("🔴 Моніторинг", "monitoring")], [btn("➕ Додати пару", "watch_add"), btn("❌ Видалити пару", "watch_remove")], [btn("📊 Аналіз", "signal_pair"), btn("🔙 Назад", "back")]] };
 
 async function main() {
+  await notifier.send("📌 Навігаційне меню відновлено.", sidebarMenu);
   await notifier.send(["📋 Головне меню", "", "Тест кнопкового Telegram UI.", "Натискай кнопки нижче без введення команд."].join("\n"), mainMenu);
   await notifier.send(["📊 Сигнали", "", "Кнопки підключені до /signal, /top, /positions."].join("\n"), signalMenu);
   await notifier.send(realTopText());
@@ -58,15 +74,18 @@ async function main() {
   await notifier.send(["🔴 SHORT — BTCUSDT", "", "📍 Зона входу: 104250 - 104400", "➡️ SHORT сетап", "", "🛑 SL: 104900", "🎯 TP1: 103800", "🎯 TP2: 103100", "🎯 TP3: 102400", "", "⚡ x3", "📊 Впевненість: 97%", "", "Причина:", "• bearish імпульс", "• OI підтверджено", "• sniper trigger"].join("\n"), signalActions);
   console.log(JSON.stringify({
     ok: true,
-    sent: ["main_menu", "signal_menu", "watchlist_menu", "market_actions", "settings_menu", "leverage_menu", "risk_menu", "inline_signal_quick_actions", "real_status_outputs"],
+    sent: ["sidebar_menu", "main_menu", "signal_menu", "watchlist_menu", "market_actions", "settings_menu", "leverage_menu", "risk_menu", "inline_signal_quick_actions", "real_status_outputs"],
     proof: {
+      sidebarMenuRows: sidebarMenu.keyboard?.length,
+      sidebarMenuPersistent: sidebarMenu.is_persistent === true,
+      sidebarMenuResize: sidebarMenu.resize_keyboard === true,
       inlineMenuRows: mainMenu.inline_keyboard?.length,
       inlineMenuVisible: Boolean(mainMenu.inline_keyboard?.length),
       duplicateSearchButtons: mainMenu.inline_keyboard?.flat().filter((button) => button.text.includes("Пошук по парах")).length ?? 0,
       momentumButtonVisible: Boolean(mainMenu.inline_keyboard?.flat().some((button) => button.text === "🚨 Великі рухи")),
       whaleButtonVisible: Boolean(mainMenu.inline_keyboard?.flat().some((button) => button.text === "🐋 Рух китів")),
       inlineKeyboardRows: signalActions.inline_keyboard?.length,
-      noLiveTelegramSpam: notifier.messages.length === 13,
+      noLiveTelegramSpam: notifier.messages.length === 14,
       buttons: ["📊 Сигнали", "🔎 Пошук по парах", "👀 Список моніторингу", "📈 Ринок", "₿ BTC Фільтр", "🔥 Топ Сетапи", "🚨 Великі рухи", "🐋 Рух китів", "🧠 Інтелект", "🪙 Нові монети", "📊 Статистика", "⚙️ Налаштування", "🧪 Діагностика", "📁 Позиції", "🏠 Головне меню", "🔍 Аналіз пари", "➕ Додати пару", "📄 Мій список", "👀 Статус моніторингу", "❌ Видалити пару", "🔴 Моніторинг", "💰 Баланс", "⚡ Плече", "x2", "x3", "🔔 Сповіщення", "🎯 Режим ризику", "Обережний", "Збалансований", "Агресивний", "🟢 Моніторити", "🔄 Оновити Аналіз", "❌ Видалити", "📖 Детальний аналіз", "🛠 Сирі технічні дані"]
     }
   }, null, 2));
