@@ -66,6 +66,8 @@ async function throttle(url: string) {
 function cacheTtl(url: string) {
   if (url.includes("/v5/market/kline")) {
     const interval = new URL(url).searchParams.get("interval");
+    if (interval === "1") return 2_000;
+    if (interval === "3") return 4_000;
     if (interval === "5") return 7_000;
     if (interval === "15") return 15_000;
     if (interval === "60") return 30_000;

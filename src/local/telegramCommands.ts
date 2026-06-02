@@ -205,6 +205,9 @@ export class TelegramCommandCenter {
     logger.info({ text, cleanText, button, command }, "Telegram handler executed");
 
     if (command === "/momentum" || command === "/moves") return this.sendMomentum("all");
+    if (command === "/scalp" || command === "/scalps") return this.sendMomentum("scalp");
+    if (command === "/scalplong") return this.sendMomentum("scalp_long");
+    if (command === "/scalpshort") return this.sendMomentum("scalp_short");
     if (command === "/longmovers") return this.sendMomentum("long");
     if (command === "/shortmovers") return this.sendMomentum("short");
 
@@ -223,6 +226,9 @@ export class TelegramCommandCenter {
     if (button === "watch_status") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
     if (button === "monitoring") return this.sendMonitoring();
     if (button === "momentum") return this.sendMomentum("all");
+    if (button === "momentum_scalp") return this.sendMomentum("scalp");
+    if (button === "momentum_scalp_long") return this.sendMomentum("scalp_long");
+    if (button === "momentum_scalp_short") return this.sendMomentum("scalp_short");
     if (button === "momentum_long") return this.sendMomentum("long");
     if (button === "momentum_short") return this.sendMomentum("short");
     if (button === "momentum_strongest") return this.sendMomentum("strongest");
@@ -479,6 +485,9 @@ export class TelegramCommandCenter {
 
   private async handleUiCallback(action: string): Promise<void> {
     if (action === "momentum") return this.sendMomentum("all");
+    if (action === "momentum_scalp") return this.sendMomentum("scalp");
+    if (action === "momentum_scalp_long") return this.sendMomentum("scalp_long");
+    if (action === "momentum_scalp_short") return this.sendMomentum("scalp_short");
     if (action === "momentum_long") return this.sendMomentum("long");
     if (action === "momentum_short") return this.sendMomentum("short");
     if (action === "momentum_strongest") return this.sendMomentum("strongest");
@@ -501,6 +510,9 @@ export class TelegramCommandCenter {
     if (button === "watch_status") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
     if (button === "monitoring") return this.sendMonitoring();
     if (button === "momentum") return this.sendMomentum("all");
+    if (button === "momentum_scalp") return this.sendMomentum("scalp");
+    if (button === "momentum_scalp_long") return this.sendMomentum("scalp_long");
+    if (button === "momentum_scalp_short") return this.sendMomentum("scalp_short");
     if (button === "momentum_long") return this.sendMomentum("long");
     if (button === "momentum_short") return this.sendMomentum("short");
     if (button === "momentum_strongest") return this.sendMomentum("strongest");
@@ -1009,6 +1021,31 @@ function sampleMomentumRows(): MomentumMove[] {
     {
       symbol: "ESPORTSUSDT",
       direction: "LONG",
+      mode: "SCALP",
+      timeframe: "1m",
+      movePct: 0.92,
+      fromPrice: 0.0551,
+      toPrice: 0.0556,
+      turnover24h: 2_700_000,
+      volumeSpike: 2.1,
+      oiLabel: "Price ↑ + OI neutral",
+      oiChange: 0.0008,
+      whaleLabel: "Активність китів 69%",
+      whaleScore: 69,
+      setupType: "Quick scalp",
+      momentum: "Very Strong",
+      entryType: "MARKET ENTRY",
+      entryReason: "1–5m імпульс активний",
+      retest: [0.0551, 0.0553],
+      potential: "HIGH",
+      risk: "High",
+      expectedHoldMinutes: "2–10 хв",
+      reasons: ["volume spike 2.1x", "momentum acceleration", "whale activity", "orderbook imbalance", "short squeeze probability / liquidation cascade", "risk penalty: BTC mixed"],
+      score: 76
+    },
+    {
+      symbol: "ESPORTSUSDT",
+      direction: "LONG",
       timeframe: "5m",
       movePct: 4.4,
       fromPrice: 0.05321,
@@ -1056,6 +1093,9 @@ function sampleMomentumRows(): MomentumMove[] {
 }
 
 function momentumTitle(filter: MomentumFilter) {
+  if (filter === "scalp") return "⚡ SCALP MODE / 1–5m швидкі входи";
+  if (filter === "scalp_long") return "⚡ Scalp LONG / 1–5m швидкі входи";
+  if (filter === "scalp_short") return "⚡ Scalp SHORT / 1–5m швидкі входи";
   if (filter === "long") return "📈 Лідери LONG / Сканер сильних рухів";
   if (filter === "short") return "📉 Лідери SHORT / Сканер сильних рухів";
   if (filter === "strongest") return "🔥 Найсильніші рухи / Сканер сильних рухів";
@@ -1949,7 +1989,7 @@ function isMenuButton(text: string) {
   return buttonAction(text) !== null;
 }
 
-type ButtonAction = "menu" | "back" | "signals" | "search_pair" | "watchlist" | "settings" | "signal_pair" | "watch_add" | "watch_remove" | "top" | "signals_refresh" | "positions" | "stats" | "new_tokens" | "watch_status" | "monitoring" | "momentum" | "momentum_long" | "momentum_short" | "momentum_strongest" | "momentum_check" | "whales" | "whales_accumulation" | "whales_distribution" | "whales_strongest" | "whales_check" | "intelligence" | "pump_detector" | "whale_bias" | "liquidation_status" | "market_regime" | "market" | "btc" | "diagnostics" | "balance" | "leverage" | "x2" | "x3" | "notifications" | "telegram_ux" | "risk_mode" | "conservative" | "balanced" | "aggressive";
+type ButtonAction = "menu" | "back" | "signals" | "search_pair" | "watchlist" | "settings" | "signal_pair" | "watch_add" | "watch_remove" | "top" | "signals_refresh" | "positions" | "stats" | "new_tokens" | "watch_status" | "monitoring" | "momentum" | "momentum_scalp" | "momentum_scalp_long" | "momentum_scalp_short" | "momentum_long" | "momentum_short" | "momentum_strongest" | "momentum_check" | "whales" | "whales_accumulation" | "whales_distribution" | "whales_strongest" | "whales_check" | "intelligence" | "pump_detector" | "whale_bias" | "liquidation_status" | "market_regime" | "market" | "btc" | "diagnostics" | "balance" | "leverage" | "x2" | "x3" | "notifications" | "telegram_ux" | "risk_mode" | "conservative" | "balanced" | "aggressive";
 
 function buttonAction(text: string): ButtonAction | null {
   const normalized = normalizeButtonText(text).toLowerCase();
@@ -1972,6 +2012,9 @@ function buttonAction(text: string): ButtonAction | null {
     ["watch_status", ["watch status", "статус моніторингу"]],
     ["monitoring", ["моніторинг", "monitoring"]],
     ["momentum", ["великі рухи", "рухи", "momentum", "moves", "big moves"]],
+    ["momentum_scalp", ["scalp", "scalps", "scalp mode", "quick scalp", "швидкий скальп", "скальп", "scalp_mode"]],
+    ["momentum_scalp_long", ["scalp long", "scalplong", "лонг скальп", "scalp_long"]],
+    ["momentum_scalp_short", ["scalp short", "scalpshort", "шорт скальп", "scalp_short"]],
     ["momentum_long", ["long movers", "лідери long", "лонг рухи", "long momentum"]],
     ["momentum_short", ["short movers", "лідери short", "шорт рухи", "short momentum"]],
     ["momentum_strongest", ["найсильніші рухи", "strongest moves", "strongest momentum"]],

@@ -41,6 +41,9 @@ async function main() {
   await click(center, checks, "🚨 Великі рухи", "Сканер сильних рухів");
   await click(center, checks, "/momentum", "Сканер сильних рухів");
   await click(center, checks, "/moves", "Сканер сильних рухів");
+  await click(center, checks, "/scalp", "QUICK SCALP SIGNAL");
+  await click(center, checks, "/scalplong", "Scalp LONG");
+  await click(center, checks, "/scalpshort", "Scalp SHORT");
   await click(center, checks, "/longmovers", "Лідери LONG");
   await click(center, checks, "/shortmovers", "Лідери SHORT");
   await click(center, checks, "📈 Лідери LONG", "Лідери LONG");
@@ -52,7 +55,7 @@ async function main() {
   await click(center, checks, "кити", "Сканер руху китів");
   await click(center, checks, "/whales", "Сканер руху китів");
   await click(center, checks, "🔍 Перевірити монету", "Перевірити великий рух");
-  await click(center, checks, "btc", "ВЕЛИКИЙ РУХ");
+  await click(center, checks, "btc", "QUICK SCALP SIGNAL");
   await click(center, checks, "🧠 Інтелект", "Інтелект");
   await center.handleCallbackForTest("ui:pump_detector");
   checks["inline_ui_pump_detector"] = last(notifier).includes("Детектор пампу") || last(notifier).includes("Дані ще формуються");
@@ -104,6 +107,12 @@ async function main() {
   checks["stale_inline_top_setups"] = last(notifier).includes("Топ Сетапи");
   await center.handleCallbackForTest("ui:momentum");
   checks["inline_ui_momentum"] = last(notifier).includes("Сканер сильних рухів");
+  await center.handleCallbackForTest("ui:momentum_scalp");
+  checks["inline_ui_momentum_scalp"] = last(notifier).includes("QUICK SCALP SIGNAL");
+  await center.handleCallbackForTest("ui:momentum_scalp_long");
+  checks["inline_ui_momentum_scalp_long"] = last(notifier).includes("Scalp LONG");
+  await center.handleCallbackForTest("ui:momentum_scalp_short");
+  checks["inline_ui_momentum_scalp_short"] = last(notifier).includes("Scalp SHORT");
   await center.handleCallbackForTest("momentum");
   checks["stale_inline_momentum"] = last(notifier).includes("Сканер сильних рухів");
   await center.handleCallbackForTest("big_moves");

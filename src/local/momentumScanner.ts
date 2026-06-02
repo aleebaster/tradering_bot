@@ -4,17 +4,18 @@ import { ExchangeClient } from "./exchanges";
 import { loadTelegramSettings, maxLeverageNumber } from "./telegramSettings";
 import type { Candle } from "./types";
 
-type MomentumFilter = "all" | "long" | "short" | "strongest";
+type MomentumFilter = "all" | "long" | "short" | "strongest" | "scalp" | "scalp_long" | "scalp_short";
 type Direction = "LONG" | "SHORT";
 type EntryType = "MARKET ENTRY" | "LIMIT ENTRY";
-type SetupType = "Momentum breakout" | "Whale accumulation" | "Whale distribution" | "Sniper retest" | "Reversal squeeze";
+type SetupType = "Momentum breakout" | "Whale accumulation" | "Whale distribution" | "Sniper retest" | "Reversal squeeze" | "Quick scalp";
 
 type Ticker = { symbol: string; lastPrice: number; bid1Price: number; ask1Price: number; turnover24h: number; volume24h: number; price24hPcnt: number };
 
 export type MomentumMove = {
   symbol: string;
   direction: Direction;
-  timeframe: "5m" | "15m" | "1h";
+  mode?: "SAFE" | "SCALP";
+  timeframe: "1m" | "3m" | "5m" | "15m" | "1h";
   movePct: number;
   fromPrice: number;
   toPrice: number;
@@ -31,6 +32,7 @@ export type MomentumMove = {
   retest: [number, number];
   potential: "MEDIUM" | "HIGH" | "VERY HIGH";
   risk: "Low" | "Medium" | "High";
+  expectedHoldMinutes?: string;
   reasons: string[];
   score: number;
 };
@@ -39,6 +41,12 @@ const MOVE_THRESHOLDS = [
   { timeframe: "5m" as const, interval: "5", bars: 1, levels: [0.8, 1.8, 3.5] },
   { timeframe: "15m" as const, interval: "15", bars: 1, levels: [2, 4, 7] },
   { timeframe: "1h" as const, interval: "60", bars: 1, levels: [4, 8, 12] }
+];
+
+const SCALP_THRESHOLDS = [
+  { timeframe: "1m" as const, interval: "1", bars: 1, levels: [0.28, 0.55, 0.9] },
+  { timeframe: "3m" as const, interval: "3", bars: 1, levels: [0.45, 0.9, 1.4] },
+  { timeframe: "5m" as const, interval: "5", bars: 1, levels: [0.65, 1.2, 2.0] }
 ];
 
 type SignalDedupeEntry = { sentAt: number; score: number; movePct: number; setupType: SetupType; direction: Direction; price: number };
@@ -57,6 +65,7 @@ export class MomentumScanner {
   constructor(private client = new ExchangeClient()) {}
 
   async scan(filter: MomentumFilter = "all", limit = 8): Promise<MomentumMove[]> {
+    if (filter === "scalp" || filter === "scalp_long" || filter === "scalp_short") return this.scanScalp(filter, limit);
     const [linear, spot, btcCandles] = await Promise.all([
       this.client.bybitTickers("linear"),
       this.client.bybitTickers("spot").catch(() => [] as Ticker[]),
@@ -99,6 +108,10 @@ export class MomentumScanner {
     return rows.sort((a, b) => b.score - a.score || Math.abs(b.movePct) - Math.abs(a.movePct)).slice(0, limit);
   }
 
+  async scanAutoScalpSignals(limit = 2): Promise<MomentumMove[]> {
+    return this.scanScalp("scalp", limit, true);
+  }
+
   async checkSymbol(symbol: string): Promise<MomentumMove | null> {
     const pair = normalizeSymbol(symbol);
     const [linear, spot, btcCandles] = await Promise.all([
@@ -108,7 +121,8 @@ export class MomentumScanner {
     ]);
     const ticker = linear.find((item) => item.symbol === pair);
     if (!ticker) return null;
-    return this.analyze(ticker, spot.find((item) => item.symbol === pair), pctMove(btcCandles, 1), true).catch(() => null);
+    const safe = await this.analyze(ticker, spot.find((item) => item.symbol === pair), pctMove(btcCandles, 1), true).catch(() => null);
+    return safe ?? this.analyzeScalp(ticker, spot.find((item) => item.symbol === pair), pctMove(btcCandles, 1), true).catch(() => null);
   }
 
   signalDedupeDecision(move: MomentumMove, cooldownMinutes = DEFAULT_HARD_COOLDOWN_MINUTES): SignalDedupeDecision {
@@ -188,6 +202,7 @@ export class MomentumScanner {
     return {
       symbol: ticker.symbol,
       direction,
+      mode: "SAFE",
       timeframe: trigger.config.timeframe,
       movePct: trigger.movePct,
       fromPrice: trigger.fromPrice,
@@ -209,9 +224,88 @@ export class MomentumScanner {
       score
     };
   }
+
+  private async scanScalp(filter: MomentumFilter = "scalp", limit = 8, auto = false): Promise<MomentumMove[]> {
+    const [linear, spot, btcCandles] = await Promise.all([
+      this.client.bybitTickers("linear"),
+      this.client.bybitTickers("spot").catch(() => [] as Ticker[]),
+      this.client.bybitKlines("BTCUSDT", "1", "linear", 8).catch(() => [] as Candle[])
+    ]);
+    this.rememberTickers([...linear, ...spot]);
+    const spotBySymbol = new Map(spot.map((item) => [item.symbol, item]));
+    const btcMove1m = pctMove(btcCandles, 1);
+    const candidates = linear
+      .filter((item) => item.symbol.endsWith("USDT") && item.lastPrice > 0 && item.turnover24h >= 150_000 && spread(item) <= 0.02)
+      .map((item) => ({ item, spot: spotBySymbol.get(item.symbol), rank: scalpCandidateRank(item, spotBySymbol.get(item.symbol), this.recentMovePct(item.symbol)) }))
+      .sort((a, b) => b.rank - a.rank)
+      .slice(0, auto ? 10 : 16);
+
+    const rows = (await Promise.all(candidates.map(({ item, spot }) => this.analyzeScalp(item, spot, btcMove1m).catch(() => null))))
+      .filter((row): row is MomentumMove => Boolean(row));
+    return rows
+      .filter((row) => filter !== "scalp_long" || row.direction === "LONG")
+      .filter((row) => filter !== "scalp_short" || row.direction === "SHORT")
+      .sort((a, b) => b.score - a.score || Math.abs(b.movePct) - Math.abs(a.movePct))
+      .slice(0, limit);
+  }
+
+  private async analyzeScalp(ticker: Ticker, spotTicker: Ticker | undefined, btcMove1m: number, force = false): Promise<MomentumMove | null> {
+    const spreadPct = spread(ticker);
+    if (!force && (ticker.turnover24h < 150_000 || spreadPct > 0.02)) return null;
+    const [candles1, candles3, candles5, spot1, oiChange, orderBook, accountRatio] = await Promise.all([
+      this.client.bybitKlines(ticker.symbol, "1", "linear", 40),
+      this.client.bybitKlines(ticker.symbol, "3", "linear", 30),
+      this.client.bybitKlines(ticker.symbol, "5", "linear", 24),
+      spotTicker ? this.client.bybitKlines(ticker.symbol, "1", "spot", 24).catch(() => [] as Candle[]) : Promise.resolve([] as Candle[]),
+      this.client.openInterestChange(ticker.symbol).catch(() => 0),
+      this.client.bybitOrderBookStats(ticker.symbol, "linear").catch(() => ({ spreadPct, depthUsdt: 0, imbalance: 0, spoofRisk: false })),
+      this.client.bybitAccountRatio(ticker.symbol).catch(() => 0)
+    ]);
+    const trigger = bestScalpTrigger([{ config: SCALP_THRESHOLDS[0], candles: candles1 }, { config: SCALP_THRESHOLDS[1], candles: candles3 }, { config: SCALP_THRESHOLDS[2], candles: candles5 }]);
+    if (!trigger) return null;
+    const direction: Direction = trigger.movePct > 0 ? "LONG" : "SHORT";
+    const volumeSpike = volumeSpikeRatio(trigger.candles);
+    const acceleration = priceAcceleration(trigger.candles, direction);
+    const spotConfirm = spot1.length ? Math.sign(pctMove(spot1, 1)) === Math.sign(trigger.movePct) : spotTicker ? Math.sign(spotTicker.price24hPcnt) === Math.sign(trigger.movePct) : true;
+    const whaleScore = whaleScoreFor(direction, oiChange, orderBook.imbalance, accountRatio, spotConfirm, volumeSpike);
+    const fake = fakeMoveRisk(direction, trigger.candles, volumeSpike, orderBook, spotConfirm, btcMove1m);
+    const liquidationPressure = liquidationCascadeScore(direction, oiChange, orderBook.imbalance, accountRatio, volumeSpike);
+    const score = scoreScalp(trigger.movePct, volumeSpike, acceleration, whaleScore, liquidationPressure, ticker.turnover24h, fake.reasons.length, spreadPct);
+    if (!force && (score < 56 || volumeSpike < 1.12 && Math.abs(trigger.movePct) < 0.8)) return null;
+    const range = lastRange(trigger.candles);
+    const retest = scalpEntryZone(direction, trigger.toPrice, range, score >= 72 && volumeSpike >= 1.8);
+    const marketEntry = score >= 74 && volumeSpike >= 1.7 && acceleration >= 0 && spreadPct <= 0.012;
+    const risk: MomentumMove["risk"] = fake.reasons.length >= 2 || ticker.turnover24h < 500_000 || spreadPct > 0.012 ? "High" : "Medium";
+    return {
+      symbol: ticker.symbol,
+      direction,
+      mode: "SCALP",
+      timeframe: trigger.config.timeframe,
+      movePct: trigger.movePct,
+      fromPrice: trigger.fromPrice,
+      toPrice: trigger.toPrice,
+      turnover24h: ticker.turnover24h,
+      volumeSpike,
+      oiLabel: oiRead(direction, oiChange),
+      oiChange,
+      whaleLabel: whaleScore >= 62 ? `Активність китів ${Math.round(whaleScore)}%` : whaleScore <= 38 ? `Контр-тиск китів ${Math.round(100 - whaleScore)}%` : `Кити нейтрально ${Math.round(whaleScore)}%`,
+      whaleScore,
+      setupType: "Quick scalp",
+      momentum: score >= 82 ? "Extreme" : score >= 70 ? "Very Strong" : "Strong",
+      entryType: marketEntry ? "MARKET ENTRY" : "LIMIT ENTRY",
+      entryReason: marketEntry ? "1–5m імпульс активний" : `Лімітний відкат: ${fmt(retest[0])} - ${fmt(retest[1])}`,
+      retest,
+      potential: score >= 82 ? "VERY HIGH" : score >= 68 ? "HIGH" : "MEDIUM",
+      risk,
+      expectedHoldMinutes: "2–10 хв",
+      reasons: scalpReasons(volumeSpike, acceleration, whaleScore, liquidationPressure, orderBook.imbalance, fake.reasons),
+      score
+    };
+  }
 }
 
 export function formatAutoEntrySignal(move: MomentumMove) {
+  if (move.mode === "SCALP") return formatQuickScalpSignal(move);
   const icon = move.direction === "LONG" ? "🟢" : "🔴";
   const plan = smallBalancePlan(move);
   return [
@@ -259,7 +353,43 @@ export function formatAutoEntrySignal(move: MomentumMove) {
   ].join("\n");
 }
 
+export function formatQuickScalpSignal(move: MomentumMove) {
+  const icon = move.direction === "LONG" ? "🟢" : "🔴";
+  const plan = smallBalancePlan(move);
+  return [
+    "⚡ QUICK SCALP SIGNAL",
+    "",
+    `🪙 Монета: ${move.symbol}`,
+    `📍 Напрямок: ${move.direction} ${icon}`,
+    `⚡ Тип: 1–5m momentum scalp (${timeframeUa(move.timeframe)})`,
+    "",
+    move.score >= 68 ? "✅ МОЖНА ВХОДИТИ" : "🟡 SHORT-TERM SCALP / ризиковий вхід",
+    "",
+    "Тип входу:",
+    move.entryType === "MARKET ENTRY" ? "Вхід по ринку" : "Лімітний вхід",
+    "",
+    "📍 Entry:",
+    `${fmt(plan.entryLow)}–${fmt(plan.entryHigh)}`,
+    "",
+    "🛑 SL:",
+    fmt(plan.stopLoss),
+    "",
+    `🎯 TP1: ${fmt(plan.tp[0])} (+${formatAmount(plan.profits[0])} USDT)`,
+    `🎯 TP2: ${fmt(plan.tp[1])} (+${formatAmount(plan.profits[1])} USDT)`,
+    "",
+    `⏱ Очікуваний час: ${move.expectedHoldMinutes ?? "2–10 хв"}`,
+    "",
+    `⚠️ Ризик: ${move.risk === "High" ? "Високий" : "Підвищений"}`,
+    `Confidence: ${move.score}/100`,
+    `Позиція: ${formatAmount(plan.positionSize)} USDT (${plan.leverage}x), ризик ~${formatAmount(plan.maxLoss)} USDT`,
+    "",
+    "Причина:",
+    ...move.reasons.slice(0, 7).map((reason) => `• ${reasonUa(reason)}`)
+  ].join("\n");
+}
+
 export function formatMomentumAlert(move: MomentumMove) {
+  if (move.mode === "SCALP") return formatQuickScalpSignal(move);
   const icon = move.direction === "LONG" ? "🟢" : "🔴";
   return [
     `🚨 ВЕЛИКИЙ РУХ — ${move.symbol}`,
@@ -300,7 +430,8 @@ export function formatMomentumAlert(move: MomentumMove) {
 }
 
 export function formatMomentumList(rows: MomentumMove[], title = "🚨 Сканер сильних рухів") {
-  if (!rows.length) return [title, "", "Сильних чистих імпульсних рухів зараз немає.", "Фільтр відсікає низьку ліквідність, fake pump, слабкий OI та конфлікт із BTC."].join("\n");
+  if (!rows.length && title.includes("SCALP")) return [title, "", "Швидких scalp-імпульсів зараз немає.", "SCALP MODE не блокує weak OI/BTC/fake risk повністю, але потребує реального 1–5m momentum + volume acceleration."].join("\n");
+  if (!rows.length) return [title, "", "Сильних чистих імпульсних рухів зараз немає.", "Фільтр відсікає низьку ліквідність, fake pump, слабкий OI та конфлікт із BTC.", "Для агресивних коротких входів натисни ⚡ SCALP MODE."].join("\n");
   return [title, "", ...rows.map(formatMomentumAlert)].join("\n\n");
 }
 
@@ -308,7 +439,9 @@ export function momentumActionsKeyboard() {
   return {
     inline_keyboard: [
       [{ text: "🔄 Оновити", callback_data: "ui:momentum" }],
+      [{ text: "🛡 SAFE MODE", callback_data: "ui:momentum" }, { text: "⚡ SCALP MODE", callback_data: "ui:momentum_scalp" }],
       [{ text: "📈 Лідери LONG", callback_data: "ui:momentum_long" }, { text: "📉 Лідери SHORT", callback_data: "ui:momentum_short" }],
+      [{ text: "⚡ Scalp LONG", callback_data: "ui:momentum_scalp_long" }, { text: "⚡ Scalp SHORT", callback_data: "ui:momentum_scalp_short" }],
       [{ text: "🔥 Найсильніші рухи", callback_data: "ui:momentum_strongest" }, { text: "🔍 Перевірити монету", callback_data: "ui:momentum_check" }],
       [{ text: "🔙 Назад", callback_data: "ui:back" }]
     ]
@@ -333,6 +466,15 @@ function autoCandidateRank(item: Ticker, spot: Ticker | undefined, recentMovePct
   return recentMove * 20 + dayMove * 4 + liquidity * 8 + newCoinBoost + spotConfirm - spread(item) * 900;
 }
 
+function scalpCandidateRank(item: Ticker, spot: Ticker | undefined, recentMovePct: number) {
+  const liquidity = Math.log10(Math.max(item.turnover24h, 1));
+  const dayMove = Math.abs(item.price24hPcnt) * 100;
+  const recentMove = Math.abs(recentMovePct);
+  const microcapBoost = item.turnover24h >= 150_000 && item.turnover24h < 3_000_000 && dayMove >= 4 ? 12 : 0;
+  const spotPenalty = spot && Math.sign(spot.price24hPcnt) !== Math.sign(item.price24hPcnt || recentMovePct) ? -6 : 0;
+  return recentMove * 28 + dayMove * 3 + liquidity * 7 + microcapBoost + spotPenalty - spread(item) * 550;
+}
+
 function setupTypeFor(direction: Direction, score: number, whaleScore: number, oiChange: number, volumeSpike: number, marketEntry: boolean, movePct: number): SetupType {
   const whaleDirectional = direction === "LONG" ? whaleScore >= 72 : whaleScore <= 35;
   if (marketEntry && Math.abs(movePct) >= 2.5 && volumeSpike >= 2.2) return "Momentum breakout";
@@ -352,8 +494,8 @@ function smallBalancePlan(move: MomentumMove) {
   const entryLow = market ? move.toPrice * 0.999 : Math.min(move.retest[0], move.retest[1]);
   const entryHigh = market ? move.toPrice * 1.001 : Math.max(move.retest[0], move.retest[1]);
   const entry = (entryLow + entryHigh) / 2;
-  const riskPct = move.direction === "LONG" ? 0.018 : 0.018;
-  const rewardPct = Math.max(0.022, Math.min(0.09, Math.abs(move.movePct) / 100 * 1.15));
+  const riskPct = move.mode === "SCALP" ? 0.009 : 0.018;
+  const rewardPct = move.mode === "SCALP" ? Math.max(0.009, Math.min(0.026, Math.abs(move.movePct) / 100 * 1.05)) : Math.max(0.022, Math.min(0.09, Math.abs(move.movePct) / 100 * 1.15));
   const stopLoss = move.direction === "LONG" ? entry * (1 - riskPct) : entry * (1 + riskPct);
   const tp: [number, number, number] = move.direction === "LONG"
     ? [entry * (1 + rewardPct * 0.7), entry * (1 + rewardPct), entry * (1 + rewardPct * 1.6)]
@@ -378,6 +520,18 @@ function bestTrigger(items: Array<{ config: typeof MOVE_THRESHOLDS[number]; cand
   }).sort((a, b) => b.level - a.level || Math.abs(b.movePct) - Math.abs(a.movePct))[0];
 }
 
+function bestScalpTrigger(items: Array<{ config: typeof SCALP_THRESHOLDS[number]; candles: Candle[] }>) {
+  return items.flatMap(({ config, candles }) => {
+    const movePct = pctMove(candles, config.bars);
+    const abs = Math.abs(movePct);
+    const level = config.levels.filter((value) => abs >= value).at(-1);
+    if (!level || candles.length <= config.bars) return [];
+    const from = candles.at(-(config.bars + 1))!.close;
+    const to = candles.at(-1)!.close;
+    return [{ config, candles, movePct, fromPrice: from, toPrice: to, level }];
+  }).sort((a, b) => b.level - a.level || Math.abs(b.movePct) - Math.abs(a.movePct))[0];
+}
+
 function pctMove(candles: Candle[], bars: number) {
   if (candles.length <= bars) return 0;
   const from = candles.at(-(bars + 1))?.close ?? 0;
@@ -390,6 +544,48 @@ function volumeSpikeRatio(candles: Candle[]) {
   const current = quoteVolume(candles.at(-1)!);
   const avg = candles.slice(-13, -1).reduce((sum, candle) => sum + quoteVolume(candle), 0) / Math.min(12, candles.length - 1);
   return avg > 0 ? current / avg : 1;
+}
+
+function priceAcceleration(candles: Candle[], direction: Direction) {
+  if (candles.length < 4) return 0;
+  const latest = Math.abs(pctMove(candles, 1));
+  const previous = Math.abs((candles.at(-2)!.close - candles.at(-4)!.close) / candles.at(-4)!.close * 100 / 2);
+  const signedAcceleration = latest - previous;
+  const aligned = Math.sign(pctMove(candles, 1)) === (direction === "LONG" ? 1 : -1);
+  return aligned ? signedAcceleration : -Math.abs(signedAcceleration);
+}
+
+function liquidationCascadeScore(direction: Direction, oiChange: number, imbalance: number, accountRatio: number, volumeSpike: number) {
+  const squeezeOi = direction === "LONG" ? oiChange > 0.002 || oiChange < -0.005 : oiChange > 0.002 || oiChange < -0.005;
+  const bookPressure = direction === "LONG" ? imbalance > 0.12 : imbalance < -0.12;
+  const crowdPressure = direction === "LONG" ? accountRatio < -0.08 : accountRatio > 0.08;
+  return [squeezeOi, bookPressure, crowdPressure, volumeSpike >= 1.8].filter(Boolean).length * 25;
+}
+
+function scoreScalp(movePct: number, volumeSpike: number, acceleration: number, whaleScore: number, liquidationPressure: number, turnover24h: number, riskCount: number, spreadPct: number) {
+  const moveScore = Math.min(28, Math.abs(movePct) * 16);
+  const volumeScore = Math.min(24, volumeSpike * 10);
+  const accelerationScore = Math.min(16, Math.max(0, acceleration) * 16);
+  const whale = whaleScore * 0.18;
+  const liq = liquidationPressure * 0.16;
+  const liquidity = Math.min(8, Math.log10(Math.max(turnover24h, 1)));
+  const penalty = riskCount * 5 + Math.max(0, spreadPct - 0.008) * 450;
+  return Math.round(clamp(moveScore + volumeScore + accelerationScore + whale + liq + liquidity - penalty, 0, 100));
+}
+
+function scalpEntryZone(direction: Direction, price: number, range: number, market: boolean): [number, number] {
+  if (market) return direction === "LONG" ? [price * 0.999, price * 1.001] : [price * 0.999, price * 1.001];
+  if (direction === "LONG") return [price - range * 0.32, price - range * 0.12];
+  return [price + range * 0.12, price + range * 0.32];
+}
+
+function scalpReasons(volumeSpike: number, acceleration: number, whaleScore: number, liquidationPressure: number, imbalance: number, fakeReasons: string[]) {
+  const reasons = [`volume spike ${volumeSpike.toFixed(1)}x`, "momentum acceleration"];
+  if (whaleScore >= 60 || whaleScore <= 40) reasons.push("whale activity");
+  if (Math.abs(imbalance) >= 0.12) reasons.push("orderbook imbalance");
+  if (liquidationPressure >= 50) reasons.push("short squeeze probability / liquidation cascade");
+  if (acceleration < 0) reasons.push("acceleration fading, use limit only");
+  return [...reasons, ...fakeReasons.map((reason) => `risk penalty: ${reason}`)];
 }
 
 function quoteVolume(candle: Candle) {
@@ -510,6 +706,7 @@ function baseAsset(symbol: string) {
 }
 
 function setupTypeUa(value: SetupType) {
+  if (value === "Quick scalp") return "Швидкий scalp";
   if (value === "Momentum breakout") return "Імпульсний пробій";
   if (value === "Whale accumulation") return "Накопичення китів";
   if (value === "Whale distribution") return "Розподіл китів";
@@ -542,6 +739,8 @@ function liquidationSafetyUa(value: string) {
 }
 
 function timeframeUa(value: MomentumMove["timeframe"]) {
+  if (value === "1m") return "1 хв";
+  if (value === "3m") return "3 хв";
   if (value === "5m") return "5 хв";
   if (value === "15m") return "15 хв";
   return "1 год";
@@ -550,6 +749,12 @@ function timeframeUa(value: MomentumMove["timeframe"]) {
 function reasonUa(reason: string) {
   return reason
     .replace(/volume spike/gi, "Аномальний обсяг")
+    .replace(/momentum acceleration/gi, "прискорення імпульсу")
+    .replace(/whale activity/gi, "активність китів")
+    .replace(/orderbook imbalance/gi, "дисбаланс стакана")
+    .replace(/short squeeze probability \/ liquidation cascade/gi, "ймовірність squeeze / каскад ліквідацій")
+    .replace(/acceleration fading, use limit only/gi, "імпульс слабшає, тільки лімітний вхід")
+    .replace(/risk penalty:/gi, "ризик враховано:")
     .replace(/volume anomaly too weak/gi, "аномальний обсяг слабкий")
     .replace(/OI confirmation/gi, "OI підтверджує")
     .replace(/OI neutral/gi, "OI нейтральний")
