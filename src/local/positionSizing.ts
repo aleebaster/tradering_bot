@@ -3,7 +3,8 @@ import { conservativeModeActive } from "./lossProtection";
 import { loadTelegramSettings, maxLeverageNumber, riskMultiplier } from "./telegramSettings";
 import type { MarketRegime, PositionSizing, Side } from "./types";
 
-const ALLOWED_LEVERAGE = [2, 3, 5] as const;
+const ALLOWED_LEVERAGE = [2, 3] as const;
+const BYBIT_ROUND_TRIP_TAKER_FEE_PERCENT = 0.11;
 
 export interface PositionSizingInput {
   symbol: string;
@@ -16,6 +17,11 @@ export interface PositionSizingInput {
   marketRegime?: MarketRegime;
   volatilityPct?: number;
   momentumScore?: number;
+  volumeScore?: number;
+  btcStable?: boolean;
+  orderFlowScore?: number;
+  sniperConfidence?: number;
+  marginMode?: "ISOLATED" | "CROSS";
 }
 
 export function calculatePositionSizing(input: PositionSizingInput): PositionSizing | undefined {
@@ -30,13 +36,16 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
   if (!Number.isFinite(priceRiskPercent) || priceRiskPercent <= 0) return undefined;
 
   const balanceUsdt = loadTelegramSettings().balanceUsdt;
+  const marginMode = detectedMarginMode(input.marginMode);
   const maxRiskPercent = maxRiskPercentFor(input.score);
-  const leverage = chooseLeverage(input, priceRiskPercent, maxRiskPercent);
+  const leverage = chooseLeverage(input, priceRiskPercent, maxRiskPercent, marginMode);
   const maxLossUsdt = balanceUsdt * maxRiskPercent / 100;
-  const fullNotional = balanceUsdt * leverage;
+  const marginRiskFactor = marginMode === "CROSS" ? 0.6 : 1;
+  const fullNotional = balanceUsdt * leverage * marginRiskFactor;
   const maxSafeNotional = maxLossUsdt / (priceRiskPercent / 100);
-  const starterEntry = balanceUsdt <= 5.5 && input.score >= 88;
-  const positionSizeUsdt = roundMoney(Math.max(0, Math.min(fullNotional, maxSafeNotional)) * (starterEntry ? 0.5 : 1));
+  const starterEntry = balanceUsdt <= 15 && input.score >= 88;
+  const starterFactor = starterEntry ? balanceUsdt <= 5.5 ? 0.5 : 0.75 : 1;
+  const positionSizeUsdt = roundMoney(Math.max(0, Math.min(fullNotional, maxSafeNotional)) * starterFactor);
   if (!isFinitePositive(positionSizeUsdt)) return undefined;
 
   const marginUsdt = roundMoney(positionSizeUsdt / leverage);
@@ -45,6 +54,7 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
   const potentialProfitUsdt = input.takeProfit.map((tp) => roundMoney(quantity * Math.abs(tp - averageEntry))) as [number, number, number];
   const accountRiskPercent = roundPercent(balanceUsdt > 0 ? potentialLossUsdt / balanceUsdt * 100 : 0);
   const liquidationSafetyPercent = roundPercent(Math.max(0, 100 / leverage - priceRiskPercent));
+  const breakeven = breakevenPlus(input, averageEntry, leverage);
 
   return {
     balanceUsdt,
@@ -64,17 +74,28 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
     potentialProfitUsdt,
     liquidationSafety: liquidationSafetyText(liquidationSafetyPercent, leverage),
     liquidationSafetyPercent,
+    marginMode,
+    riskMode: input.score >= 95 && marginMode === "ISOLATED" && (input.btcStable ?? true) ? "aggressive" : "safe",
+    breakevenPlusPrice: breakeven.price,
+    breakevenPlusOffsetPercent: breakeven.offsetPercent,
+    breakevenPlusNetBufferPercent: breakeven.netBufferPercent,
+    breakevenPlusFeePercent: BYBIT_ROUND_TRIP_TAKER_FEE_PERCENT,
+    breakevenTrigger: "TP1",
+    breakevenAction: breakeven.action,
+    protectiveStopRequired: true,
+    marginProtection: marginProtectionText(marginMode),
     entryPlan: starterEntry ? "50% starter entry, add only after confirmation" : "single confirmed entry",
     starterEntryPercent: starterEntry ? 50 : 100,
     addOnRule: starterEntry ? "Add remaining 50% only after volume/retest/sniper confirmation holds." : undefined
   };
 }
 
-function chooseLeverage(input: PositionSizingInput, priceRiskPercent: number, maxRiskPercent: number) {
-  const smallAccount = loadTelegramSettings().balanceUsdt <= 5.5;
-  let leverage: typeof ALLOWED_LEVERAGE[number] = smallAccount ? input.score >= 95 ? 3 : 2 : input.score >= 92 ? 5 : input.score >= 87 ? 3 : 2;
-  leverage = Math.min(leverage, maxLeverageNumber()) as typeof ALLOWED_LEVERAGE[number];
-  if (smallAccount) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];
+function chooseLeverage(input: PositionSizingInput, priceRiskPercent: number, maxRiskPercent: number, marginMode: "ISOLATED" | "CROSS") {
+  const smallAccount = loadTelegramSettings().balanceUsdt <= 15;
+  let leverage: typeof ALLOWED_LEVERAGE[number] = smallAccount ? input.score >= 95 ? 3 : 2 : input.score >= 92 ? 3 : 2;
+  leverage = Math.min(leverage, Math.min(maxLeverageNumber(), 3)) as typeof ALLOWED_LEVERAGE[number];
+  if (smallAccount && input.score < 95) leverage = 2;
+  if (marginMode === "CROSS") leverage = Math.min(leverage, 2) as typeof ALLOWED_LEVERAGE[number];
   if (config.smallBalanceGrowthMode && input.score < 92) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];
   if (conservativeModeActive()) leverage = Math.min(leverage, 2) as typeof ALLOWED_LEVERAGE[number];
   if (input.score >= 85 && input.score < 90) leverage = Math.min(leverage, 3) as typeof ALLOWED_LEVERAGE[number];
@@ -85,6 +106,31 @@ function chooseLeverage(input: PositionSizingInput, priceRiskPercent: number, ma
     if (candidate * priceRiskPercent <= maxRiskPercent) return candidate;
   }
   return 2;
+}
+
+export function breakevenPlus(input: Pick<PositionSizingInput, "side" | "volatilityPct" | "momentumScore" | "volumeScore" | "btcStable" | "orderFlowScore" | "sniperConfidence">, averageEntry: number, leverage: number) {
+  const volatilityPct = Math.max(0, input.volatilityPct ?? 0);
+  const weakMomentum = (input.momentumScore ?? 100) < 70 || (input.volumeScore ?? 100) < 65 || input.btcStable === false || (input.orderFlowScore ?? 100) < 60 || (input.sniperConfidence ?? 100) < 70;
+  const strongMomentum = !weakMomentum && (input.momentumScore ?? 0) >= 82 && (input.volumeScore ?? 0) >= 78 && (input.orderFlowScore ?? 0) >= 70 && (input.sniperConfidence ?? 0) >= 82;
+  const leverageBuffer = leverage >= 3 ? 0.05 : 0;
+  const volatilityBuffer = volatilityPct >= 0.018 ? 0.1 : volatilityPct >= 0.012 ? 0.06 : 0;
+  const weaknessBuffer = weakMomentum ? 0.04 : 0;
+  const netBufferPercent = roundPercent(Math.min(0.35, Math.max(0.15, 0.15 + leverageBuffer + volatilityBuffer + weaknessBuffer)));
+  const offsetPercent = roundPercent(BYBIT_ROUND_TRIP_TAKER_FEE_PERCENT + netBufferPercent);
+  const side = input.side === "SHORT" ? "SHORT" : "LONG";
+  const price = side === "SHORT" ? averageEntry * (1 - offsetPercent / 100) : averageEntry * (1 + offsetPercent / 100);
+  const pace = strongMomentum ? "strong momentum: keep room toward TP2 after TP1" : weakMomentum ? "weak momentum: tighten faster immediately after TP1" : "normal momentum: activate BE+ after TP1";
+  return { price: roundPrice(price), offsetPercent, netBufferPercent, action: `TP1 hit -> move SL to BE+ ${roundPrice(price)} (${pace}; fees protected)` };
+}
+
+function detectedMarginMode(input?: "ISOLATED" | "CROSS") {
+  const raw = input ?? process.env.BYBIT_MARGIN_MODE;
+  return String(raw ?? "ISOLATED").toUpperCase() === "CROSS" ? "CROSS" : "ISOLATED";
+}
+
+function marginProtectionText(marginMode: "ISOLATED" | "CROSS") {
+  if (marginMode === "CROSS") return "CROSS margin: strict protection enabled; position-specific SL required immediately; never rely on account liquidation.";
+  return "ISOLATED margin: preferred mode; position-specific SL remains required.";
 }
 
 function maxRiskPercentFor(score: number) {
@@ -119,6 +165,12 @@ function roundMoney(value: number) {
 
 function roundPercent(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function roundPrice(value: number) {
+  if (value >= 100) return Math.round(value * 100) / 100;
+  if (value >= 1) return Math.round(value * 100000) / 100000;
+  return Math.round(value * 100000000) / 100000000;
 }
 
 function roundQuantity(value: number) {

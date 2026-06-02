@@ -5,8 +5,11 @@ const signal = mockSignal();
 forcePaperMemoryClose(signal, 103);
 const stats = paperMemoryStatsText();
 const adjustment = paperSetupConfidenceAdjustment("liquidity_sweep_btc_stable");
-const ok = stats.includes("Paper Trade Memory") && stats.includes("Virtual winrate") && stats.includes("Last 20 paper trades") && Number.isFinite(adjustment);
-console.log(JSON.stringify({ ok, adjustment, checks: { stats: stats.includes("Paper Trade Memory"), winrate: stats.includes("Virtual winrate"), recent: stats.includes("Last 20 paper trades") } }, null, 2));
+const hasStatsTitle = stats.includes("Paper Trade Memory") || stats.includes("Памʼять paper-угод");
+const hasWinrate = stats.includes("Virtual winrate") || stats.includes("Віртуальний winrate");
+const hasRecent = stats.includes("Last 20 paper trades") || stats.includes("Останні 20 paper-угод");
+const ok = hasStatsTitle && hasWinrate && hasRecent && Number.isFinite(adjustment);
+console.log(JSON.stringify({ ok, adjustment, checks: { stats: hasStatsTitle, winrate: hasWinrate, recent: hasRecent } }, null, 2));
 if (!ok) process.exit(1);
 
 function mockSignal(): Signal {

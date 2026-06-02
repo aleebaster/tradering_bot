@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { logger } from "./logger";
+import { breakevenPlus } from "./positionSizing";
 import { loadTelegramSettings, maxLeverageNumber } from "./telegramSettings";
 import type { Signal } from "./types";
 
@@ -124,7 +125,9 @@ function potentialSignalText(signal: Signal, direction: ReturnType<typeof setupD
     "",
     ...smallBalanceLines(plan),
     "",
-    `⚙️ Маржа: ізольована ${plan.leverage}x`,
+    `⚙️ Margin: ${plan.marginMode} ${plan.leverage}x`,
+    `🛡 Breakeven: BE+ active at ${fmt(plan.breakevenPlusPrice)} (+fees protected)`,
+    `Risk mode: ${plan.riskMode}`,
     `📦 Розмір позиції: ${formatAmount(plan.positionSizeUsdt)} USDT`,
     `🪙 Кількість: ~${formatQty(plan.qty)} ${baseAsset(signal.symbol)}`,
     "",
@@ -169,7 +172,10 @@ function confirmedSignalText(signal: Signal, direction: ReturnType<typeof setupD
     `${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
     "",
     `Кількість: ~${formatQty(plan.qty)} ${baseAsset(signal.symbol)} (від банку ${formatAmount(balance)} USDT)`,
-    `⚙️ Маржа: ізольована ${plan.leverage}x`,
+    `⚙️ Margin: ${plan.marginMode} ${plan.leverage}x`,
+    `🛡 Breakeven: Move to ${fmt(plan.breakevenPlusPrice)} (+fees protected)`,
+    `Risk mode: ${plan.riskMode}`,
+    ...(plan.marginMode === "CROSS" ? ["⚠ Margin: CROSS -> strict protection enabled"] : []),
     `📦 Розмір позиції: ${formatAmount(plan.positionSizeUsdt)} USDT`,
     "",
     `🛑 SL: ${fmt(signal.stopLoss)}`,
@@ -195,6 +201,7 @@ export function isRealEntrySignal(signal: Signal) {
   const inEntryZone = signal.currentPrice >= entryLow && signal.currentPrice <= entryHigh;
   const breakdown = signal.scoreBreakdown ?? {};
   const threshold = breakdown.adaptiveConfirmationRequired ?? 92;
+  const scoreThreshold = Math.max(92, threshold);
   const enoughConfirmations = [
     (breakdown.entrySniper ?? 0) >= 70,
     (breakdown.volumeConfirmation ?? 0) >= 65,
@@ -206,7 +213,7 @@ export function isRealEntrySignal(signal: Signal) {
   ].filter(Boolean).length >= 6;
   return sideOk
     && signal.entryStatus === "ENTER_NOW"
-    && signal.score >= threshold
+    && signal.score >= scoreThreshold
     && signal.confidence >= 60
     && inEntryZone
     && (signal.btcStable || signal.symbol === "BTCUSDT")
@@ -295,10 +302,14 @@ function positionPlan(signal: Signal, balance: number) {
       split: tpSplit(signal),
       marginUsdt: existing.marginUsdt,
       tpProfits: existing.potentialProfitUsdt,
-      roiByTp: existing.potentialProfitUsdt.map((profit) => roi(profit, existing.marginUsdt))
+      roiByTp: existing.potentialProfitUsdt.map((profit) => roi(profit, existing.marginUsdt)),
+      marginMode: existing.marginMode ?? "ISOLATED",
+      riskMode: existing.riskMode ?? "safe",
+      breakevenPlusPrice: existing.breakevenPlusPrice ?? breakevenPlus(signal, existing.averageEntry, leverage).price,
+      breakevenAction: existing.breakevenAction ?? breakevenPlus(signal, existing.averageEntry, leverage).action
     };
   }
-  const leverage = Math.min(maxLeverageNumber(), balance <= 10 ? 2 : maxLeverageNumber());
+  const leverage = Math.min(3, maxLeverageNumber(), balance <= 15 ? 2 : maxLeverageNumber());
   const avgEntry = (signal.entry[0] + signal.entry[1]) / 2;
   const positionSizeUsdt = balance * leverage;
   const marginUsdt = leverage > 0 ? positionSizeUsdt / leverage : balance;
@@ -306,7 +317,8 @@ function positionPlan(signal: Signal, balance: number) {
   const maxLoss = maxLossUsdt(signal, qty);
   const split = tpSplit(signal);
   const tpProfits = signal.takeProfit.map((tp, index) => tpProfitUsdt(signal, qty, split[index] ?? 0, tp));
-  return { balance, leverage, positionSizeUsdt, qty, maxLossUsdt: maxLoss, maxLossRoi: roi(maxLoss, marginUsdt), split, marginUsdt, tpProfits, roiByTp: tpProfits.map((profit) => roi(profit, marginUsdt)) };
+  const be = breakevenPlus(signal, avgEntry, leverage);
+  return { balance, leverage, positionSizeUsdt, qty, maxLossUsdt: maxLoss, maxLossRoi: roi(maxLoss, marginUsdt), split, marginUsdt, tpProfits, roiByTp: tpProfits.map((profit) => roi(profit, marginUsdt)), marginMode: "ISOLATED" as const, riskMode: "safe" as const, breakevenPlusPrice: be.price, breakevenAction: be.action };
 }
 
 function tpPlanLines(signal: Signal, plan: ReturnType<typeof positionPlan>) {

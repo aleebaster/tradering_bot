@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { breakevenPlus } from "./positionSizing";
 import type { Signal } from "./types";
 
 type PaperTrade = {
@@ -193,8 +194,8 @@ function simulatePaperTrade(trade: PaperMemoryTrade, currentPrice: number): Part
   const hitTp3 = long ? currentPrice >= trade.takeProfit[2] : currentPrice <= trade.takeProfit[2];
   const durationMinutes = Math.max(0, Math.round((Date.now() - new Date(trade.openedAt).getTime()) / 60000));
   if (hitTp3) return closePaper(trade, currentPrice, "WIN", "TP3", 3, durationMinutes);
-  if (hitTp2 && trade.highestStage !== "TP2") return { highestStage: "TP2", activeStopLoss: trade.entry, durationMinutes };
-  if (hitTp1 && trade.highestStage === "NONE") return { highestStage: "TP1", activeStopLoss: trade.entry, durationMinutes };
+  if (hitTp2 && trade.highestStage !== "TP2") return { highestStage: "TP2", activeStopLoss: paperBreakevenPlus(trade), durationMinutes };
+  if (hitTp1 && trade.highestStage === "NONE") return { highestStage: "TP1", activeStopLoss: paperBreakevenPlus(trade), durationMinutes };
   if (hitSl && trade.highestStage !== "NONE") return closePaper(trade, currentPrice, "BREAKEVEN", trade.highestStage, 0, durationMinutes);
   if (hitSl) return closePaper(trade, currentPrice, "LOSS", "NONE", -1, durationMinutes);
   if (durationMinutes > 360) return closePaper(trade, currentPrice, "EXPIRED", trade.highestStage, trade.highestStage === "TP2" ? 2 : trade.highestStage === "TP1" ? 1 : 0, durationMinutes);
@@ -256,6 +257,10 @@ function setupType(signal: Signal) {
 function pnlPercent(trade: PaperMemoryTrade, currentPrice: number) {
   const pnl = trade.direction === "LONG" ? (currentPrice - trade.entry) / trade.entry * 100 : (trade.entry - currentPrice) / trade.entry * 100;
   return Math.round(pnl * 100) / 100;
+}
+
+function paperBreakevenPlus(trade: PaperMemoryTrade) {
+  return breakevenPlus({ side: trade.direction, volatilityPct: Math.abs(trade.takeProfit[0] - trade.entry) / trade.entry, momentumScore: trade.confidence, volumeScore: trade.score, btcStable: true, orderFlowScore: trade.score, sniperConfidence: trade.confidence }, trade.entry, 2).price;
 }
 
 function average(values: number[]) {

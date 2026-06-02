@@ -86,7 +86,7 @@ async function analyzeAndSend(sendWatchlist: boolean, priorityMode: boolean, can
   const qualified = selected.score >= 85 && confirmations.volume && confirmations.momentum && confirmations.smc && confirmations.orderbook && confirmations.btc && confirmations.breakout;
   const watchlist = !qualified && selected.score >= 80 && selected.score < 85;
   const invalidated = priorityMode && canInvalidate && selected.score < 80 && (!confirmations.momentum || !confirmations.volume || !confirmations.btc || !confirmations.breakout);
-  const positionSizing = calculatePositionSizing({ symbol, mode: "futures", side, score: selected.score, entry: levels.entry, stopLoss: levels.stopLoss, takeProfit: levels.takeProfit, marketRegime: regime, volatilityPct, momentumScore: selected.parts.momentum });
+  const positionSizing = calculatePositionSizing({ symbol, mode: "futures", side, score: selected.score, entry: levels.entry, stopLoss: levels.stopLoss, takeProfit: levels.takeProfit, marketRegime: regime, volatilityPct, momentumScore: selected.parts.momentum, volumeScore: selected.parts.volume, btcStable: btcOk, orderFlowScore: selected.parts.orderbook, sniperConfidence: selected.parts.smc });
   const leverage = positionSizing?.leverage ?? leverageFor(selected.score, volatilityPct);
   const activationMessage = qualified ? conciseTradeMessage(symbol, side, levels, leverage, positionSizing) : `INTERNAL ANALYSIS — ${symbol}`;
   const raw = [
@@ -155,7 +155,7 @@ async function monitorActivatedTrade(analysis: ActiveAnalysis) {
           : hitTp2
             ? `🟠 ${analysis.symbol}\n\nTP2 HIT\n✅ Trail by ATR`
             : hitTp1
-              ? `🟠 ${analysis.symbol}\n\nTP1 HIT\n✅ Move SL to breakeven`
+              ? [`🟠 ${analysis.symbol}`, "", "TP1 HIT", `✅ Move SL to BE+ ${fmt(analysis.positionSizing?.breakevenPlusPrice ?? (analysis.levels.entry[0] + analysis.levels.entry[1]) / 2)} (+fees protected)`, analysis.positionSizing?.breakevenAction ?? "Fee-aware breakeven protection active"].join("\n")
               : `🟢 ${analysis.symbol}\n\nENTRY OPENED`;
     if (sent.has(action)) continue;
     sent.add(action);
@@ -228,7 +228,7 @@ function confirmationFlags(selected: ReturnType<typeof scoreSide>, btcOk: boolea
 }
 
 function leverageFor(score: number, volatilityPct: number) {
-  let leverage = score >= 90 ? 5 : score >= 87 ? 3 : 2;
+  let leverage = score >= 95 ? 3 : 2;
   if (volatilityPct > 0.018) leverage = Math.min(leverage, 2);
   else if (volatilityPct > 0.012) leverage = Math.min(leverage, 3);
   return `x${leverage}`;
@@ -259,6 +259,9 @@ function conciseTradeMessage(symbol: string, side: "LONG" | "SHORT", levels: Ret
     "⚡ Плече:",
     sizing?.leverage ?? leverage,
     "",
+    "⚙️ Margin:",
+    sizing?.marginMode ?? "ISOLATED",
+    "",
     "💰 Баланс:",
     `${sizing?.balanceUsdt ?? config.USER_BALANCE_USDT} USDT`,
     "",
@@ -266,7 +269,7 @@ function conciseTradeMessage(symbol: string, side: "LONG" | "SHORT", levels: Ret
     sizing ? `${sizing.positionSizeUsdt} USDT` : "після підтвердження входу",
     "",
     "🟠 Беззбиток:",
-    "Після TP1"
+    sizing ? `TP1 -> BE+ ${fmt(sizing.breakevenPlusPrice ?? 0)} (+fees protected)` : "TP1 -> BE+ (+fees protected)"
   ].join("\n");
 }
 

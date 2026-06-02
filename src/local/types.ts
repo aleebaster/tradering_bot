@@ -181,6 +181,16 @@ export interface PositionSizing {
   potentialProfitUsdt: [number, number, number];
   liquidationSafety: string;
   liquidationSafetyPercent: number;
+  marginMode?: "ISOLATED" | "CROSS";
+  riskMode?: "safe" | "aggressive";
+  breakevenPlusPrice?: number;
+  breakevenPlusOffsetPercent?: number;
+  breakevenPlusNetBufferPercent?: number;
+  breakevenPlusFeePercent?: number;
+  breakevenTrigger?: "TP1";
+  breakevenAction?: string;
+  protectiveStopRequired?: boolean;
+  marginProtection?: string;
   entryPlan?: string;
   starterEntryPercent?: number;
   addOnRule?: string;

@@ -152,7 +152,11 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
     takeProfit,
     marketRegime: snapshot.regime,
     volatilityPct: a / last.close,
-    momentumScore: momentum
+    momentumScore: momentum,
+    volumeScore: volume,
+    btcStable: snapshot.btcStable,
+    orderFlowScore: orderFlow.score,
+    sniperConfidence: sniper.score
   });
   const management = managementText(qualifiedSide, entryStatus);
   const signal: Signal = {

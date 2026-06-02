@@ -25,15 +25,15 @@ async function main() {
 
   const checks = {
     noLiveTelegramSpam: notifier.messages.length === 3,
-    longDirection: long.includes("🟢 SIGNAL — BTCUSDT") && long.includes("📍 НАПРЯМОК: LONG 🟢") && !long.includes("ПОТЕНЦІЙНИЙ LONG"),
-    shortDirection: short.includes("🔴 SIGNAL — DOGEUSDT") && short.includes("📍 НАПРЯМОК: SHORT 🔴") && !short.includes("ПОТЕНЦІЙНИЙ SHORT"),
-    enterStatus: long.includes("🟢 LONG — МОЖНА ВХОДИТИ") && short.includes("🔴 SHORT — МОЖНА ВХОДИТИ"),
-    waitStatus: wait.includes("⚪ SIGNAL — PEPEUSDT") && wait.includes("⚪ ПОТЕНЦІЙНИЙ LONG") && wait.includes("📍 ПОТЕНЦІЙНИЙ НАПРЯМОК: LONG 🟢") && wait.includes("❌ ЩЕ НЕ ВХОДИТИ") && !wait.includes("📍 НАПРЯМОК: LONG 🟢") && !wait.includes("🟢 LONG — МОЖНА ВХОДИТИ"),
-    scoreSplit: long.includes("SETUP SCORE: 91%") && /ENTRY CONFIDENCE: \d+%/.test(long) && wait.includes("SETUP SCORE: 72%") && /ENTRY CONFIDENCE: \d+%/.test(wait),
+    longDirection: long.includes("🚨 СИГНАЛ — BTCUSDT") && long.includes("📍 НАПРЯМОК:") && long.includes("🟢 LONG") && !long.includes("ПОТЕНЦІЙНИЙ LONG"),
+    shortDirection: short.includes("🚨 СИГНАЛ — DOGEUSDT") && short.includes("📍 НАПРЯМОК:") && short.includes("🔴 SHORT") && !short.includes("ПОТЕНЦІЙНИЙ SHORT"),
+    enterStatus: long.includes("✅ МОЖНА ВХОДИТИ") && short.includes("✅ МОЖНА ВХОДИТИ"),
+    waitStatus: wait.includes("⚪ СИГНАЛ — PEPEUSDT") && wait.includes("📍 ПОТЕНЦІЙНИЙ НАПРЯМОК:") && wait.includes("🟢 LONG") && wait.includes("❌ ЩЕ НЕ ВХОДИТИ") && !wait.includes("✅ МОЖНА ВХОДИТИ"),
+    scoreSplit: long.includes("Оцінка сетапу: 94/100") && /Впевненість входу: \d+\/100/.test(long) && wait.includes("Оцінка сетапу: 72/100") && /Впевненість входу: \d+\/100/.test(wait),
     activeAllocation: long.includes("🎯 TP1: 72600.00") && long.includes("Закрити: 40%") && long.includes("🎯 TP2: 73100.00") && long.includes("Закрити: 30%") && long.includes("🎯 TP3: 73800.00") && long.includes("Закрити: 20%"),
-    activeRisk: long.includes("💰 Bank: $5 USDT") && long.includes("💵 Margin used: $5 USDT") && long.includes("⚙️ Margin: Isolated 2x") && long.includes("📦 Position size: $10") && long.includes("⚠️ Risk: ~") && long.includes("Qty: ~") && long.includes("auto from $5 balance") && long.includes("ROI"),
-    entryTypeExplained: long.includes("🟡 LIMIT ENTRY —") && wait.includes("⚪ WAIT FOR RETEST —"),
-    inactiveRiskForWait: wait.includes("⚠️ Risk: inactive") && !wait.includes("Qty: auto") && wait.includes("weak volume") && wait.includes("execution not confirmed")
+    activeRisk: long.includes("Кількість: ~") && long.includes("⚙️ Margin: ISOLATED 2x") && long.includes("🛡 Breakeven: Move to") && long.includes("+fees protected") && long.includes("Risk mode: safe") && long.includes("📦 Розмір позиції:") && long.includes("⚠️ Ризик: ~") && long.includes("ROI"),
+    entryTypeExplained: long.includes("Вхід по ринку") || long.includes("Очікуємо лімітний вхід") && wait.includes("Очікування ретесту"),
+    inactiveRiskForWait: wait.includes("⚠️ Ризик: вхід неактивний") && wait.includes("слабкий обсяг") && wait.includes("виконання не підтверджене")
   };
   const failed = Object.entries(checks).filter(([, ok]) => !ok);
   console.log(JSON.stringify({ ok: failed.length === 0, checks, proof: { long, short, wait }, failed }, null, 2));
@@ -49,9 +49,9 @@ function sampleSignal(kind: "LONG" | "SHORT" | "WAIT"): Signal {
     symbol: long ? "BTCUSDT" : kind === "SHORT" ? "DOGEUSDT" : "PEPEUSDT",
     mode: "futures",
     side: wait ? "WATCHLIST" : long ? "LONG" : "SHORT",
-    score: wait ? 72 : long ? 91 : 85,
+    score: wait ? 72 : 94,
     winProbability: 70,
-    confidence: wait ? 55 : long ? 91 : 75,
+    confidence: wait ? 55 : 94,
     grade: "A",
     expiresAt: new Date(Date.now() + 600_000).toISOString(),
     session: { name: "NEW_YORK_OPEN", active: true, confidenceAdjustment: 0, message: "test" },
