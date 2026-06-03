@@ -48,6 +48,6 @@ export async function analyzeFutures(query: string): Promise<Signal> {
 
 export async function loadFuturesCandles(symbol: string) {
   const out: Record<string, Candle[]> = {};
-  for (const tf of ["1", "5", "15", "60", "240", "D"]) out[tf] = await client.bybitKlines(symbol, tf, "linear", tf === "D" ? 220 : 180);
+  for (const tf of ["1", "3", "5", "15", "60"]) out[tf] = await client.bybitKlines(symbol, tf, "linear", 180);
   return out;
 }

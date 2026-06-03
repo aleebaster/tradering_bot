@@ -50,7 +50,7 @@ export const config = {
   smallBalanceGrowthMode: env.SMALL_BALANCE_GROWTH_MODE !== "0",
   warning: partialMode ? "Парольна фраза OKX відсутня — режим часткового підтвердження." : null,
   symbols: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "AIGENSYNUSDT"],
-  futuresTimeframes: ["1", "5", "15", "60", "240", "D"],
+  futuresTimeframes: ["1", "3", "5", "15", "60"],
   spotTimeframes: ["60", "240", "D"],
   maxSignalsPerDay: env.SMALL_BALANCE_GROWTH_MODE === "0" ? 5 : 2,
   minSignalCooldownMinutes: env.SMALL_BALANCE_GROWTH_MODE === "0" ? 20 : 45

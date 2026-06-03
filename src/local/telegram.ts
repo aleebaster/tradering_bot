@@ -25,6 +25,11 @@ export class TelegramNotifier {
     await this.send(formatExecutionSignal(signal), signalQuickActions(signal.symbol));
   }
 
+  async instantEntry(signal: Signal) {
+    if (!isRealEntrySignal(signal)) return;
+    await this.send(formatInstantEntrySignal(signal), signalQuickActions(signal.symbol));
+  }
+
   async setupActivated(signal: Signal, reasons: string[]) {
     return this.signal(signal);
   }
@@ -94,6 +99,26 @@ function modeUa(mode: string) {
 
 export function formatExecutionSignal(signal: Signal) {
   return formatDecisionSignal(signal);
+}
+
+export function formatInstantEntrySignal(signal: Signal) {
+  const plan = signal.positionSizing;
+  return [
+    `🟢 ENTRY NOW — ${signal.symbol}`,
+    "",
+    `${setupDirection(signal).icon} ${setupDirection(signal).label}`,
+    `📍 Entry: ${fmt(signal.entry[0])} - ${fmt(signal.entry[1])}`,
+    `⚡ Leverage: ${signal.leverage ?? plan?.leverage ?? "x2"}`,
+    `🛑 SL: ${fmt(signal.stopLoss)}`,
+    `🎯 TP1: ${fmt(signal.takeProfit[0])}`,
+    `🎯 TP2: ${fmt(signal.takeProfit[1])}`,
+    `🎯 TP3: ${fmt(signal.takeProfit[2])}`,
+    `📊 Confidence: ${signal.confidence}%`,
+    `⚖️ RR: ${signal.riskReward}`,
+    `🛡 Risk: ${plan ? `${formatAmount(plan.potentialLossUsdt)} USDT / ${formatPercent(plan.accountRiskPercent)}% account` : "controlled"}`,
+    "",
+    "Detailed reasoning follows separately."
+  ].join("\n");
 }
 
 export function formatDecisionSignal(signal: Signal) {

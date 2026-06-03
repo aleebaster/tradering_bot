@@ -30,6 +30,7 @@ export class Scanner {
   private invalidatedWatchlist = new Set<string>();
   private fomoWatchlist = new Set<string>();
   private watchlistCheckedAt = new Map<string, number>();
+  private symbolScannedAt = new Map<string, number>();
   private binanceWs: WebSocket | null = null;
   private scanning = false;
   private watchlistMonitoring = false;
@@ -67,10 +68,10 @@ export class Scanner {
     this.connectBinanceTicker();
     this.connectKucoinTicker();
     this.connectKrakenTicker();
-    this.timer = setInterval(() => void this.scan(), config.SCAN_INTERVAL_SECONDS * 1000);
-    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 120_000);
+    this.timer = setInterval(() => void this.scan(), Math.min(config.SCAN_INTERVAL_SECONDS * 1000, 10_000));
+    this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 20_000);
     void this.scanMomentumMoves();
-    this.momentumTimer = setInterval(() => void this.scanMomentumMoves(), 7_000);
+    this.momentumTimer = setInterval(() => void this.scanMomentumMoves(), 15_000);
     void this.scan();
   }
 
@@ -141,31 +142,30 @@ export class Scanner {
       const btcCandles = await this.loadBtcCandles();
       const btcOk = btcStable(btcCandles);
       const candidates: Signal[] = [];
-      const attempts = Math.min(3, this.symbols.length);
-      for (let attempt = 0; attempt < attempts; attempt++) {
-        const symbol = this.symbols[this.cursor % this.symbols.length];
-        const requestedMode = Math.floor(this.cursor / this.symbols.length) % 2 === 0 ? "futures" : "spot";
+      const targets = this.nextScanTargets();
+      for (const target of targets) {
+        const symbolStartedAt = Date.now();
+        const { symbol } = target;
+        const requestedMode = target.mode;
         const mode = requestedMode === "spot" && !this.spotSymbols.has(symbol) ? "futures" : requestedMode;
-        this.cursor += 1;
+        this.symbolScannedAt.set(scanKey(symbol, mode), symbolStartedAt);
         try {
           const candles = symbol === "BTCUSDT" && mode === "futures" ? btcCandles : await this.loadCandles(symbol, mode);
+          const marketDataFetchedAt = Date.now();
           const snapshot = await this.snapshot(symbol, mode, candles, btcOk, btcCandles);
+          const snapshotReadyAt = Date.now();
           const signal = buildSignal(snapshot);
-          logger.info({ symbol, mode, side: signal.side, score: signal.score, winProbability: signal.winProbability, rejectionReason: signal.rejectionReason, scoreBreakdown: signal.scoreBreakdown }, "рішення сканера");
+          const signalConfirmedAt = Date.now();
+          logger.info({ symbol, mode, side: signal.side, score: signal.score, winProbability: signal.winProbability, entryStatus: signal.entryStatus, rejectionReason: signal.rejectionReason, scoreBreakdown: signal.scoreBreakdown, latencyMs: { marketDataFetch: marketDataFetchedAt - symbolStartedAt, snapshot: snapshotReadyAt - marketDataFetchedAt, confirmation: signalConfirmedAt - snapshotReadyAt, detectedToConfirmed: signalConfirmedAt - symbolStartedAt } }, "рішення сканера");
           recordSignal(signal);
           if (mode === "futures") updatePaperTradeMemory(signal.symbol, signal.currentPrice);
           candidates.push(signal);
           await this.trackWatchlist(signal);
           if (!["NO_TRADE", "WATCHLIST"].includes(signal.side) && this.canSendSignal(signal)) {
-            if (smallBalanceCooldownActive()) {
-              logger.info({ symbol, side: signal.side, cooldownMinutes: config.minSignalCooldownMinutes }, "small balance cooldown skipped signal send");
-              break;
-            }
             this.markSignalSent(signal);
-            if (notificationsEnabled()) await this.notifier.signal(signal).catch((err) => logger.warn({ err }, "Не вдалося надіслати сигнал Telegram"));
+            if (notificationsEnabled()) await this.sendRealEntryFast(signal, { symbolStartedAt, marketDataFetchedAt, snapshotReadyAt, signalConfirmedAt });
             recordPaperOpen(signal);
           }
-          break;
         } catch (symbolError) {
           logger.error({ err: symbolError, symbol, mode }, "Символ пропущено; сканер продовжує наступний символ");
           if (isRateLimit(symbolError)) {
@@ -206,6 +206,45 @@ export class Scanner {
 
   private markSignalSent(signal: Signal) {
     this.signalCooldown.set(signalCooldownKey(signal), { score: signal.score, sentAt: Date.now() });
+  }
+
+  private async sendRealEntryFast(signal: Signal, times: { symbolStartedAt: number; marketDataFetchedAt: number; snapshotReadyAt: number; signalConfirmedAt: number }) {
+    logger.info({ symbol: signal.symbol, side: signal.side, entryStatus: signal.entryStatus, marketDetectedAt: new Date(times.symbolStartedAt).toISOString(), signalConfirmedAt: new Date(times.signalConfirmedAt).toISOString(), latencyMs: { marketDataFetch: times.marketDataFetchedAt - times.symbolStartedAt, snapshot: times.snapshotReadyAt - times.marketDataFetchedAt, confirmation: times.signalConfirmedAt - times.snapshotReadyAt } }, "real entry latency: sending stage 1 now");
+    try {
+      await this.notifier.instantEntry(signal);
+      const telegramSentAt = Date.now();
+      logger.info({ symbol: signal.symbol, side: signal.side, marketDetectedAt: new Date(times.symbolStartedAt).toISOString(), signalConfirmedAt: new Date(times.signalConfirmedAt).toISOString(), telegramSentAt: new Date(telegramSentAt).toISOString(), latencyMs: { marketDataFetch: times.marketDataFetchedAt - times.symbolStartedAt, snapshot: times.snapshotReadyAt - times.marketDataFetchedAt, confirmation: times.signalConfirmedAt - times.snapshotReadyAt, telegramSend: telegramSentAt - times.signalConfirmedAt, totalDetectedToTelegram: telegramSentAt - times.symbolStartedAt } }, "real entry latency: stage 1 sent");
+      setTimeout(() => {
+        void this.notifier.signal(signal).catch((err) => logger.warn({ err, symbol: signal.symbol }, "Не вдалося надіслати stage 2 signal details"));
+      }, 2_500);
+    } catch (err) {
+      logger.warn({ err, symbol: signal.symbol }, "Не вдалося надіслати stage 1 instant entry Telegram");
+      await this.notifier.signal(signal).catch((error) => logger.warn({ err: error, symbol: signal.symbol }, "Не вдалося надіслати fallback detailed signal Telegram"));
+    }
+  }
+
+  private nextScanTargets() {
+    const now = Date.now();
+    const priority = new Set(loadPriorityWatchlist());
+    const watch = new Set(state.watchlist.map((signal) => signal.symbol));
+    const near = new Set(state.watchlist.filter(nearEntryTrigger).map((signal) => signal.symbol));
+    const symbols = [...new Set([...near, ...priority, ...watch, ...this.symbols])];
+    const due = symbols
+      .map((symbol) => {
+        const mode: "futures" | "spot" = this.linearSymbols.has(symbol) || priority.has(symbol) || watch.has(symbol) ? "futures" : "spot";
+        const interval = near.has(symbol) || priority.has(symbol) ? 15_000 : watch.has(symbol) ? 25_000 : 90_000;
+        const last = this.symbolScannedAt.get(scanKey(symbol, mode)) ?? 0;
+        const urgency = (now - last) / interval + (near.has(symbol) ? 3 : priority.has(symbol) ? 2 : watch.has(symbol) ? 1 : 0);
+        return { symbol, mode, due: now - last >= interval, urgency };
+      })
+      .filter((item) => item.due)
+      .sort((a, b) => b.urgency - a.urgency)
+      .slice(0, 2);
+    if (due.length) return due;
+    const symbol = this.symbols[this.cursor % this.symbols.length];
+    const requestedMode: "futures" | "spot" = Math.floor(this.cursor / this.symbols.length) % 2 === 0 ? "futures" : "spot";
+    this.cursor += 1;
+    return [{ symbol, mode: requestedMode, due: true, urgency: 0 }];
   }
 
   private syncPriorityWatchlistSymbols() {
@@ -309,27 +348,23 @@ export class Scanner {
       const candles = await this.client.bybitKlines(symbol, tf, category);
       if (!Array.isArray(candles) || !candles.length) throw new Error(`Bybit candles empty ${symbol} ${tf} ${category}`);
       entries.push([tf, candles] as const);
-      await sleep(150);
     }
     state.diagnostics.apiStatus.bybit = "підключено";
     return Object.fromEntries(entries);
   }
 
   private async snapshot(symbol: string, mode: "spot" | "futures", candles: Record<string, Candle[]>, btcOk: boolean, btcCandles: Record<string, Candle[]>): Promise<MarketSnapshot> {
-    const tfs = mode === "futures" ? config.futuresTimeframes : config.spotTimeframes;
-    const [okxEntries, kucoinEntries, krakenEntries, binanceEntries, orderBook, funding, oi, correlation] = await Promise.all([
-      Promise.all(tfs.map(async (tf) => [tf, await this.client.okxKlines(symbol, tf).catch(() => [])] as const)),
-      Promise.all(tfs.map(async (tf) => [tf, await this.client.kucoinKlines(symbol, tf).catch(() => [])] as const)),
-      Promise.all(tfs.map(async (tf) => [tf, await this.client.krakenSpotKlines(symbol, tf).catch(() => [])] as const)),
-      Promise.all(tfs.map(async (tf) => [tf, await this.client.binanceKlines(symbol, tf).catch(() => [])] as const)),
-      mode === "futures" ? this.client.bybitOrderBookStats(symbol).catch(() => ({ spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false })) : Promise.resolve({ spreadPct: 0, depthUsdt: 0, imbalance: 0, spoofRisk: false }),
-      mode === "futures" ? this.client.fundingRate(symbol).catch(() => 0) : Promise.resolve(0),
-      mode === "futures" ? this.client.openInterestChange(symbol).catch(() => 0) : Promise.resolve(0),
-      this.correlationContext(symbol, mode, candles, btcCandles).catch((err) => {
-        logger.warn({ err, symbol }, "Correlation context unavailable; using defensive neutral context");
-        return neutralCorrelation();
-      })
+    const tfs = mode === "futures" ? ["15"] : config.spotTimeframes;
+    const [okxEntries, kucoinEntries, krakenEntries, binanceEntries, orderBook, funding, oi] = await Promise.all([
+      mode === "futures" ? Promise.resolve([]) : Promise.all(tfs.map(async (tf) => [tf, await this.client.okxKlines(symbol, tf).catch(() => [])] as const)),
+      mode === "futures" ? Promise.resolve([]) : Promise.all(tfs.map(async (tf) => [tf, await this.client.kucoinKlines(symbol, tf).catch(() => [])] as const)),
+      mode === "futures" ? Promise.resolve([]) : Promise.all(tfs.map(async (tf) => [tf, await this.client.krakenSpotKlines(symbol, tf).catch(() => [])] as const)),
+      Promise.all(tfs.map(async (tf) => [tf, await withTimeout(this.client.binanceKlines(symbol, tf), 1_500, [])] as const)),
+      mode === "futures" ? withTimeout(this.client.bybitOrderBookStats(symbol), 1_500, { spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false }) : Promise.resolve({ spreadPct: 0, depthUsdt: 0, imbalance: 0, spoofRisk: false }),
+      mode === "futures" ? withTimeout(this.client.fundingRate(symbol), 1_000, 0) : Promise.resolve(0),
+      mode === "futures" ? withTimeout(this.client.openInterestChange(symbol), 1_500, 0) : Promise.resolve(0)
     ]);
+    const correlation = neutralCorrelation();
     if (config.partialMode) state.diagnostics.apiStatus.okx = "часткове публічне підтвердження";
     else if (!state.diagnostics.apiStatus.okx.startsWith("помилка автентифікації")) state.diagnostics.apiStatus.okx = "автентифіковано і підключено; ринкове підтвердження активне";
     state.diagnostics.apiStatus.binance = "підключено";
@@ -633,6 +668,20 @@ function watchKey(symbol: string, mode: string) {
   return `${symbol}-${mode}`;
 }
 
+function scanKey(symbol: string, mode: string) {
+  return `${symbol}-${mode}`;
+}
+
+function nearEntryTrigger(signal: Signal) {
+  if (signal.side === "NO_TRADE" || signal.mode !== "futures" || !signal.btcStable || signal.fakeBreakout.risk) return false;
+  const low = Math.min(...signal.entry);
+  const high = Math.max(...signal.entry);
+  const band = Math.max((high - low) * 0.75, signal.currentPrice * 0.0025);
+  const nearZone = signal.currentPrice >= low - band && signal.currentPrice <= high + band;
+  const microReady = (signal.scoreBreakdown.earlyEntryReady ?? 0) > 0 || (signal.scoreBreakdown.microConfirmationScore ?? 0) >= 78;
+  return nearZone && signal.score >= 78 && (microReady || signal.entryStatus === "EARLY_ENTRY_READY" || signal.entryStatus === "WAIT_FOR_ENTRY");
+}
+
 function exchangeConfirmations(bybit: Record<string, Candle[]>, okx: Record<string, Candle[]>, kucoin: Record<string, Candle[]>, kraken: Record<string, Candle[]>, binance: Record<string, Candle[]>, mode: "spot" | "futures") {
   const tf = mode === "futures" ? "15" : "240";
   const bybitDir = directionOf(bybit[tf]);
@@ -719,9 +768,19 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: NodeJS.Timeout;
+  return Promise.race([
+    promise.catch(() => fallback),
+    new Promise<T>((resolve) => {
+      timer = setTimeout(() => resolve(fallback), timeoutMs);
+    })
+  ]).finally(() => clearTimeout(timer));
+}
+
 function isRateLimit(err: unknown) {
   const message = err instanceof Error ? err.message : String(err);
-  return message.includes("Access too frequent") || message.includes("403 Forbidden") || message.includes("429");
+  return message.includes("Access too frequent") || message.includes("Too many visits") || message.includes("retCode\":10006") || message.includes("403 Forbidden") || message.includes("429");
 }
 
 function signalCooldownKey(s: Signal) {

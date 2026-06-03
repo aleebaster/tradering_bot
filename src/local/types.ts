@@ -81,7 +81,7 @@ export interface Signal {
   fastMoveQuality: FastMoveQuality;
   correlation: CorrelationContext;
   currentPrice: number;
-  entryStatus: "ENTER_NOW" | "WAIT_FOR_ENTRY" | "NO_TRADE";
+  entryStatus: "ENTER_NOW" | "EARLY_ENTRY_READY" | "WAIT_FOR_ENTRY" | "NO_TRADE";
   entry: [number, number];
   stopLoss: number;
   takeProfit: [number, number, number];

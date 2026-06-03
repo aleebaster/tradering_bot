@@ -61,6 +61,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const primaryTf = snapshot.mode === "futures" ? "15" : "240";
   const candles = snapshot.candles[primaryTf] ?? [];
   const precisionCandles = snapshot.candles["1"] ?? snapshot.candles["5"] ?? candles;
+  const threeMinuteCandles = snapshot.candles["3"] ?? precisionCandles;
   const fiveMinuteCandles = snapshot.candles["5"] ?? candles;
   const oneHourCandles = snapshot.candles["60"] ?? candles;
   const closes = candles.map((c) => c.close);
@@ -105,7 +106,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const confirmationProfile = adaptiveConfirmationProfile(snapshot, { volume, momentum, liquidityScore: snapshot.liquidityScore, orderbook, fastMoveScore: fastMove.score });
   const confirmationPenalty = confirmationProfile.allowed ? confirmationProfile.penalty : 35;
   const paperAdjustment = paperSetupConfidenceAdjustment(setupTypeFromScores(snapshot, { momentum, volume, mtf, liquiditySweep: liquidity.score }));
-  const sniper = entrySniperTrigger(fiveMinuteCandles, precisionCandles, direction, volume);
+  const sniper = entrySniperTrigger(fiveMinuteCandles, bestEntryTimingCandles(precisionCandles, threeMinuteCandles, fiveMinuteCandles, direction), direction, volume);
   const advancedBonus = htf.score * 0.15 * learned.htf + liquidity.score * 0.08 * learned.liquidity + orderFlow.score * 0.1 * learned.orderFlow + oiAnalysis.score * 0.08 * learned.oi + fakeBreakout.score * 0.11 + fastMove.score * 0.08 + (sniper.ready ? 4 : -6) + (correlation.aligned ? 8 : correlation.riskOff ? -18 : 0) + session.confidenceAdjustment + htf.confidenceAdjustment + intel.bonus;
   const weighted = trendStrength * marketQuality.trendWeight + snapshot.liquidityScore * 0.06 + volume * 0.1 * learned.volume + smc.score * 0.13 * learned.smc + mtf * 0.1 + snapshot.whaleScore * 0.04 + funding * 0.05 + oi * 0.04 + momentum * marketQuality.momentumWeight * learned.macd + orderbook * 0.06 + advancedBonus + paperAdjustment - regimePenalty - btcPenalty - coinQuality.penalty - intel.penalty;
   let score = clamp(weighted - confirmationPenalty);
@@ -134,11 +135,13 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const watchThreshold = Math.min(coinQuality.watchThreshold, thresholds.watch);
   const earlyThreshold = thresholds.early;
   const inEntryZone = last.close >= Math.min(...entry) && last.close <= Math.max(...entry);
-  const fastMomentumEntry = (snapshot.regime === "HIGH_VOLATILITY" || snapshot.regime === "VOLATILE") && fastMove.clean && volume >= 72 && momentum >= 76;
+  const micro = microConfirmationProfile(snapshot, { momentum, volume, orderbook, orderFlowScore: orderFlow.score, liquidityScore: liquidity.score, sniperScore: sniper.score, fastMoveScore: fastMove.score, fakeBreakoutRisk: fakeBreakout.risk, newsBlocked: newsRisk.blocked, rrValue });
+  const fastMomentumEntry = (snapshot.regime === "HIGH_VOLATILITY" || snapshot.regime === "VOLATILE" || snapshot.regime === "BREAKOUT" || snapshot.regime === "TRENDING") && fastMove.clean && volume >= 68 && momentum >= 74;
   const intelligenceEntry = intel.entryQuality >= 72 && intel.aligned && !intel.hardRisk;
-  const strongEntryReady = roundedScore >= entryThreshold && side !== "NO_TRADE" && inEntryZone && sniper.ready && snapshot.btcStable && volume >= 65 && momentum >= 70 && (liquidity.score >= 65 || fastMomentumEntry || intelligenceEntry) && !fakeBreakout.risk && !hardBlock.blocked && !intel.hardRisk;
+  const strongEntryReady = roundedScore >= entryThreshold && side !== "NO_TRADE" && inEntryZone && (sniper.ready || micro.weightedScore >= 86 && micro.retestForming) && snapshot.btcStable && volume >= 62 && momentum >= 68 && (liquidity.score >= 65 || fastMomentumEntry || intelligenceEntry || micro.strongOrderflow) && !fakeBreakout.risk && !hardBlock.blocked && !intel.hardRisk && micro.tinyAccountOk;
+  const earlyEntryReady = !strongEntryReady && roundedScore >= micro.earlyThreshold && side !== "NO_TRADE" && snapshot.mode === "futures" && micro.ready && !hardBlock.blocked && !intel.hardRisk;
   const qualifiedSide: Side = strongEntryReady ? side : roundedScore >= earlyThreshold && snapshot.mode === "futures" && side !== "NO_TRADE" ? "WATCHLIST" : "NO_TRADE";
-  const entryStatus = qualifiedSide === "NO_TRADE" || qualifiedSide === "WATCHLIST" ? "NO_TRADE" : "ENTER_NOW";
+  const entryStatus = strongEntryReady ? "ENTER_NOW" : earlyEntryReady ? "EARLY_ENTRY_READY" : qualifiedSide === "WATCHLIST" ? "WAIT_FOR_ENTRY" : "NO_TRADE";
   const riskReward = riskRewardRatio(rrValue);
   const grade = gradeFrom(roundedScore, hardBlock.blocked, qualifiedSide);
   const leverage = snapshot.mode === "futures" && !["NO_TRADE", "WATCHLIST"].includes(qualifiedSide) ? leverageRecommendation(score, a / last.close, momentum, snapshot.regime) : undefined;
@@ -234,7 +237,12 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
       marketReport: Math.round(intel.marketScore),
       intelligenceBonus: Math.round(intel.bonus),
       intelligencePenalty: Math.round(intel.penalty),
-      intelligenceEntryQuality: Math.round(intel.entryQuality)
+      intelligenceEntryQuality: Math.round(intel.entryQuality),
+      earlyEntryReady: earlyEntryReady ? 100 : 0,
+      microConfirmationScore: Math.round(micro.weightedScore),
+      microRetestForming: micro.retestForming ? 100 : 0,
+      microOrderflowSpeed: micro.strongOrderflow ? 100 : 0,
+      microMomentumRising: micro.momentumRising ? 100 : 0
     },
     tradeManagementActions: tradeManagementActions(qualifiedSide, entryStatus),
     management
@@ -323,13 +331,48 @@ function adaptiveConfirmationProfile(snapshot: MarketSnapshot, quality: { volume
   if (snapshot.confirmations.conflict) return { allowed: false, penalty: 35, smallAltStrict: false, reason: "exchange conflict" };
   const topCoin = ["BTCUSDT", "ETHUSDT", "SOLUSDT"].includes(snapshot.symbol);
   const bybitBinanceOnly = snapshot.confirmations.bybit && snapshot.confirmations.binance && !snapshot.confirmations.okx && !snapshot.confirmations.kucoin && !snapshot.confirmations.kraken;
+  const microStrong = quality.momentum >= 82 && quality.fastMoveScore >= 70 || quality.orderbook >= 70 && quality.volume >= 68;
   if (topCoin) return { allowed: snapshot.confirmations.alignedCount >= 2, penalty: snapshot.confirmations.alignedCount >= 2 ? 0 : 35, smallAltStrict: false, reason: "top coin requires 2+ exchanges" };
   if (bybitBinanceOnly) {
     const strongInternal = quality.volume >= 72 && quality.momentum >= 76 && quality.liquidityScore >= 58 && quality.orderbook >= 60 && quality.fastMoveScore >= 60;
     return { allowed: strongInternal, penalty: strongInternal ? 6 : 35, smallAltStrict: true, reason: strongInternal ? "Bybit+Binance with strict internal validation" : "small alt internal validation too weak" };
   }
   if (snapshot.confirmations.alignedCount >= 2) return { allowed: true, penalty: 0, smallAltStrict: false, reason: "2+ exchanges confirmed" };
+  if (snapshot.confirmations.alignedCount >= 1 && microStrong && snapshot.btcStable && snapshot.regime !== "CHOPPY" && snapshot.regime !== "LOW_VOLATILITY") return { allowed: true, penalty: 8, smallAltStrict: true, reason: "micro-confirmation replaced one weak exchange confirmation" };
   return { allowed: false, penalty: 35, smallAltStrict: false, reason: "small alt needs Bybit+Binance or 2+ exchanges" };
+}
+
+function microConfirmationProfile(snapshot: MarketSnapshot, quality: { momentum: number; volume: number; orderbook: number; orderFlowScore: number; liquidityScore: number; sniperScore: number; fastMoveScore: number; fakeBreakoutRisk: boolean; newsBlocked: boolean; rrValue: number }) {
+  const trending = snapshot.regime === "TRENDING" || snapshot.regime === "BREAKOUT" || snapshot.regime === "EXPANSION";
+  const strict = snapshot.regime === "LOW_VOLATILITY" || snapshot.regime === "CHOPPY" || snapshot.regime === "SIDEWAYS" || snapshot.regime === "RANGING";
+  const momentumRising = quality.momentum >= (trending ? 66 : 72) && quality.fastMoveScore >= 58;
+  const volumeIncreasing = quality.volume >= (trending ? 58 : 64);
+  const retestForming = quality.liquidityScore >= 62 || quality.sniperScore >= 55;
+  const sniperNear = quality.sniperScore >= 52;
+  const strongOrderflow = quality.orderFlowScore >= 68 || quality.orderbook >= 66;
+  const weightedScore = clamp(
+    quality.momentum * 0.24
+    + quality.volume * 0.18
+    + quality.liquidityScore * 0.17
+    + quality.orderFlowScore * 0.16
+    + quality.sniperScore * 0.13
+    + quality.fastMoveScore * 0.12
+    + (trending ? 6 : strict ? -8 : 0)
+  );
+  const tinyAccountOk = quality.rrValue >= 2.4 && quality.volume >= 62 && quality.momentum >= 68 && (retestForming || strongOrderflow);
+  const earlyThreshold = trending ? 78 : strict ? 86 : 82;
+  const ready = weightedScore >= earlyThreshold
+    && momentumRising
+    && volumeIncreasing
+    && retestForming
+    && sniperNear
+    && snapshot.btcStable
+    && !quality.fakeBreakoutRisk
+    && !quality.newsBlocked
+    && quality.rrValue >= 2
+    && (trending || strongOrderflow)
+    && (tinyAccountOk || !config.smallBalanceGrowthMode);
+  return { ready, weightedScore, earlyThreshold, momentumRising, volumeIncreasing, retestForming, sniperNear, strongOrderflow, tinyAccountOk };
 }
 
 function setupTypeFromScores(snapshot: MarketSnapshot, scores: { momentum: number; volume: number; mtf: number; liquiditySweep: number }) {
@@ -420,9 +463,21 @@ function executionDirection(candles: Record<string, Candle[]>, mode: "spot" | "f
   if (mode === "spot") return { direction: trendDirection(candles["240"]), aligned: true };
   const oneHour = trendDirection(candles["60"]);
   const fifteen = trendDirection(candles["15"]);
+  const one = precisionDirection(candles["1"]);
+  const three = precisionDirection(candles["3"]);
   const five = precisionDirection(candles["5"]);
-  const aligned = oneHour !== 0 && oneHour === fifteen && (five === oneHour || five === 0);
+  const precisionVotes = [one, three, five].filter((dir) => dir !== 0);
+  const precisionAligned = !precisionVotes.length || precisionVotes.some((dir) => dir === oneHour);
+  const aligned = oneHour !== 0 && oneHour === fifteen && precisionAligned;
   return { direction: aligned ? oneHour : 0, aligned };
+}
+
+function bestEntryTimingCandles(oneMinute: Candle[], threeMinute: Candle[], fiveMinute: Candle[], direction: number) {
+  const candidates = [oneMinute, threeMinute, fiveMinute].filter((candles) => candles.length >= 25);
+  if (!candidates.length || direction === 0) return oneMinute.length ? oneMinute : fiveMinute;
+  return candidates
+    .map((candles) => ({ candles, score: precisionDirection(candles) === direction ? 2 : 0, volume: volumeProfileScore(candles) }))
+    .sort((a, b) => b.score - a.score || b.volume - a.volume)[0].candles;
 }
 
 function precisionDirection(candles?: Candle[]) {
@@ -483,6 +538,7 @@ function professionalTradeLevels(primary: Candle[], precision: Candle[], oneHour
 
 function managementText(side: Side, entryStatus: Signal["entryStatus"]) {
   if (side === "NO_TRADE") return "❌ НЕ ВХОДИТИ";
+  if (entryStatus === "EARLY_ENTRY_READY") return "🟡 EARLY ENTRY READY: готуватися, але чекати фінальний trigger/REAL ENTRY";
   if (side === "WATCHLIST") return "⚠️ ТІЛЬКИ МОНІТОРИНГ";
   if (entryStatus === "WAIT_FOR_ENTRY") return "⏳ ЧЕКАТИ ЗОНУ ВХОДУ";
   return "✅ ЗАХОДИТИ ЗАРАЗ; після TP1 перенести SL у беззбиток, на TP2 зафіксувати частину, залишок вести трейлінгом ATR";
@@ -490,6 +546,7 @@ function managementText(side: Side, entryStatus: Signal["entryStatus"]) {
 
 function tradeManagementActions(side: Side, entryStatus: Signal["entryStatus"]) {
   if (side === "NO_TRADE") return ["❌ НЕ ВХОДИТИ"];
+  if (entryStatus === "EARLY_ENTRY_READY") return ["🟡 EARLY ENTRY READY", "⏳ ЧЕКАТИ REAL ENTRY CONFIRMATION", "🛡 SL/ризик вже пораховані, не входити без trigger"];
   if (side === "WATCHLIST") return ["⚠️ ТІЛЬКИ МОНІТОРИНГ"];
   if (entryStatus === "WAIT_FOR_ENTRY") return ["⏳ ЧЕКАТИ ЗОНУ ВХОДУ"];
   return ["🟢 ЗАХОДИТИ ЗАРАЗ", "🟡 ТРИМАТИ ПОЗИЦІЮ", "🟠 ЗАФІКСУВАТИ ЧАСТИНУ ПРИБУТКУ", "🟠 ПЕРЕНЕСТИ STOP LOSS У БЕЗЗБИТОК", "🟠 АКТИВОВАНО ТРЕЙЛІНГ-СТОП", "🔴 ВИЙТИ З УГОДИ ЗАРАЗ", "⚠️ ВИЯВЛЕНО РОЗВОРОТ ТРЕНДУ"];
@@ -513,8 +570,8 @@ function reasons(snapshot: MarketSnapshot, parts: Record<string, number>, advanc
   out.push(advanced.session.message);
   if (advanced.newsRisk.blocked) out.push(advanced.newsRisk.message);
   if (!advanced.htf.executionAligned) out.push("1H/15M/5M execution alignment не підтверджений");
-  else if (advanced.htf.counterTrend) out.push("⚠️ Counter-trend trade: 4H/Daily дають контекстний штраф, не hard block");
-  else out.push("✅ 1H/15M/5M execution aligned; 4H/Daily context supportive or neutral");
+  else if (advanced.htf.counterTrend) out.push("⚠️ 15m/1h контекст конфліктує: штраф за контртренд");
+  else out.push("✅ 1H/15M/5M execution aligned");
   out.push(advanced.liquidity.message, advanced.orderFlow.message, advanced.oiAnalysis.message);
   out.push(advanced.fastMove.message);
   if (advanced.fakeBreakout.risk) out.push(advanced.fakeBreakout.message);
@@ -590,13 +647,13 @@ function isMacroEventWindow(now: Date) {
 
 function higherTimeframeBias(candles: Record<string, Candle[]>, direction: number): HigherTimeframeBias {
   if (direction === 0) return { direction: 0, aligned: false, executionAligned: false, counterTrend: false, confidenceAdjustment: -12, score: 0, details: ["немає 1H/15M/5M execution alignment"] };
-  const frames = ["5", "15", "60", "240", "D"];
+  const frames = ["5", "15", "60"];
   const dirs = frames.map((tf) => [tf, trendDirection(candles[tf])] as const);
   const oneHour = dirs.find(([tf]) => tf === "60")?.[1] ?? 0;
   const fifteen = dirs.find(([tf]) => tf === "15")?.[1] ?? 0;
   const five = precisionDirection(candles["5"]);
-  const fourHour = dirs.find(([tf]) => tf === "240")?.[1] ?? 0;
-  const daily = dirs.find(([tf]) => tf === "D")?.[1] ?? 0;
+  const fourHour = 0;
+  const daily = 0;
   const executionAligned = oneHour === direction && fifteen === direction && (five === direction || five === 0);
   const contextConflicts = [fourHour, daily].filter((dir) => dir !== 0 && dir !== direction).length;
   const counterTrend = contextConflicts > 0;
@@ -613,7 +670,7 @@ function higherTimeframeBias(candles: Record<string, Candle[]>, direction: numbe
     score: executionScore + contextScore,
     details: [
       ...dirs.map(([tf, dir]) => `${tf}: ${dir > 0 ? "LONG" : dir < 0 ? "SHORT" : "нейтрально"}`),
-      counterTrend ? "4H/Daily контекст конфліктує: штраф за контртренд" : "4H/Daily контекст підтримує або нейтральний"
+      counterTrend ? "15m/1h контекст конфліктує: штраф за контртренд" : "15m/1h контекст підтримує напрямок"
     ]
   };
 }
