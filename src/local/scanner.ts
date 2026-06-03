@@ -160,12 +160,12 @@ export class Scanner {
           recordSignal(signal);
           if (mode === "futures") updatePaperTradeMemory(signal.symbol, signal.currentPrice);
           candidates.push(signal);
-          await this.trackWatchlist(signal);
           if (!["NO_TRADE", "WATCHLIST"].includes(signal.side) && this.canSendSignal(signal)) {
             this.markSignalSent(signal);
             if (notificationsEnabled()) await this.sendRealEntryFast(signal, { symbolStartedAt, marketDataFetchedAt, snapshotReadyAt, signalConfirmedAt });
             recordPaperOpen(signal);
           }
+          await this.trackWatchlist(signal);
         } catch (symbolError) {
           logger.error({ err: symbolError, symbol, mode }, "Символ пропущено; сканер продовжує наступний символ");
           if (isRateLimit(symbolError)) {
@@ -209,11 +209,12 @@ export class Scanner {
   }
 
   private async sendRealEntryFast(signal: Signal, times: { symbolStartedAt: number; marketDataFetchedAt: number; snapshotReadyAt: number; signalConfirmedAt: number }) {
-    logger.info({ symbol: signal.symbol, side: signal.side, entryStatus: signal.entryStatus, marketDetectedAt: new Date(times.symbolStartedAt).toISOString(), signalConfirmedAt: new Date(times.signalConfirmedAt).toISOString(), latencyMs: { marketDataFetch: times.marketDataFetchedAt - times.symbolStartedAt, snapshot: times.snapshotReadyAt - times.marketDataFetchedAt, confirmation: times.signalConfirmedAt - times.snapshotReadyAt } }, "real entry latency: sending stage 1 now");
+    const telegramSendStartedAt = Date.now();
+    logger.info({ symbol: signal.symbol, side: signal.side, entryStatus: signal.entryStatus, marketDetectedAt: new Date(times.symbolStartedAt).toISOString(), signalConfirmedAt: new Date(times.signalConfirmedAt).toISOString(), telegramSendStartedAt: new Date(telegramSendStartedAt).toISOString(), latencyMs: { marketDataFetch: times.marketDataFetchedAt - times.symbolStartedAt, snapshot: times.snapshotReadyAt - times.marketDataFetchedAt, confirmation: times.signalConfirmedAt - times.snapshotReadyAt, queueDelay: telegramSendStartedAt - times.signalConfirmedAt } }, "real entry latency: sending stage 1 now");
     try {
       await this.notifier.instantEntry(signal);
       const telegramSentAt = Date.now();
-      logger.info({ symbol: signal.symbol, side: signal.side, marketDetectedAt: new Date(times.symbolStartedAt).toISOString(), signalConfirmedAt: new Date(times.signalConfirmedAt).toISOString(), telegramSentAt: new Date(telegramSentAt).toISOString(), latencyMs: { marketDataFetch: times.marketDataFetchedAt - times.symbolStartedAt, snapshot: times.snapshotReadyAt - times.marketDataFetchedAt, confirmation: times.signalConfirmedAt - times.snapshotReadyAt, telegramSend: telegramSentAt - times.signalConfirmedAt, totalDetectedToTelegram: telegramSentAt - times.symbolStartedAt } }, "real entry latency: stage 1 sent");
+      logger.info({ symbol: signal.symbol, side: signal.side, marketDetectedAt: new Date(times.symbolStartedAt).toISOString(), signalConfirmedAt: new Date(times.signalConfirmedAt).toISOString(), telegramSendStartedAt: new Date(telegramSendStartedAt).toISOString(), telegramSentAt: new Date(telegramSentAt).toISOString(), latencyMs: { marketDataFetch: times.marketDataFetchedAt - times.symbolStartedAt, snapshot: times.snapshotReadyAt - times.marketDataFetchedAt, confirmation: times.signalConfirmedAt - times.snapshotReadyAt, queueDelay: telegramSendStartedAt - times.signalConfirmedAt, telegramApi: telegramSentAt - telegramSendStartedAt, telegramSend: telegramSentAt - times.signalConfirmedAt, totalDetectedToTelegram: telegramSentAt - times.symbolStartedAt } }, "real entry latency: stage 1 sent");
       setTimeout(() => {
         void this.notifier.signal(signal).catch((err) => logger.warn({ err, symbol: signal.symbol }, "Не вдалося надіслати stage 2 signal details"));
       }, 2_500);
@@ -480,10 +481,14 @@ export class Scanner {
       if (Date.now() - checkedAt < recheckMs) continue;
       this.watchlistCheckedAt.set(key, Date.now());
       try {
-        const candles = item.symbol === "BTCUSDT" ? btcCandles : await this.loadCandles(item.symbol, "futures");
-        const snapshot = await this.snapshot(item.symbol, "futures", candles, btcOk, btcCandles);
-        const signal = buildSignal(snapshot);
-        logger.info({ symbol: item.symbol, score: signal.score, side: signal.side, scoreBreakdown: signal.scoreBreakdown }, "watchlist recheck");
+          const symbolStartedAt = Date.now();
+          const candles = item.symbol === "BTCUSDT" ? btcCandles : await this.loadCandles(item.symbol, "futures");
+          const marketDataFetchedAt = Date.now();
+          const snapshot = await this.snapshot(item.symbol, "futures", candles, btcOk, btcCandles);
+          const snapshotReadyAt = Date.now();
+          const signal = buildSignal(snapshot);
+          const signalConfirmedAt = Date.now();
+          logger.info({ symbol: item.symbol, score: signal.score, side: signal.side, scoreBreakdown: signal.scoreBreakdown }, "watchlist recheck");
         const evolution = watchlistEvolution(item, signal);
         const fomo = fomoBlock(signal);
         const entryThreshold = signal.scoreBreakdown.adaptiveConfirmationRequired ?? 92;
@@ -500,7 +505,8 @@ export class Scanner {
           this.activatedWatchlist.add(key);
           recordSignal(activated);
           this.markSignalSent(activated);
-          if (notificationsEnabled()) await this.notifier.setupUpgraded(activated, activationReasons(activated, evolution));
+          logger.info({ symbol: activated.symbol, side: activated.side, score: activated.score, reasons: activationReasons(activated, evolution), latencyMs: { marketDataFetch: marketDataFetchedAt - symbolStartedAt, snapshot: snapshotReadyAt - marketDataFetchedAt, confirmation: signalConfirmedAt - snapshotReadyAt, detectedToConfirmed: signalConfirmedAt - symbolStartedAt } }, "watchlist setup upgraded to real entry");
+          if (notificationsEnabled()) await this.sendRealEntryFast(activated, { symbolStartedAt, marketDataFetchedAt, snapshotReadyAt, signalConfirmedAt });
           recordPaperOpen(activated);
           continue;
         }

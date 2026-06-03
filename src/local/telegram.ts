@@ -69,13 +69,14 @@ export class TelegramNotifier {
   }
 
   private async sendChunk(text: string, replyMarkup?: TelegramReplyMarkup) {
+    const telegramApiStartedAt = Date.now();
     const url = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/sendMessage`;
     const body: Record<string, unknown> = { chat_id: config.TELEGRAM_CHAT_ID, text };
     if (replyMarkup) body.reply_markup = replyMarkup;
     const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
     if (!res.ok) throw new Error(`Помилка Telegram ${res.status}: ${(await res.text()).slice(0, 180)}`);
     const json = await res.json().catch(() => null) as { ok?: boolean; result?: { message_id?: number; chat?: { id?: number | string } } } | null;
-    logger.info({ messageId: json?.result?.message_id, chatId: json?.result?.chat?.id, chars: text.length }, "Telegram response sent");
+    logger.info({ messageId: json?.result?.message_id, chatId: json?.result?.chat?.id, chars: text.length, telegramApiStartedAt: new Date(telegramApiStartedAt).toISOString(), telegramApiSentAt: new Date().toISOString(), telegramApiMs: Date.now() - telegramApiStartedAt }, "Telegram response sent");
   }
 
   isEnabled() {
