@@ -45,6 +45,7 @@ export class TelegramCommandCenter {
   private lastPollAt: string | null = null;
   private lastUpdateAt: string | null = null;
   private lastPollingError: string | null = null;
+  private lastRouteError: string | null = null;
   private processedUpdates = 0;
   private handledCallbacks = 0;
   private handledMessages = 0;
@@ -91,6 +92,7 @@ export class TelegramCommandCenter {
       handledMessages: this.handledMessages,
       pendingAction: this.pendingAction,
       lastPollingError: this.lastPollingError,
+      lastRouteError: this.lastRouteError,
       lockAcquired: this.lockAcquired,
       offsetInitialized: this.offsetInitialized,
       lock: readPollingLock()
@@ -194,11 +196,11 @@ export class TelegramCommandCenter {
       await telegramFetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/deleteWebhook`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ drop_pending_updates: true })
+        body: JSON.stringify({ drop_pending_updates: false })
       }).catch((error) => logger.warn({ err: error }, "Telegram deleteWebhook timed out; continuing with polling"));
       this.offset = 0;
       this.offsetInitialized = true;
-      logger.info({ offset: this.offset }, "Telegram polling initialized; stale pending updates discarded");
+      logger.info({ offset: this.offset }, "Telegram polling initialized; pending updates preserved");
     } catch (err) {
       logger.warn({ err }, "Telegram polling offset initialization failed");
     }
@@ -217,39 +219,39 @@ export class TelegramCommandCenter {
     const pair = rawPair ? normalizePriorityPair(rawPair) : "";
     logger.info({ text, cleanText, button, command }, "Telegram handler executed");
 
-    if (command === "/momentum" || command === "/moves") return this.sendMomentum("all");
-    if (command === "/scalp" || command === "/scalps") return this.sendMomentum("scalp");
-    if (command === "/scalplong") return this.sendMomentum("scalp_long");
-    if (command === "/scalpshort") return this.sendMomentum("scalp_short");
-    if (command === "/longmovers") return this.sendMomentum("long");
-    if (command === "/shortmovers") return this.sendMomentum("short");
+    if (command === "/momentum" || command === "/moves") return this.sendBusyThen("🚨 Великі рухи", () => this.sendMomentum("all"));
+    if (command === "/scalp" || command === "/scalps") return this.sendBusyThen("⚡ Scalp рухи", () => this.sendMomentum("scalp"));
+    if (command === "/scalplong") return this.sendBusyThen("📈 Scalp LONG", () => this.sendMomentum("scalp_long"));
+    if (command === "/scalpshort") return this.sendBusyThen("📉 Scalp SHORT", () => this.sendMomentum("scalp_short"));
+    if (command === "/longmovers") return this.sendBusyThen("📈 Лідери LONG", () => this.sendMomentum("long"));
+    if (command === "/shortmovers") return this.sendBusyThen("📉 Лідери SHORT", () => this.sendMomentum("short"));
 
     if (["/start", "/menu"].includes(command) || button === "menu" || button === "back") return this.sendFreshMenu();
-    if (button === "signals") return this.sendTopSetups();
+    if (button === "signals") return this.sendBusyThen("📊 Сигнали", () => this.sendTopSetups());
     if (button === "search_pair") return this.askPair("search");
     if (button === "watchlist") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
     if (button === "settings") return this.notifier.send(settingsText(), settingsKeyboard());
     if (button === "signal_pair") return this.askPair("signal");
     if (button === "watch_add") return this.askPair("watch");
     if (button === "watch_remove") return this.askPair("unwatch");
-    if (button === "top" || button === "signals_refresh") return this.sendTopSetups();
+    if (button === "top" || button === "signals_refresh") return this.sendBusyThen("🔥 Топ Сетапи", () => this.sendTopSetups());
     if (button === "positions") return this.askPair("search");
     if (button === "stats") return this.notifier.send(tradeStatsText(), mainMenuKeyboard());
     if (button === "new_tokens") return this.sendNewTokens();
     if (button === "watch_status") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
-    if (button === "monitoring") return this.sendMonitoring();
-    if (button === "momentum") return this.sendMomentum("all");
-    if (button === "momentum_scalp") return this.sendMomentum("scalp");
-    if (button === "momentum_scalp_long") return this.sendMomentum("scalp_long");
-    if (button === "momentum_scalp_short") return this.sendMomentum("scalp_short");
-    if (button === "momentum_long") return this.sendMomentum("long");
-    if (button === "momentum_short") return this.sendMomentum("short");
-    if (button === "momentum_strongest") return this.sendMomentum("strongest");
+    if (button === "monitoring") return this.sendBusyThen("🔴 Моніторинг", () => this.sendMonitoring());
+    if (button === "momentum") return this.sendBusyThen("🚨 Великі рухи", () => this.sendMomentum("all"));
+    if (button === "momentum_scalp") return this.sendBusyThen("⚡ Scalp рухи", () => this.sendMomentum("scalp"));
+    if (button === "momentum_scalp_long") return this.sendBusyThen("📈 Scalp LONG", () => this.sendMomentum("scalp_long"));
+    if (button === "momentum_scalp_short") return this.sendBusyThen("📉 Scalp SHORT", () => this.sendMomentum("scalp_short"));
+    if (button === "momentum_long") return this.sendBusyThen("📈 Лідери LONG", () => this.sendMomentum("long"));
+    if (button === "momentum_short") return this.sendBusyThen("📉 Лідери SHORT", () => this.sendMomentum("short"));
+    if (button === "momentum_strongest") return this.sendBusyThen("🔥 Найсильніші рухи", () => this.sendMomentum("strongest"));
     if (button === "momentum_check") return this.askPair("momentum_check");
-    if (button === "whales") return this.sendWhaleScanner("all");
-    if (button === "whales_accumulation") return this.sendWhaleScanner("accumulation");
-    if (button === "whales_distribution") return this.sendWhaleScanner("distribution");
-    if (button === "whales_strongest") return this.sendWhaleScanner("strongest");
+    if (button === "whales") return this.sendBusyThen("🐋 Рух китів", () => this.sendWhaleScanner("all"));
+    if (button === "whales_accumulation") return this.sendBusyThen("📈 Кити: накопичення", () => this.sendWhaleScanner("accumulation"));
+    if (button === "whales_distribution") return this.sendBusyThen("📉 Кити: розподіл", () => this.sendWhaleScanner("distribution"));
+    if (button === "whales_strongest") return this.sendBusyThen("🔥 Кити: найсильніші", () => this.sendWhaleScanner("strongest"));
     if (button === "whales_check") return this.askPair("whale_check");
     if (button === "intelligence") return this.notifier.send(intelligenceText("overview"), intelligenceKeyboard());
     if (button === "pump_detector") return this.notifier.send(intelligenceText("pump"), intelligenceKeyboard());
@@ -270,10 +272,10 @@ export class TelegramCommandCenter {
     if (command === "/help") return this.notifier.send(helpText(), mainMenuKeyboard());
     if (command === "/status") return this.notifier.send(statusText(), mainMenuKeyboard());
     if (command === "/okxdebug") return this.sendOkxDebug();
-    if (command === "/signals") return this.sendTopSetups();
+    if (command === "/signals") return this.sendBusyThen("📊 Сигнали", () => this.sendTopSetups());
     if (command === "/diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
     if (command === "/market") return this.notifier.send(marketText(), marketActionsKeyboard());
-    if (command === "/whales") return this.sendWhaleScanner("all");
+    if (command === "/whales") return this.sendBusyThen("🐋 Рух китів", () => this.sendWhaleScanner("all"));
     if (command === "/intelligence") return this.notifier.send(intelligenceText("overview"), intelligenceKeyboard());
     if (command === "/markethealth") return this.notifier.send(marketHealthText(), marketActionsKeyboard());
     if (command === "/btc") return this.notifier.send(btcText(), marketActionsKeyboard());
@@ -283,7 +285,7 @@ export class TelegramCommandCenter {
     if (command === "/performance") return this.notifier.send(performanceText(), mainMenuKeyboard());
     if (command === "/learning") return this.notifier.send(learningStatusText(), mainMenuKeyboard());
     if (command === "/resetlearning") return this.resetLearningCommand();
-    if (command === "/top") return this.sendTopSetups();
+    if (command === "/top") return this.sendBusyThen("🔥 Топ Сетапи", () => this.sendTopSetups());
     if (command === "/search") {
       if (!rawPair) return this.askPair("search");
       return this.sendPairSearch(rawPair);
@@ -483,33 +485,48 @@ export class TelegramCommandCenter {
 
   private async handleCallback(id: string, data: string, answer = true): Promise<void> {
     const previousPendingAction = this.pendingAction;
+    this.lastRouteError = null;
     if (answer) await answerCallback(id);
     const [action, rawSymbol] = data.split(":", 2);
     logger.info({ callbackData: data, action, rawSymbol, previousPendingAction }, "Telegram callback routing started");
-    if (action === "ui") return this.routeCallback(`ui:${rawSymbol ?? ""}`, () => this.handleUiCallback(rawSymbol ?? ""), previousPendingAction);
-    if (!rawSymbol && buttonAction(action)) return this.routeCallback(`legacy-ui:${action}`, () => this.handleUiCallback(action), previousPendingAction);
+    if (action === "ui") return this.routeCallback(`ui:${rawSymbol ?? ""}`, data, () => this.handleUiCallback(rawSymbol ?? ""), previousPendingAction);
+    if (!rawSymbol && buttonAction(action)) return this.routeCallback(`legacy-ui:${action}`, data, () => this.handleUiCallback(action), previousPendingAction);
     const pair = normalizePriorityPair(rawSymbol ?? "");
     if (!pair) {
-      logger.warn({ callbackData: data, action, rawSymbol }, "Telegram callback routing failed: pair not recognized");
-      return this.notifier.send("Пара не розпізнана", mainMenuKeyboard());
+      const reason = "pair not recognized";
+      this.lastRouteError = reason;
+      logger.warn({ callbackData: data, action, rawSymbol, reason }, "Telegram callback routing failed");
+      await this.notifier.send("Стару кнопку не розпізнано. Оновлюю меню.");
+      return this.sendFreshMenu();
     }
-    if (action === "watch") return this.routeCallback("watch", () => this.handle(`/watch ${pair}`), previousPendingAction);
-    if (action === "refresh") return this.routeCallback("refresh", () => this.handle(`/signal ${pair}`), previousPendingAction);
-    if (action === "analyze_futures") return this.routeCallback("analyze_futures", () => this.sendFuturesAnalysis(pair), previousPendingAction);
-    if (action === "analyze_spot") return this.routeCallback("analyze_spot", () => this.sendSpotAnalysis(pair), previousPendingAction);
-    if (action === "raw_futures") return this.routeCallback("raw_futures", () => this.sendRawFuturesAnalysis(pair), previousPendingAction);
-    if (action === "raw_spot") return this.routeCallback("raw_spot", () => this.sendRawSpotAnalysis(pair), previousPendingAction);
-    if (action === "search_add") return this.routeCallback("search_add", () => this.handle(`/watch ${pair}`), previousPendingAction);
-    if (action === "remove") return this.routeCallback("remove", () => this.handle(`/unwatch ${pair}`), previousPendingAction);
-    if (action === "full") return this.routeCallback("full", () => this.notifier.send(fullAnalysisText(pair), signalQuickActions(pair)), previousPendingAction);
-    logger.warn({ callbackData: data, action, rawSymbol, pair }, "Telegram callback routing failed: no matched handler");
-    return this.notifier.send(mainMenuText(), mainMenuKeyboard());
+    if (action === "watch") return this.routeCallback("watch", data, () => this.handle(`/watch ${pair}`), previousPendingAction);
+    if (action === "refresh") return this.routeCallback("refresh", data, () => this.handle(`/signal ${pair}`), previousPendingAction);
+    if (action === "analyze_futures") return this.routeCallback("analyze_futures", data, () => this.sendFuturesAnalysis(pair), previousPendingAction);
+    if (action === "analyze_spot") return this.routeCallback("analyze_spot", data, () => this.sendSpotAnalysis(pair), previousPendingAction);
+    if (action === "raw_futures") return this.routeCallback("raw_futures", data, () => this.sendRawFuturesAnalysis(pair), previousPendingAction);
+    if (action === "raw_spot") return this.routeCallback("raw_spot", data, () => this.sendRawSpotAnalysis(pair), previousPendingAction);
+    if (action === "search_add") return this.routeCallback("search_add", data, () => this.handle(`/watch ${pair}`), previousPendingAction);
+    if (action === "remove") return this.routeCallback("remove", data, () => this.handle(`/unwatch ${pair}`), previousPendingAction);
+    if (action === "full") return this.routeCallback("full", data, () => this.notifier.send(fullAnalysisText(pair), signalQuickActions(pair)), previousPendingAction);
+    const reason = "no matched handler";
+    this.lastRouteError = reason;
+    logger.warn({ callbackData: data, action, rawSymbol, pair, reason }, "Telegram callback routing failed");
+    await this.notifier.send("Стара кнопка більше не активна. Оновлюю меню.");
+    return this.sendFreshMenu();
   }
 
-  private async routeCallback(handler: string, fn: () => Promise<void>, previousPendingAction: PendingAction | null): Promise<void> {
-    logger.info({ matchedHandler: handler, previousPendingAction }, "Telegram callback matched handler");
-    await fn();
-    logger.info({ matchedHandler: handler, previousPendingAction, nextPendingAction: this.pendingAction }, "Telegram callback state transition completed");
+  private async routeCallback(handler: string, callbackData: string, fn: () => Promise<void>, previousPendingAction: PendingAction | null): Promise<void> {
+    logger.info({ matchedHandler: handler, callbackData, previousPendingAction }, "Telegram callback matched handler");
+    try {
+      await fn();
+      logger.info({ matchedHandler: handler, callbackData, previousPendingAction, nextPendingAction: this.pendingAction }, "Telegram callback state transition completed");
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      this.lastRouteError = reason;
+      logger.warn({ err, matchedHandler: handler, callbackData, previousPendingAction, nextPendingAction: this.pendingAction, reason }, "Telegram callback routing failed");
+      await this.notifier.send(["⚠️ Кнопка отримана, але дія впала.", "", `Причина: ${reason.slice(0, 160)}`, "", "Оновлюю меню."].join("\n"));
+      await this.sendFreshMenu();
+    }
   }
 
   private async handleUiCallback(action: string): Promise<void> {
@@ -527,32 +544,32 @@ export class TelegramCommandCenter {
       return this.notifier.send(mainMenuText(), mainMenuKeyboard());
     }
     if (this.pendingAction) this.pendingAction = null;
-    if (button === "menu" || button === "back") return this.notifier.send(mainMenuText(), mainMenuKeyboard());
-    if (button === "signals") return this.sendTopSetups();
+    if (button === "menu" || button === "back") return this.sendFreshMenu();
+    if (button === "signals") return this.sendBusyThen("📊 Сигнали", () => this.sendTopSetups());
     if (button === "search_pair") return this.askPair("search");
     if (button === "watchlist") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
     if (button === "settings") return this.notifier.send(settingsText(), settingsKeyboard());
     if (button === "signal_pair") return this.askPair("signal");
     if (button === "watch_add") return this.askPair("watch");
     if (button === "watch_remove") return this.askPair("unwatch");
-    if (button === "top" || button === "signals_refresh") return this.sendTopSetups();
+    if (button === "top" || button === "signals_refresh") return this.sendBusyThen("🔥 Топ Сетапи", () => this.sendTopSetups());
     if (button === "positions") return this.askPair("search");
     if (button === "stats") return this.notifier.send(tradeStatsText(), mainMenuKeyboard());
     if (button === "new_tokens") return this.sendNewTokens();
     if (button === "watch_status") return this.notifier.send(watchStatusText(), watchlistActionsKeyboard());
-    if (button === "monitoring") return this.sendMonitoring();
-    if (button === "momentum") return this.sendMomentum("all");
-    if (button === "momentum_scalp") return this.sendMomentum("scalp");
-    if (button === "momentum_scalp_long") return this.sendMomentum("scalp_long");
-    if (button === "momentum_scalp_short") return this.sendMomentum("scalp_short");
-    if (button === "momentum_long") return this.sendMomentum("long");
-    if (button === "momentum_short") return this.sendMomentum("short");
-    if (button === "momentum_strongest") return this.sendMomentum("strongest");
+    if (button === "monitoring") return this.sendBusyThen("🔴 Моніторинг", () => this.sendMonitoring());
+    if (button === "momentum") return this.sendBusyThen("🚨 Великі рухи", () => this.sendMomentum("all"));
+    if (button === "momentum_scalp") return this.sendBusyThen("⚡ Scalp рухи", () => this.sendMomentum("scalp"));
+    if (button === "momentum_scalp_long") return this.sendBusyThen("📈 Scalp LONG", () => this.sendMomentum("scalp_long"));
+    if (button === "momentum_scalp_short") return this.sendBusyThen("📉 Scalp SHORT", () => this.sendMomentum("scalp_short"));
+    if (button === "momentum_long") return this.sendBusyThen("📈 Лідери LONG", () => this.sendMomentum("long"));
+    if (button === "momentum_short") return this.sendBusyThen("📉 Лідери SHORT", () => this.sendMomentum("short"));
+    if (button === "momentum_strongest") return this.sendBusyThen("🔥 Найсильніші рухи", () => this.sendMomentum("strongest"));
     if (button === "momentum_check") return this.askPair("momentum_check");
-    if (button === "whales") return this.sendWhaleScanner("all");
-    if (button === "whales_accumulation") return this.sendWhaleScanner("accumulation");
-    if (button === "whales_distribution") return this.sendWhaleScanner("distribution");
-    if (button === "whales_strongest") return this.sendWhaleScanner("strongest");
+    if (button === "whales") return this.sendBusyThen("🐋 Рух китів", () => this.sendWhaleScanner("all"));
+    if (button === "whales_accumulation") return this.sendBusyThen("📈 Кити: накопичення", () => this.sendWhaleScanner("accumulation"));
+    if (button === "whales_distribution") return this.sendBusyThen("📉 Кити: розподіл", () => this.sendWhaleScanner("distribution"));
+    if (button === "whales_strongest") return this.sendBusyThen("🔥 Кити: найсильніші", () => this.sendWhaleScanner("strongest"));
     if (button === "whales_check") return this.askPair("whale_check");
     if (button === "intelligence") return this.notifier.send(intelligenceText("overview"), intelligenceKeyboard());
     if (button === "pump_detector") return this.notifier.send(intelligenceText("pump"), intelligenceKeyboard());
@@ -569,6 +586,11 @@ export class TelegramCommandCenter {
     if (button === "telegram_ux") return this.notifier.send(settingsDetailText(action), settingsKeyboard());
     if (button === "risk_mode") return this.notifier.send(riskModeText(), riskModeKeyboard());
     if (button === "conservative" || button === "balanced" || button === "aggressive") return this.setRiskMode(riskModeFromButton(button));
+  }
+
+  private async sendBusyThen(label: string, fn: () => Promise<void>): Promise<void> {
+    await this.notifier.send(`⏳ ${label}: запит отримано, готую live-відповідь...`);
+    return fn();
   }
 
   private async sendPairSearch(query: string): Promise<void> {
