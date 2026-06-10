@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { config } from "./config";
@@ -18,6 +19,9 @@ import { analyzeSpot } from "./spotAnalysis";
 import { analyzeFutures } from "./marketAnalysis";
 import { ExchangeClient } from "./exchanges";
 import { formatMomentumAlert, formatMomentumList, momentumActionsKeyboard, MomentumScanner, type MomentumFilter, type MomentumMove } from "./momentumScanner";
+import { formatBtcForecast, formatBtcMarket, getBtcForecast } from "./btcForecast";
+import { formatAltseasonIndex, getAltseasonIndex } from "./altseason";
+import { formatDominanceImpact, formatEntrySignals, formatFvgSetups, formatLiquiditySweeps, formatSessionLevels, formatSmartAltseason, formatSmartBtcBias, formatSmartMoneyDashboard, formatSmartMoneyHome, getSmartMoneyReport } from "./smartMoneySignals";
 import type { Signal } from "./types";
 import type { Candle } from "./types";
 
@@ -102,12 +106,18 @@ export class TelegramCommandCenter {
   private acquirePollingLock() {
     const now = Date.now();
     const current = readPollingLock();
-    if (current && current.pid !== process.pid && isProcessAlive(current.pid) && now - current.updatedAt < 20_000) {
-      this.lastPollingError = `Polling already owned by pid ${current.pid}`;
-      logger.warn({ lock: current }, "Telegram polling lock is active; skipping duplicate listener");
-      return false;
+    if (current) {
+      const sameHost = current.host === hostname();
+      const sameCwd = current.cwd === process.cwd();
+      const pidAlive = current.pid !== process.pid && isProcessAlive(current.pid);
+      const recent = now - current.updatedAt < 20_000;
+      if (current.pid !== process.pid && pidAlive && recent && sameHost && sameCwd) {
+        this.lastPollingError = `Polling already owned by pid ${current.pid}`;
+        logger.warn({ lock: current }, "Telegram polling lock is active; skipping duplicate listener");
+        return false;
+      }
+      if (current.pid !== process.pid) logger.warn({ lock: current, reason: pidAlive ? "PID alive but host/CWD differs" : "PID dead" }, "Telegram polling lock is stale; taking over");
     }
-    if (current && current.pid !== process.pid) logger.warn({ lock: current }, "Telegram polling lock is stale; taking over");
     writePollingLock();
     this.lockAcquired = true;
     this.lockTimer = setInterval(writePollingLock, 5_000);
@@ -127,9 +137,20 @@ export class TelegramCommandCenter {
     this.polling = true;
     this.lastPollAt = new Date().toISOString();
     try {
-      if (!this.offsetInitialized) await this.resetPollingOffset();
-      const url = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/getUpdates?timeout=1&offset=${this.offset}`;
-      const res = await telegramFetch(url);
+      if (!this.offsetInitialized) {
+        await this.resetPollingOffset();
+        this.offsetInitialized = true;
+      }
+      const url = `https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/getUpdates?timeout=10&offset=${this.offset}`;
+      const res = await telegramFetch(url, undefined, 15_000);
+      if (res.status === 409) {
+        const body = await res.text().catch(() => "");
+        this.lastPollingError = `Telegram polling conflict: another getUpdates client is running. Clearing conflict and retrying. ${body}`.slice(0, 500);
+        logger.warn({ status: res.status, body }, "Telegram getUpdates 409 conflict — clearing webhook and retrying");
+        await this.clearPollingConflict();
+        this.lastPollingError = null;
+        return;
+      }
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         this.lastPollingError = `${res.status} ${body}`.slice(0, 300);
@@ -177,6 +198,21 @@ export class TelegramCommandCenter {
     }
   }
 
+  private async clearPollingConflict() {
+    try {
+      await telegramFetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/deleteWebhook`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ drop_pending_updates: true })
+      }, 10_000);
+      logger.info("Telegram webhook cleared after 409 conflict; next poll should succeed");
+    } catch (err) {
+      logger.warn({ err }, "Telegram deleteWebhook after 409 conflict failed");
+    }
+    this.offset = 0;
+    this.offsetInitialized = false;
+  }
+
   async handleForTest(text: string): Promise<void> {
     return this.handle(text);
   }
@@ -193,16 +229,21 @@ export class TelegramCommandCenter {
   private async resetPollingOffset() {
     if (!config.TELEGRAM_BOT_TOKEN) return;
     try {
-      await telegramFetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/deleteWebhook`, {
+      const res = await telegramFetch(`https://api.telegram.org/bot${config.TELEGRAM_BOT_TOKEN}/deleteWebhook`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ drop_pending_updates: false })
-      }).catch((error) => logger.warn({ err: error }, "Telegram deleteWebhook timed out; continuing with polling"));
-      this.offset = 0;
-      this.offsetInitialized = true;
-      logger.info({ offset: this.offset }, "Telegram polling initialized; pending updates preserved");
+      }, 10_000);
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        logger.warn({ status: res.status, body }, "Telegram deleteWebhook returned non-OK");
+      } else {
+        this.offset = 0;
+        logger.info({ offset: this.offset }, "Telegram polling initialized; pending updates preserved");
+      }
     } catch (err) {
-      logger.warn({ err }, "Telegram polling offset initialization failed");
+      logger.warn({ err }, "Telegram deleteWebhook failed; will retry on next poll");
+      throw err;
     }
   }
 
@@ -228,6 +269,15 @@ export class TelegramCommandCenter {
 
     if (["/start", "/menu"].includes(command) || button === "menu" || button === "back") return this.sendFreshMenu();
     if (button === "signals") return this.sendBusyThen("📊 Сигнали", () => this.sendTopSetups());
+    if (button === "smart_money") return this.sendSmartMoneyMenu();
+    if (button === "smart_btc_bias") return this.sendBusyThen("📈 BTC Bias", () => this.sendSmartMoneySection("btc_bias"));
+    if (button === "smart_sweeps") return this.sendBusyThen("💧 Liquidity Sweeps", () => this.sendSmartMoneySection("sweeps"));
+    if (button === "smart_fvg") return this.sendBusyThen("⚡ FVG Setups", () => this.sendSmartMoneySection("fvg"));
+    if (button === "smart_entries") return this.sendBusyThen("🎯 Entry Signals", () => this.sendSmartMoneySection("entries"));
+    if (button === "smart_sessions") return this.sendBusyThen("🌍 Session Levels", () => this.sendSmartMoneySection("sessions"));
+    if (button === "smart_altseason") return this.sendBusyThen("🏦 Altseason Index", () => this.sendSmartMoneySection("altseason"));
+    if (button === "smart_dominance") return this.sendBusyThen("🪙 BTC Dominance", () => this.sendSmartMoneySection("dominance"));
+    if (button === "smart_dashboard") return this.sendBusyThen("📊 Smart Money Dashboard", () => this.sendSmartMoneySection("dashboard"));
     if (button === "search_pair") return this.askPair("search");
     if (button === "watchlist") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
     if (button === "settings") return this.notifier.send(settingsText(), settingsKeyboard());
@@ -259,7 +309,10 @@ export class TelegramCommandCenter {
     if (button === "liquidation_status") return this.notifier.send(intelligenceText("liq"), intelligenceKeyboard());
     if (button === "market_regime") return this.notifier.send(intelligenceText("market"), intelligenceKeyboard());
     if (button === "market") return this.notifier.send(marketText(), marketActionsKeyboard());
-    if (button === "btc") return this.notifier.send(btcText(), marketActionsKeyboard());
+    if (button === "btc") return this.notifier.send(btcText(), btcActionsKeyboard());
+    if (button === "btc_forecast") return this.sendBusyThen("📈 Прогноз BTC", () => this.sendBtcForecast());
+    if (button === "altseason") return this.sendBusyThen("🌊 Альтсезон", () => this.sendAltseasonIndex());
+    if (button === "btc_market") return this.sendBusyThen("📊 Ринок BTC", () => this.sendBtcMarket());
     if (button === "diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
     if (button === "balance") return this.askPair("balance");
     if (button === "leverage") return this.notifier.send(leverageText(), leverageKeyboard());
@@ -273,12 +326,15 @@ export class TelegramCommandCenter {
     if (command === "/status") return this.notifier.send(statusText(), mainMenuKeyboard());
     if (command === "/okxdebug") return this.sendOkxDebug();
     if (command === "/signals") return this.sendBusyThen("📊 Сигнали", () => this.sendTopSetups());
+    if (command === "/smart" || command === "/prosignals") return this.sendSmartMoneyMenu();
     if (command === "/diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
     if (command === "/market") return this.notifier.send(marketText(), marketActionsKeyboard());
     if (command === "/whales") return this.sendBusyThen("🐋 Рух китів", () => this.sendWhaleScanner("all"));
     if (command === "/intelligence") return this.notifier.send(intelligenceText("overview"), intelligenceKeyboard());
     if (command === "/markethealth") return this.notifier.send(marketHealthText(), marketActionsKeyboard());
-    if (command === "/btc") return this.notifier.send(btcText(), marketActionsKeyboard());
+    if (command === "/btc") return this.notifier.send(btcText(), btcActionsKeyboard());
+    if (command === "/btcforecast") return this.sendBtcForecast();
+    if (command === "/altseason") return this.sendAltseasonIndex();
     if (command === "/positions") return this.askPair("search");
     if (command === "/stats") return this.notifier.send(tradeStatsText(), mainMenuKeyboard());
     if (command === "/settings") return this.notifier.send(settingsText(), settingsKeyboard());
@@ -516,14 +572,15 @@ export class TelegramCommandCenter {
   }
 
   private async routeCallback(handler: string, callbackData: string, fn: () => Promise<void>, previousPendingAction: PendingAction | null): Promise<void> {
+    const startedAt = Date.now();
     logger.info({ matchedHandler: handler, callbackData, previousPendingAction }, "Telegram callback matched handler");
     try {
       await fn();
-      logger.info({ matchedHandler: handler, callbackData, previousPendingAction, nextPendingAction: this.pendingAction }, "Telegram callback state transition completed");
+      logger.info({ matchedHandler: handler, callbackData, previousPendingAction, nextPendingAction: this.pendingAction, callbackLatencyMs: Date.now() - startedAt }, "Telegram callback state transition completed");
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       this.lastRouteError = reason;
-      logger.warn({ err, matchedHandler: handler, callbackData, previousPendingAction, nextPendingAction: this.pendingAction, reason }, "Telegram callback routing failed");
+      logger.warn({ err, matchedHandler: handler, callbackData, previousPendingAction, nextPendingAction: this.pendingAction, reason, callbackLatencyMs: Date.now() - startedAt }, "Telegram callback routing failed");
       await this.notifier.send(["⚠️ Кнопка отримана, але дія впала.", "", `Причина: ${reason.slice(0, 160)}`, "", "Оновлюю меню."].join("\n"));
       await this.sendFreshMenu();
     }
@@ -546,6 +603,15 @@ export class TelegramCommandCenter {
     if (this.pendingAction) this.pendingAction = null;
     if (button === "menu" || button === "back") return this.sendFreshMenu();
     if (button === "signals") return this.sendBusyThen("📊 Сигнали", () => this.sendTopSetups());
+    if (button === "smart_money") return this.sendSmartMoneyMenu();
+    if (button === "smart_btc_bias") return this.sendBusyThen("📈 BTC Bias", () => this.sendSmartMoneySection("btc_bias"));
+    if (button === "smart_sweeps") return this.sendBusyThen("💧 Liquidity Sweeps", () => this.sendSmartMoneySection("sweeps"));
+    if (button === "smart_fvg") return this.sendBusyThen("⚡ FVG Setups", () => this.sendSmartMoneySection("fvg"));
+    if (button === "smart_entries") return this.sendBusyThen("🎯 Entry Signals", () => this.sendSmartMoneySection("entries"));
+    if (button === "smart_sessions") return this.sendBusyThen("🌍 Session Levels", () => this.sendSmartMoneySection("sessions"));
+    if (button === "smart_altseason") return this.sendBusyThen("🏦 Altseason Index", () => this.sendSmartMoneySection("altseason"));
+    if (button === "smart_dominance") return this.sendBusyThen("🪙 BTC Dominance", () => this.sendSmartMoneySection("dominance"));
+    if (button === "smart_dashboard") return this.sendBusyThen("📊 Smart Money Dashboard", () => this.sendSmartMoneySection("dashboard"));
     if (button === "search_pair") return this.askPair("search");
     if (button === "watchlist") return this.notifier.send(watchlistText(), watchlistActionsKeyboard());
     if (button === "settings") return this.notifier.send(settingsText(), settingsKeyboard());
@@ -577,7 +643,10 @@ export class TelegramCommandCenter {
     if (button === "liquidation_status") return this.notifier.send(intelligenceText("liq"), intelligenceKeyboard());
     if (button === "market_regime") return this.notifier.send(intelligenceText("market"), intelligenceKeyboard());
     if (button === "market") return this.notifier.send(marketText(), marketActionsKeyboard());
-    if (button === "btc") return this.notifier.send(btcText(), marketActionsKeyboard());
+    if (button === "btc") return this.notifier.send(btcText(), btcActionsKeyboard());
+    if (button === "btc_forecast") return this.sendBusyThen("📈 Прогноз BTC", () => this.sendBtcForecast());
+    if (button === "altseason") return this.sendBusyThen("🌊 Альтсезон", () => this.sendAltseasonIndex());
+    if (button === "btc_market") return this.sendBusyThen("📊 Ринок BTC", () => this.sendBtcMarket());
     if (button === "diagnostics") return this.notifier.send(diagnosticsText(), diagnosticsActionsKeyboard());
     if (button === "balance") return this.askPair("balance");
     if (button === "leverage") return this.notifier.send(leverageText(), leverageKeyboard());
@@ -607,6 +676,47 @@ export class TelegramCommandCenter {
     const spot = await analyzeSpot(result.spot[0]?.symbol ?? result.best.symbol).catch((error) => ({ error: error instanceof Error ? error.message : String(error) }));
     if ("error" in spot) return this.notifier.send(`Пару знайдено, але аналіз зараз недоступний: ${spot.error}`, mainMenuKeyboard());
     return this.notifier.send(spotExecutionAnalysisText(spot), pairSearchKeyboard(spot.symbol, Boolean(result.futures.length), true));
+  }
+
+  private async sendBtcForecast(): Promise<void> {
+    const startedAt = Date.now();
+    const forecast = await getBtcForecast();
+    logger.info({ latencyMs: Date.now() - startedAt, sourceLatencyMs: forecast.latencyMs }, "Telegram BTC forecast response ready");
+    return this.notifier.send(formatBtcForecast(forecast), btcActionsKeyboard());
+  }
+
+  private async sendAltseasonIndex(): Promise<void> {
+    const startedAt = Date.now();
+    const index = await getAltseasonIndex();
+    logger.info({ latencyMs: Date.now() - startedAt, sourceLatencyMs: index.latencyMs, index: index.index, regime: index.regime }, "Telegram altseason response ready");
+    return this.notifier.send(formatAltseasonIndex(index), btcActionsKeyboard());
+  }
+
+  private async sendBtcMarket(): Promise<void> {
+    const startedAt = Date.now();
+    const forecast = await getBtcForecast();
+    logger.info({ latencyMs: Date.now() - startedAt, sourceLatencyMs: forecast.latencyMs, trend: forecast.market.trend }, "Telegram BTC market response ready");
+    return this.notifier.send(formatBtcMarket(forecast), btcActionsKeyboard());
+  }
+
+  private async sendSmartMoneyMenu(): Promise<void> {
+    logger.info("Telegram Smart Money menu opened");
+    return this.notifier.send(formatSmartMoneyHome(), smartMoneyKeyboard());
+  }
+
+  private async sendSmartMoneySection(section: "btc_bias" | "sweeps" | "fvg" | "entries" | "sessions" | "altseason" | "dominance" | "dashboard"): Promise<void> {
+    const startedAt = Date.now();
+    const report = await getSmartMoneyReport();
+    const text = section === "btc_bias" ? formatSmartBtcBias(report)
+      : section === "sweeps" ? formatLiquiditySweeps(report)
+      : section === "fvg" ? formatFvgSetups(report)
+      : section === "entries" ? formatEntrySignals(report)
+      : section === "sessions" ? formatSessionLevels(report)
+      : section === "altseason" ? formatSmartAltseason(report)
+      : section === "dashboard" ? formatSmartMoneyDashboard(report)
+      : formatDominanceImpact(report);
+    logger.info({ section, latencyMs: Date.now() - startedAt, sourceLatencyMs: report.latencyMs }, "Telegram Smart Money section response ready");
+    return this.notifier.send(text, smartMoneyKeyboard());
   }
 
   private async sendSpotAnalysis(pair: string): Promise<void> {
@@ -683,16 +793,16 @@ function telegramLockPath() {
   return join(dir, "telegram-polling.lock.json");
 }
 
-function readPollingLock(): { pid: number; updatedAt: number } | null {
+function readPollingLock(): { pid: number; updatedAt: number; host?: string; cwd?: string } | null {
   try {
-    return JSON.parse(readFileSync(telegramLockPath(), "utf8")) as { pid: number; updatedAt: number };
+    return JSON.parse(readFileSync(telegramLockPath(), "utf8")) as { pid: number; updatedAt: number; host?: string; cwd?: string };
   } catch {
     return null;
   }
 }
 
 function writePollingLock() {
-  writeFileSync(telegramLockPath(), JSON.stringify({ pid: process.pid, updatedAt: Date.now() }));
+  writeFileSync(telegramLockPath(), JSON.stringify({ pid: process.pid, updatedAt: Date.now(), host: hostname(), cwd: process.cwd() }));
 }
 
 function okxEnvDebug() {
@@ -745,6 +855,7 @@ function mainMenuKeyboard(): TelegramReplyMarkup {
       [uiButton("📊 Сигнали", "signals"), uiButton("🔎 Пошук по парах", "search_pair")],
       [uiButton("👀 Список моніторингу", "watchlist"), uiButton("📈 Ринок", "market")],
       [uiButton("₿ BTC Фільтр", "btc"), uiButton("🔥 Топ Сетапи", "top")],
+      [uiButton("🧠 Smart Money", "smart_money"), uiButton("🎯 Pro Signals", "smart_money")],
       [uiButton("🚨 Великі рухи", "momentum"), uiButton("🐋 Рух китів", "whales")],
       [uiButton("🧠 Інтелект", "intelligence"), uiButton("🪙 Нові монети", "new_tokens")],
       [uiButton("📊 Статистика", "stats"), uiButton("⚙️ Налаштування", "settings")],
@@ -760,6 +871,7 @@ function persistentMenuKeyboard(): TelegramReplyMarkup {
       [{ text: "📊 Сигнали" }, { text: "🔎 Пошук по парах" }],
       [{ text: "👀 Список моніторингу" }, { text: "📈 Ринок" }],
       [{ text: "₿ BTC Фільтр" }, { text: "🔥 Топ Сетапи" }],
+      [{ text: "🧠 Smart Money" }, { text: "🎯 Pro Signals" }],
       [{ text: "🚨 Великі рухи" }, { text: "🐋 Рух китів" }],
       [{ text: "🧠 Інтелект" }, { text: "🪙 Нові монети" }],
       [{ text: "📊 Статистика" }, { text: "⚙️ Налаштування" }],
@@ -810,6 +922,28 @@ function marketActionsKeyboard(): TelegramReplyMarkup {
       [uiButton("📡 Інтелект", "intelligence"), uiButton("Режим ринку", "market_regime")],
       [uiButton("📊 Сигнали", "signals"), uiButton("🔥 Топ Сетапи", "top")],
       [uiButton("₿ BTC Фільтр", "btc"), uiButton("🔙 Назад", "back")]
+    ]
+  };
+}
+
+function btcActionsKeyboard(): TelegramReplyMarkup {
+  return {
+    inline_keyboard: [
+      [uiButton("📈 Прогноз BTC", "btc_forecast"), uiButton("🌊 Альтсезон %", "altseason")],
+      [uiButton("📊 Ринок BTC", "btc_market")],
+      [uiButton("🔄 Оновити", "btc"), uiButton("⬅ Назад", "back")]
+    ]
+  };
+}
+
+function smartMoneyKeyboard(): TelegramReplyMarkup {
+  return {
+    inline_keyboard: [
+      [uiButton("📈 BTC Bias", "smart_btc_bias"), uiButton("💧 Liquidity Sweep", "smart_sweeps")],
+      [uiButton("⚡ FVG Setups", "smart_fvg"), uiButton("🎯 Entry Signals", "smart_entries")],
+      [uiButton("🌍 Session Levels", "smart_sessions"), uiButton("🏦 Altseason Index", "smart_altseason")],
+      [uiButton("🪙 BTC Dominance", "smart_dominance"), uiButton("📊 Dashboard", "smart_dashboard")],
+      [uiButton("🔄 Refresh", "smart_money"), uiButton("🏠 Back", "back")]
     ]
   };
 }
@@ -1332,7 +1466,12 @@ function btcText() {
     `Тренд: ${btcSignal?.side && btcSignal.side !== "NO_TRADE" ? btcSignal.side : "формується"}`,
     `Стабільність: ${latest?.btcStable ? "стабільний" : "нестабільний або немає даних"}`,
     `Напрям ринку: ${state.marketCondition}`,
-    `Волатильність: ${btcSignal?.marketRegime ?? "немає даних"}`
+    `Волатильність: ${btcSignal?.marketRegime ?? "немає даних"}`,
+    "",
+    "Додатково:",
+    "📈 Прогноз BTC — 1H/4H/1D напрям і сила",
+    "🌊 Альтсезон % — індекс ротації в альти",
+    "📊 Ринок BTC — швидкий risk/volatility режим"
   ].join("\n");
 }
 
@@ -2121,7 +2260,7 @@ function isMenuButton(text: string) {
   return buttonAction(text) !== null;
 }
 
-type ButtonAction = "menu" | "back" | "signals" | "search_pair" | "watchlist" | "settings" | "signal_pair" | "watch_add" | "watch_remove" | "top" | "signals_refresh" | "positions" | "stats" | "new_tokens" | "watch_status" | "monitoring" | "momentum" | "momentum_scalp" | "momentum_scalp_long" | "momentum_scalp_short" | "momentum_long" | "momentum_short" | "momentum_strongest" | "momentum_check" | "whales" | "whales_accumulation" | "whales_distribution" | "whales_strongest" | "whales_check" | "intelligence" | "pump_detector" | "whale_bias" | "liquidation_status" | "market_regime" | "market" | "btc" | "diagnostics" | "balance" | "leverage" | "x2" | "x3" | "notifications" | "telegram_ux" | "risk_mode" | "conservative" | "balanced" | "aggressive";
+type ButtonAction = "menu" | "back" | "signals" | "search_pair" | "watchlist" | "settings" | "signal_pair" | "watch_add" | "watch_remove" | "top" | "signals_refresh" | "positions" | "stats" | "new_tokens" | "watch_status" | "monitoring" | "momentum" | "momentum_scalp" | "momentum_scalp_long" | "momentum_scalp_short" | "momentum_long" | "momentum_short" | "momentum_strongest" | "momentum_check" | "whales" | "whales_accumulation" | "whales_distribution" | "whales_strongest" | "whales_check" | "intelligence" | "pump_detector" | "whale_bias" | "liquidation_status" | "market_regime" | "market" | "btc" | "btc_forecast" | "altseason" | "btc_market" | "smart_money" | "smart_btc_bias" | "smart_sweeps" | "smart_fvg" | "smart_entries" | "smart_sessions" | "smart_altseason" | "smart_dominance" | "smart_dashboard" | "diagnostics" | "balance" | "leverage" | "x2" | "x3" | "notifications" | "telegram_ux" | "risk_mode" | "conservative" | "balanced" | "aggressive";
 
 function buttonAction(text: string): ButtonAction | null {
   const normalized = normalizeButtonText(text).toLowerCase();
@@ -2163,6 +2302,18 @@ function buttonAction(text: string): ButtonAction | null {
     ["market_regime", ["market regime", "режим ринку"]],
     ["market", ["ринок", "оновити ринок", "market"]],
     ["btc", ["btc", "btc фільтр", "₿ btc фільтр", "btc filter"]],
+    ["btc_forecast", ["прогноз btc", "btc forecast", "forecast btc"]],
+    ["altseason", ["альтсезон", "альтсезон %", "altseason", "altseason index"]],
+    ["btc_market", ["ринок btc", "btc market"]],
+    ["smart_money", ["smart money", "pro signals", "institutional signals", "смарт мані", "інституційні сигнали"]],
+    ["smart_btc_bias", ["smart btc bias", "btc bias", "бтс bias"]],
+    ["smart_sweeps", ["smart sweeps", "liquidity sweeps", "sweeps", "ліквідність sweeps"]],
+    ["smart_fvg", ["smart fvg", "fvg setups", "fvg"]],
+    ["smart_entries", ["smart entries", "entry signals", "pro entries", "готові входи"]],
+    ["smart_sessions", ["smart sessions", "session levels", "session", "рівні сесій"]],
+    ["smart_altseason", ["smart altseason", "altseason smart"]],
+    ["smart_dominance", ["smart dominance", "btc dominance impact", "dominance impact"]],
+    ["smart_dashboard", ["smart dashboard", "smart money dashboard", "dashboard"]],
     ["diagnostics", ["діагностика", "оновити статус", "diagnostics"]],
     ["balance", ["баланс", "balance"]],
     ["leverage", ["плече", "leverage"]],
