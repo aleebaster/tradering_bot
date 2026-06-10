@@ -258,7 +258,7 @@ export class TelegramCommandCenter {
     const [rawCommand, rawPair] = cleanText.split(/\s+/, 2);
     const command = rawCommand.split("@")[0].toLowerCase();
     const pair = rawPair ? normalizePriorityPair(rawPair) : "";
-    logger.info({ text, cleanText, button, command }, "Telegram handler executed");
+    logger.info({ text, cleanText, textDebug: describeTelegramText(text), cleanTextDebug: describeTelegramText(cleanText), button, command }, "Telegram handler executed");
 
     if (command === "/momentum" || command === "/moves") return this.sendBusyThen("🚨 Великі рухи", () => this.sendMomentum("all"));
     if (command === "/scalp" || command === "/scalps") return this.sendBusyThen("⚡ Scalp рухи", () => this.sendMomentum("scalp"));
@@ -855,7 +855,7 @@ function mainMenuKeyboard(): TelegramReplyMarkup {
       [uiButton("📊 Сигнали", "signals"), uiButton("🔎 Пошук по парах", "search_pair")],
       [uiButton("👀 Список моніторингу", "watchlist"), uiButton("📈 Ринок", "market")],
       [uiButton("₿ BTC Фільтр", "btc"), uiButton("🔥 Топ Сетапи", "top")],
-      [uiButton("🧠 Smart Money", "smart_money"), uiButton("🎯 Pro Signals", "smart_money")],
+      [uiButton("🧠 Smart Money", "intelligence"), uiButton("🎯 Pro Signals", "top")],
       [uiButton("🚨 Великі рухи", "momentum"), uiButton("🐋 Рух китів", "whales")],
       [uiButton("🧠 Інтелект", "intelligence"), uiButton("🪙 Нові монети", "new_tokens")],
       [uiButton("📊 Статистика", "stats"), uiButton("⚙️ Налаштування", "settings")],
@@ -2295,13 +2295,14 @@ function buttonAction(text: string): ButtonAction | null {
     ["whales_distribution", ["тільки distribution", "distribution", "whales distribution"]],
     ["whales_strongest", ["найсильніші рухи", "strongest whale moves", "whales strongest"]],
     ["whales_check", ["перевірити кита", "перевірити whale", "check coin", "whales check"]],
-    ["intelligence", ["intelligence", "інтелект"]],
+    ["intelligence", ["intelligence", "інтелект", "smart money"]],
+    ["top", ["pro signals"]],
     ["pump_detector", ["pump detector", "pump"]],
     ["whale_bias", ["whale bias", "whale"]],
     ["liquidation_status", ["liquidation status", "liquidation"]],
     ["market_regime", ["market regime", "режим ринку"]],
     ["market", ["ринок", "оновити ринок", "market"]],
-    ["btc", ["btc", "btc фільтр", "₿ btc фільтр", "btc filter"]],
+    ["btc", ["btc", "btc фільтр", "₿ btc фільтр", "฿ btc фільтр", "btc filter"]],
     ["btc_forecast", ["прогноз btc", "btc forecast", "forecast btc"]],
     ["altseason", ["альтсезон", "альтсезон %", "altseason", "altseason index"]],
     ["btc_market", ["ринок btc", "btc market"]],
@@ -2346,6 +2347,13 @@ function normalizeButtonText(text: string) {
     .replace(/[\u200B-\u200D\u2060]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function describeTelegramText(text: string) {
+  return {
+    length: text.length,
+    codepoints: Array.from(text).map((char) => `U+${char.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0")}`).join(" ")
+  };
 }
 
 function fmt(n: number) {
