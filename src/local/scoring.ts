@@ -128,10 +128,13 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   if (confirmationProfile.smallAltStrict && score < 90) score = Math.min(score, 84);
   if (hardBlock.blocked) score = Math.min(score, hardBlock.maxScore);
   if (intel.hardRisk) score = Math.min(score, 79);
-  const levels = professionalTradeLevels(candles, precisionCandles, oneHourCandles, direction, a, sr);
+  const levelSide: "LONG" | "SHORT" = side === "SHORT" ? "SHORT" : "LONG";
+  const levels = professionalTradeLevels(candles, precisionCandles, oneHourCandles, levelSide, a, sr);
   const entry = levels.entry;
   const stopLoss = levels.stopLoss;
   const takeProfit = levels.takeProfit;
+  const avgEntry = (entry[0] + entry[1]) / 2;
+  logger.info({ symbol: snapshot.symbol, pipelineStage: "LEVELS_GENERATED", side: levelSide, entry, avgEntry: Math.round(avgEntry * 100) / 100, stopLoss, takeProfit, risk: Math.round(Math.abs(avgEntry - stopLoss) * 100) / 100, rr: Math.abs(avgEntry - stopLoss) > 0 ? Math.round(Math.abs(takeProfit[2] - avgEntry) / Math.abs(avgEntry - stopLoss) * 10) / 10 : 0 }, "DecisionEngine: professionalTradeLevels output");
   const rrValue = riskRewardValue(entry, stopLoss, takeProfit[2], direction);
   if (rrValue < 2) score = Math.min(score, 69);
   score = Math.max(score, earlySetupFloor(snapshot, { side, executionAligned: execution.aligned, htfScore: htf.score, trendStrength, mtf, volume, orderFlowScore: orderFlow.score, liquidityScore: liquidity.score, funding, fakeBreakoutRisk: fakeBreakout.risk, newsBlocked: newsRisk.blocked, rrValue }));
@@ -264,6 +267,8 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   }
 
   if (signal.side === "LONG" || signal.side === "SHORT") {
+    logger.info({ symbol: signal.symbol, pipelineStage: "PRE_VALIDATION", side: signal.side, entry: signal.entry, avgEntry: Math.round(avgEntry * 100) / 100, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit, score: signal.score, entryStatus: signal.entryStatus }, "DecisionEngine: signal before validation");
+
     const validatedSide = validateSignalDirection(signal);
     if (validatedSide !== signal.side) {
       logger.warn({ symbol: signal.symbol, originalSide: signal.side, detectedSide: validatedSide }, "Signal direction corrected based on SL/TP levels");
@@ -288,10 +293,12 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
 
     const validation = validateTrade(signal);
     if (!validation.valid) {
-      logger.warn({ symbol: signal.symbol, reason: validation.reason }, "Signal failed validation - downgrading");
+      logger.warn({ symbol: signal.symbol, pipelineStage: "VALIDATION_FAILED", reason: validation.reason, side: signal.side, entry: signal.entry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit }, "DecisionEngine: signal REJECTED by validator");
       signal.entryStatus = "NO_TRADE";
       signal.side = "NO_TRADE";
       signal.rejectionReason = validation.reason;
+    } else {
+      logger.info({ symbol: signal.symbol, pipelineStage: "VALIDATION_PASSED", side: signal.side, entry: signal.entry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit, score: signal.score, entryStatus: signal.entryStatus }, "DecisionEngine: signal VALIDATED, ready for execution");
     }
   }
 
@@ -555,12 +562,12 @@ function entrySniperTrigger(fiveMinute: Candle[], oneMinute: Candle[], direction
   return { ready: score >= 70, score };
 }
 
-function professionalTradeLevels(primary: Candle[], precision: Candle[], oneHour: Candle[], direction: number, a: number, sr: { support: number; resistance: number }) {
+function professionalTradeLevels(primary: Candle[], precision: Candle[], oneHour: Candle[], side: "LONG" | "SHORT", a: number, sr: { support: number; resistance: number }) {
   const last = primary.at(-1)!;
   const precisionSr = supportResistance(precision.length >= 30 ? precision : primary);
   const h1Sr = supportResistance(oneHour.length >= 30 ? oneHour : primary);
   const averageAtr = Math.max(a, atr(precision, 14), last.close * 0.001);
-  const long = direction >= 0;
+  const long = side === "LONG";
 
   const rawSupport = Math.max(sr.support, precisionSr.support);
   const rawResistance = Math.min(sr.resistance, precisionSr.resistance);
@@ -581,9 +588,36 @@ function professionalTradeLevels(primary: Candle[], precision: Candle[], oneHour
       stopLoss = avgEntry - averageAtr * 1.25;
     }
     risk = Math.max(Math.abs(avgEntry - stopLoss), averageAtr * 0.8);
-    const tp1 = Math.min(h1Sr.resistance, avgEntry + risk * 1.2);
-    const tp2 = Math.max(tp1, avgEntry + risk * 2);
-    const tp3 = Math.max(h1Sr.resistance, avgEntry + risk * 3);
+    const tp1Base = avgEntry + risk * 1.2;
+    const tp1 = h1Sr.resistance > avgEntry ? Math.min(h1Sr.resistance, tp1Base) : tp1Base;
+    const tp2 = Math.max(tp1 + risk * 0.3, avgEntry + risk * 2);
+    const tp3 = Math.max(tp2 + risk * 0.3, avgEntry + risk * 3);
+
+    if (stopLoss >= avgEntry) {
+      logger.error({ symbol: last.symbol, avgEntry, stopLoss, tp1, tp2, tp3 }, "LONG level validation FAILED: SL >= Entry, forcing correction");
+      stopLoss = avgEntry - averageAtr * 1.25;
+      risk = Math.abs(avgEntry - stopLoss);
+      const correctedTp1 = avgEntry + risk * 1.2;
+      const correctedTp2 = avgEntry + risk * 2;
+      const correctedTp3 = avgEntry + risk * 3;
+      return { entry, stopLoss, takeProfit: [correctedTp1, correctedTp2, correctedTp3] as [number, number, number] };
+    }
+    if (tp1 <= avgEntry || tp2 <= avgEntry || tp3 <= avgEntry) {
+      logger.error({ symbol: last.symbol, avgEntry, tp1, tp2, tp3 }, "LONG level validation FAILED: TP <= Entry, forcing correction");
+      const correctedTp1 = avgEntry + risk * 1.2;
+      const correctedTp2 = avgEntry + risk * 2;
+      const correctedTp3 = avgEntry + risk * 3;
+      return { entry, stopLoss, takeProfit: [correctedTp1, correctedTp2, correctedTp3] as [number, number, number] };
+    }
+    if (tp1 >= tp2 || tp2 >= tp3) {
+      logger.error({ symbol: last.symbol, tp1, tp2, tp3 }, "LONG level validation FAILED: TP not ascending, forcing correction");
+      const correctedTp1 = avgEntry + risk * 1.2;
+      const correctedTp2 = avgEntry + risk * 2;
+      const correctedTp3 = avgEntry + risk * 3;
+      return { entry, stopLoss, takeProfit: [correctedTp1, correctedTp2, correctedTp3] as [number, number, number] };
+    }
+
+    logger.debug({ symbol: last.symbol, side: "LONG", entry, avgEntry, stopLoss, risk: Math.round(risk * 100) / 100, tp1, tp2, tp3, rr1: Math.round((tp1 - avgEntry) / risk * 10) / 10, rr2: Math.round((tp2 - avgEntry) / risk * 10) / 10, rr3: Math.round((tp3 - avgEntry) / risk * 10) / 10 }, "professionalTradeLevels LONG generated");
     return { entry, stopLoss, takeProfit: [tp1, tp2, tp3] as [number, number, number] };
   } else {
     entry = [last.close - averageAtr * 0.08, Math.min(localResistance, last.close + averageAtr * 0.35)];
@@ -593,9 +627,36 @@ function professionalTradeLevels(primary: Candle[], precision: Candle[], oneHour
       stopLoss = avgEntry + averageAtr * 1.25;
     }
     risk = Math.max(Math.abs(stopLoss - avgEntry), averageAtr * 0.8);
-    const tp1 = Math.max(h1Sr.support, avgEntry - risk * 1.2);
-    const tp2 = Math.min(tp1, avgEntry - risk * 2);
-    const tp3 = Math.min(h1Sr.support, avgEntry - risk * 3);
+    const tp1Base = avgEntry - risk * 1.2;
+    const tp1 = h1Sr.support < avgEntry ? Math.max(h1Sr.support, tp1Base) : tp1Base;
+    const tp2 = Math.min(tp1 - risk * 0.3, avgEntry - risk * 2);
+    const tp3 = Math.min(tp2 - risk * 0.3, avgEntry - risk * 3);
+
+    if (stopLoss <= avgEntry) {
+      logger.error({ symbol: last.symbol, avgEntry, stopLoss, tp1, tp2, tp3 }, "SHORT level validation FAILED: SL <= Entry, forcing correction");
+      stopLoss = avgEntry + averageAtr * 1.25;
+      risk = Math.abs(stopLoss - avgEntry);
+      const correctedTp1 = avgEntry - risk * 1.2;
+      const correctedTp2 = avgEntry - risk * 2;
+      const correctedTp3 = avgEntry - risk * 3;
+      return { entry, stopLoss, takeProfit: [correctedTp1, correctedTp2, correctedTp3] as [number, number, number] };
+    }
+    if (tp1 >= avgEntry || tp2 >= avgEntry || tp3 >= avgEntry) {
+      logger.error({ symbol: last.symbol, avgEntry, tp1, tp2, tp3 }, "SHORT level validation FAILED: TP >= Entry, forcing correction");
+      const correctedTp1 = avgEntry - risk * 1.2;
+      const correctedTp2 = avgEntry - risk * 2;
+      const correctedTp3 = avgEntry - risk * 3;
+      return { entry, stopLoss, takeProfit: [correctedTp1, correctedTp2, correctedTp3] as [number, number, number] };
+    }
+    if (tp1 <= tp2 || tp2 <= tp3) {
+      logger.error({ symbol: last.symbol, tp1, tp2, tp3 }, "SHORT level validation FAILED: TP not descending, forcing correction");
+      const correctedTp1 = avgEntry - risk * 1.2;
+      const correctedTp2 = avgEntry - risk * 2;
+      const correctedTp3 = avgEntry - risk * 3;
+      return { entry, stopLoss, takeProfit: [correctedTp1, correctedTp2, correctedTp3] as [number, number, number] };
+    }
+
+    logger.debug({ symbol: last.symbol, side: "SHORT", entry, avgEntry, stopLoss, risk: Math.round(risk * 100) / 100, tp1, tp2, tp3, rr1: Math.round((avgEntry - tp1) / risk * 10) / 10, rr2: Math.round((avgEntry - tp2) / risk * 10) / 10, rr3: Math.round((avgEntry - tp3) / risk * 10) / 10 }, "professionalTradeLevels SHORT generated");
     return { entry, stopLoss, takeProfit: [tp1, tp2, tp3] as [number, number, number] };
   }
 }

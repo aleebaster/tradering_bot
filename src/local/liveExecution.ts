@@ -57,31 +57,66 @@ export class LiveExecution {
       return { success: false, error: `Validation failed: ${order.validationErrors.join("; ")}`, takeProfitOrderIds: [] };
     }
 
-    logger.info({ symbol: signal.symbol, side: order.side, quantity: order.quantity, leverage: order.leverage, marginMode: order.marginMode }, "Executing order");
+    logger.info({ symbol: signal.symbol, pipelineStage: "PRE_ORDER_SEND", signalSide: signal.side, signalEntry: signal.entry, signalStopLoss: signal.stopLoss, signalTakeProfit: signal.takeProfit, orderSide: order.side, orderQty: order.quantity, leverage: order.leverage, marginMode: order.marginMode, stopLoss: order.stopLoss, takeProfit: order.takeProfit }, "LiveExecution: pre-order validation PASSED");
+
+    const avgEntry = (signal.entry[0] + signal.entry[1]) / 2;
+    if (signal.side === "LONG") {
+      if (signal.stopLoss >= avgEntry) {
+        logger.error({ symbol: signal.symbol, side: signal.side, stopLoss: signal.stopLoss, avgEntry }, "CRITICAL PRE-SEND CHECK FAILED: LONG SL is above entry! Aborting execution.");
+        return { success: false, error: `LONG SL (${signal.stopLoss}) >= entry (${avgEntry})`, takeProfitOrderIds: [] };
+      }
+      if (signal.takeProfit[0] <= avgEntry) {
+        logger.error({ symbol: signal.symbol, side: signal.side, tp1: signal.takeProfit[0], avgEntry }, "CRITICAL PRE-SEND CHECK FAILED: LONG TP1 is below entry! Aborting execution.");
+        return { success: false, error: `LONG TP1 (${signal.takeProfit[0]}) <= entry (${avgEntry})`, takeProfitOrderIds: [] };
+      }
+    }
+    if (signal.side === "SHORT") {
+      if (signal.stopLoss <= avgEntry) {
+        logger.error({ symbol: signal.symbol, side: signal.side, stopLoss: signal.stopLoss, avgEntry }, "CRITICAL PRE-SEND CHECK FAILED: SHORT SL is below entry! Aborting execution.");
+        return { success: false, error: `SHORT SL (${signal.stopLoss}) <= entry (${avgEntry})`, takeProfitOrderIds: [] };
+      }
+      if (signal.takeProfit[0] >= avgEntry) {
+        logger.error({ symbol: signal.symbol, side: signal.side, tp1: signal.takeProfit[0], avgEntry }, "CRITICAL PRE-SEND CHECK FAILED: SHORT TP1 is above entry! Aborting execution.");
+        return { success: false, error: `SHORT TP1 (${signal.takeProfit[0]}) >= entry (${avgEntry})`, takeProfitOrderIds: [] };
+      }
+    }
+
+    logger.info({ symbol: signal.symbol, side: order.side, quantity: order.quantity, leverage: order.leverage, marginMode: order.marginMode }, "ORDER SENT: submitting main order to Bybit");
 
     const mainResult = await this.submitOrder(order);
     if (!mainResult.retCode || mainResult.retCode !== 0) {
-      logger.error({ symbol: signal.symbol, retCode: mainResult.retCode, retMsg: mainResult.retMsg }, "Main order failed");
+      logger.error({ symbol: signal.symbol, pipelineStage: "ORDER_FAILED", retCode: mainResult.retCode, retMsg: mainResult.retMsg, side: order.side, quantity: order.quantity }, "BYBIT RESPONSE: main order FAILED");
       return { success: false, error: `Order failed: ${mainResult.retMsg}`, takeProfitOrderIds: [] };
     }
 
     const orderId = mainResult.result?.orderId as string | undefined;
-    logger.info({ symbol: signal.symbol, orderId }, "Main order submitted successfully");
+    logger.info({ symbol: signal.symbol, pipelineStage: "ORDER_SUBMITTED", orderId, retCode: mainResult.retCode, retMsg: mainResult.retMsg }, "BYBIT RESPONSE: main order ACCEPTED");
 
     await this.waitForPosition(signal.symbol, signal.side);
 
+    const posStatus = await this.checkPosition(signal.symbol);
+    logger.info({ symbol: signal.symbol, pipelineStage: "POSITION_VERIFIED", positionExists: posStatus.exists, positionSide: posStatus.side, entryPrice: posStatus.entryPrice, quantity: posStatus.quantity, leverage: posStatus.leverage, marginMode: posStatus.marginMode }, "VERIFY POSITION: position status before SL/TP");
+
+    logger.info({ symbol: signal.symbol, pipelineStage: "SET_TRADING_STOP", stopLoss: signal.stopLoss, stopLossSide: signal.side === "LONG" ? "Sell" : "Buy", quantity: order.quantity }, "SET TRADING STOP: submitting stop loss order");
     const slResult = await this.setStopLoss(signal, order.quantity);
+    logger.info({ symbol: signal.symbol, pipelineStage: "STOP_LOSS_RESULT", retCode: slResult.retCode, retMsg: slResult.retMsg, stopLossOrderId: slResult.result?.orderId, triggerPrice: signal.stopLoss }, "BYBIT RESPONSE: stop loss");
+
+    logger.info({ symbol: signal.symbol, pipelineStage: "SET_TAKE_PROFITS", takeProfit: signal.takeProfit, side: signal.side }, "SET TAKE PROFIT: submitting take profit orders");
     const tpResults = await this.setTakeProfits(signal, order.quantity);
 
     const slSuccess = slResult.retCode === 0;
     const tpSuccess = tpResults.every(r => r.retCode === 0);
 
     if (!slSuccess) {
-      logger.error({ symbol: signal.symbol, slResult }, "Stop loss order failed");
+      logger.error({ symbol: signal.symbol, pipelineStage: "STOP_LOSS_FAILED", slResult, stopLoss: signal.stopLoss }, "BYBIT RESPONSE: stop loss order FAILED - CRITICAL: position has no SL protection!");
     }
     if (!tpSuccess) {
-      logger.error({ symbol: signal.symbol, tpResults }, "One or more take profit orders failed");
+      const failedTps = tpResults.filter(r => r.retCode !== 0);
+      logger.error({ symbol: signal.symbol, pipelineStage: "TAKE_PROFIT_PARTIAL_FAIL", failedCount: failedTps.length, tpResults }, "BYBIT RESPONSE: one or more take profit orders FAILED");
     }
+
+    const finalPos = await this.checkPosition(signal.symbol);
+    logger.info({ symbol: signal.symbol, pipelineStage: "FINAL_VERIFICATION", positionExists: finalPos.exists, positionSide: finalPos.side, entryPrice: finalPos.entryPrice, quantity: finalPos.quantity, slSet: slSuccess, tpsSet: tpSuccess, slTriggerPrice: signal.stopLoss, tp1TriggerPrice: signal.takeProfit[0], tp2TriggerPrice: signal.takeProfit[1], tp3TriggerPrice: signal.takeProfit[2] }, "VERIFY POSITION: final state after SL/TP setup");
 
     return {
       success: true,
@@ -156,23 +191,25 @@ export class LiveExecution {
   private async setStopLoss(signal: Signal, quantity: number): Promise<{ retCode: number; retMsg: string; result?: Record<string, unknown> }> {
     const endpoint = "/v5/order/create";
     const positionIdx = signal.side === "LONG" ? 1 : 2;
+    const triggerDirection = signal.side === "LONG" ? 2 : 1;
+    const closeSide = signal.side === "LONG" ? "Sell" : "Buy";
 
     const body = {
       category: "linear",
       symbol: signal.symbol,
-      side: signal.side === "LONG" ? "Sell" : "Buy",
+      side: closeSide,
       orderType: "Market",
       qty: String(quantity),
-      triggerDirection: signal.side === "LONG" ? 2 : 1,
+      triggerDirection,
       triggerPrice: String(signal.stopLoss),
       reduceOnly: true,
       closeOnTrigger: true,
       positionIdx
     };
 
-    logger.info({ symbol: signal.symbol, stopLoss: signal.stopLoss, side: body.side, qty: quantity }, "Setting stop loss");
+    logger.info({ symbol: signal.symbol, pipelineStage: "SL_ORDER_BODY", side: closeSide, triggerDirection, triggerPrice: signal.stopLoss, qty: quantity, positionIdx, expectedBehavior: signal.side === "LONG" ? "triggers when price FALLS below triggerPrice" : "triggers when price RISES above triggerPrice" }, "SET TRADING STOP: order body constructed");
     const response = await this.privateRequest(endpoint, body);
-    logger.info({ symbol: signal.symbol, retCode: response.retCode, retMsg: response.retMsg, orderId: response.result?.orderId }, "Stop loss result");
+    logger.info({ symbol: signal.symbol, pipelineStage: "SL_ORDER_RESPONSE", retCode: response.retCode, retMsg: response.retMsg, orderId: response.result?.orderId, triggerPrice: signal.stopLoss }, "BYBIT RESPONSE: stop loss order");
     return response;
   }
 
@@ -186,26 +223,31 @@ export class LiveExecution {
 
     for (let i = 0; i < signal.takeProfit.length; i++) {
       const tpQty = quantity * (tpPercentages[i] / 100);
-      if (tpQty <= 0) continue;
+      if (tpQty <= 0) {
+        logger.info({ symbol: signal.symbol, tpIndex: i + 1, tpPercentage: tpPercentages[i], tpQty }, "TP SKIPPED: zero quantity for this level");
+        continue;
+      }
 
       const positionIdx = signal.side === "LONG" ? 1 : 2;
       const endpoint = "/v5/order/create";
+      const closeSide = signal.side === "LONG" ? "Sell" : "Buy";
+      const triggerDirection = signal.side === "LONG" ? 1 : 2;
 
       const body = {
         category: "linear",
         symbol: signal.symbol,
-        side: signal.side === "LONG" ? "Sell" : "Buy",
+        side: closeSide,
         orderType: "Market",
         qty: String(Math.max(0, Math.round(tpQty * 1_000_000) / 1_000_000)),
-        triggerDirection: signal.side === "LONG" ? 1 : 2,
+        triggerDirection,
         triggerPrice: String(signal.takeProfit[i]),
         reduceOnly: true,
         positionIdx
       };
 
-      logger.info({ symbol: signal.symbol, tpIndex: i + 1, takeProfit: signal.takeProfit[i], qty: tpQty }, `Setting TP${i + 1}`);
+      logger.info({ symbol: signal.symbol, pipelineStage: `TP${i + 1}_ORDER_BODY`, side: closeSide, triggerDirection, triggerPrice: signal.takeProfit[i], qty: tpQty, percentage: tpPercentages[i], positionIdx, expectedBehavior: signal.side === "LONG" ? `triggers when price RISES above ${signal.takeProfit[i]}` : `triggers when price FALLS below ${signal.takeProfit[i]}` }, `SET TAKE PROFIT ${i + 1}: order body constructed`);
       const response = await this.privateRequest(endpoint, body);
-      logger.info({ symbol: signal.symbol, tpIndex: i + 1, retCode: response.retCode, retMsg: response.retMsg }, `TP${i + 1} result`);
+      logger.info({ symbol: signal.symbol, pipelineStage: `TP${i + 1}_ORDER_RESPONSE`, retCode: response.retCode, retMsg: response.retMsg, orderId: response.result?.orderId, triggerPrice: signal.takeProfit[i] }, `BYBIT RESPONSE: TP${i + 1}`);
       results.push(response);
     }
 
@@ -216,13 +258,13 @@ export class LiveExecution {
     for (let i = 0; i < maxAttempts; i++) {
       const pos = await this.checkPosition(symbol);
       if (pos.exists && pos.side === side && (pos.quantity ?? 0) > 0) {
-        logger.info({ symbol, side, entryPrice: pos.entryPrice, quantity: pos.quantity }, "Position confirmed");
+        logger.info({ symbol, pipelineStage: "POSITION_OPENED", side, entryPrice: pos.entryPrice, quantity: pos.quantity, leverage: pos.leverage, marginMode: pos.marginMode, attempt: i + 1 }, "POSITION OPENED: confirmed on Bybit");
         return;
       }
-      logger.debug({ symbol, attempt: i + 1, maxAttempts }, "Waiting for position to appear");
+      logger.debug({ symbol, attempt: i + 1, maxAttempts, positionExists: pos.exists, positionSide: pos.side, quantity: pos.quantity }, "Waiting for position to appear");
       await new Promise(resolve => setTimeout(resolve, delayMs));
     }
-    logger.warn({ symbol, side }, "Position not confirmed within timeout - continuing with SL/TP setup");
+    logger.warn({ symbol, side }, "POSITION NOT CONFIRMED: continuing with SL/TP setup anyway (risk: position may not exist)");
   }
 
   private async submitOrder(order: FormattedOrder): Promise<{ retCode: number; retMsg: string; result?: Record<string, unknown> }> {
@@ -244,7 +286,7 @@ export class LiveExecution {
       body.timeInForce = "GTC";
     }
 
-    logger.info({ symbol: order.symbol, side: order.side, type: order.orderType, qty: order.quantity, price: order.price, leverage: order.leverage }, "Submitting main order");
+    logger.info({ symbol: order.symbol, pipelineStage: "SUBMIT_ORDER_BODY", side: order.side, orderType: order.orderType, quantity: order.quantity, price: order.price, leverage: order.leverage, positionIdx: order.positionIdx, body }, "ORDER SENT: Bybit API request body");
     return this.privateRequest(endpoint, body);
   }
 
