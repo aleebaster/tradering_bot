@@ -2,9 +2,11 @@ import { analyzeSmc } from "./smc";
 import { atr, clamp, ema, macd, rsi, supportResistance, volumeProfileScore, vwap } from "./indicators";
 import { calculatePositionSizing } from "./positionSizing";
 import { config } from "./config";
-import { adaptiveWeights } from "./learning";
+import { adaptiveWeights, symbolConfidenceMultiplier, isSymbolPaused } from "./learning";
 import { paperSetupConfidenceAdjustment } from "./paperTrading";
 import { realTradeQualityAdjustment } from "./tradeMemory";
+import { validateTrade, correctSignalLevels, validateSignalDirection } from "./tradeValidator";
+import { logger } from "./logger";
 import type { AccuracyRisk, AccuracySession, Candle, CorrelationContext, FakeBreakoutAnalysis, FastMoveQuality, HigherTimeframeBias, LiquidityIntelligence, MarketRegime, MarketSnapshot, OpenInterestAnalysis, OrderFlowAnalysis, Signal, SignalGrade, Side } from "./types";
 
 export function regimeFrom(candles: MarketSnapshot["candles"]): MarketRegime {
@@ -58,6 +60,11 @@ export function marketThresholdProfile(regime: MarketRegime, btcOk: boolean) {
 }
 
 export function buildSignal(snapshot: MarketSnapshot): Signal {
+  if (isSymbolPaused(snapshot.symbol)) {
+    logger.info({ symbol: snapshot.symbol }, "Symbol is paused by learning engine - returning NO_TRADE");
+    return emptyNoTradeSignal(snapshot);
+  }
+
   const primaryTf = snapshot.mode === "futures" ? "15" : "240";
   const candles = snapshot.candles[primaryTf] ?? [];
   const precisionCandles = snapshot.candles["1"] ?? snapshot.candles["5"] ?? candles;
@@ -249,11 +256,45 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   };
   const realAdjustment = realTradeQualityAdjustment(signal);
   signal.scoreBreakdown.realTradeMemoryAdjustment = Math.round(realAdjustment * 100) / 100;
-  if (realAdjustment === 0 || signal.score < 72) return signal;
-  const adjustedScore = Math.round(clamp(signal.score + realAdjustment, 0, 100));
-  signal.score = adjustedScore;
-  signal.confidence = adjustedScore;
-  signal.winProbability = Math.round(clamp(adjustedScore, 0, 94));
+  if (realAdjustment !== 0 && signal.score >= 72) {
+    const adjustedScore = Math.round(clamp(signal.score + realAdjustment, 0, 100));
+    signal.score = adjustedScore;
+    signal.confidence = adjustedScore;
+    signal.winProbability = Math.round(clamp(adjustedScore, 0, 94));
+  }
+
+  if (signal.side === "LONG" || signal.side === "SHORT") {
+    const validatedSide = validateSignalDirection(signal);
+    if (validatedSide !== signal.side) {
+      logger.warn({ symbol: signal.symbol, originalSide: signal.side, detectedSide: validatedSide }, "Signal direction corrected based on SL/TP levels");
+      signal.side = validatedSide as Side;
+    }
+
+    const corrected = correctSignalLevels(signal);
+    if (corrected.stopLoss !== signal.stopLoss || corrected.takeProfit.some((tp, i) => tp !== signal.takeProfit[i])) {
+      logger.warn({ symbol: signal.symbol, originalSL: signal.stopLoss, correctedSL: corrected.stopLoss, originalTP: signal.takeProfit, correctedTP: corrected.takeProfit }, "Signal levels corrected");
+      signal.stopLoss = corrected.stopLoss;
+      signal.takeProfit = corrected.takeProfit;
+    }
+
+    const symbolMult = symbolConfidenceMultiplier(snapshot.symbol);
+    if (symbolMult !== 1) {
+      const adjusted = Math.round(clamp(signal.score * symbolMult, 0, 100));
+      logger.info({ symbol: signal.symbol, originalScore: signal.score, adjustedScore: adjusted, multiplier: symbolMult }, "Applied symbol confidence multiplier");
+      signal.score = adjusted;
+      signal.confidence = adjusted;
+      signal.winProbability = Math.round(clamp(adjusted, 0, 94));
+    }
+
+    const validation = validateTrade(signal);
+    if (!validation.valid) {
+      logger.warn({ symbol: signal.symbol, reason: validation.reason }, "Signal failed validation - downgrading");
+      signal.entryStatus = "NO_TRADE";
+      signal.side = "NO_TRADE";
+      signal.rejectionReason = validation.reason;
+    }
+  }
+
   return signal;
 }
 
@@ -520,20 +561,43 @@ function professionalTradeLevels(primary: Candle[], precision: Candle[], oneHour
   const h1Sr = supportResistance(oneHour.length >= 30 ? oneHour : primary);
   const averageAtr = Math.max(a, atr(precision, 14), last.close * 0.001);
   const long = direction >= 0;
-  const localSupport = Math.max(sr.support, precisionSr.support);
-  const localResistance = Math.min(sr.resistance, precisionSr.resistance);
-  const entry: [number, number] = long
-    ? [Math.max(localSupport, last.close - averageAtr * 0.35), last.close + averageAtr * 0.08]
-    : [last.close - averageAtr * 0.08, Math.min(localResistance, last.close + averageAtr * 0.35)];
-  const averageEntry = (entry[0] + entry[1]) / 2;
-  const stopLoss = long
-    ? Math.min(localSupport - averageAtr * 0.25, averageEntry - averageAtr * 1.25)
-    : Math.max(localResistance + averageAtr * 0.25, averageEntry + averageAtr * 1.25);
-  const risk = Math.max(Math.abs(averageEntry - stopLoss), averageAtr * 0.8);
-  const tp1 = long ? Math.min(h1Sr.resistance, averageEntry + risk * 1.2) : Math.max(h1Sr.support, averageEntry - risk * 1.2);
-  const tp2 = long ? Math.max(tp1, averageEntry + risk * 2) : Math.min(tp1, averageEntry - risk * 2);
-  const tp3 = long ? Math.max(h1Sr.resistance, averageEntry + risk * 3) : Math.min(h1Sr.support, averageEntry - risk * 3);
-  return { entry, stopLoss, takeProfit: [tp1, tp2, tp3] as [number, number, number] };
+
+  const rawSupport = Math.max(sr.support, precisionSr.support);
+  const rawResistance = Math.min(sr.resistance, precisionSr.resistance);
+  const rangeWidth = rawResistance - rawSupport;
+  const minRange = averageAtr * 0.5;
+  const localSupport = rangeWidth < minRange ? last.close - minRange * 0.6 : rawSupport;
+  const localResistance = rangeWidth < minRange ? last.close + minRange * 0.4 : rawResistance;
+
+  let entry: [number, number];
+  let stopLoss: number;
+  let risk: number;
+
+  if (long) {
+    entry = [Math.max(localSupport, last.close - averageAtr * 0.35), last.close + averageAtr * 0.08];
+    const avgEntry = (entry[0] + entry[1]) / 2;
+    stopLoss = Math.min(localSupport - averageAtr * 0.25, avgEntry - averageAtr * 1.25);
+    if (stopLoss >= avgEntry) {
+      stopLoss = avgEntry - averageAtr * 1.25;
+    }
+    risk = Math.max(Math.abs(avgEntry - stopLoss), averageAtr * 0.8);
+    const tp1 = Math.min(h1Sr.resistance, avgEntry + risk * 1.2);
+    const tp2 = Math.max(tp1, avgEntry + risk * 2);
+    const tp3 = Math.max(h1Sr.resistance, avgEntry + risk * 3);
+    return { entry, stopLoss, takeProfit: [tp1, tp2, tp3] as [number, number, number] };
+  } else {
+    entry = [last.close - averageAtr * 0.08, Math.min(localResistance, last.close + averageAtr * 0.35)];
+    const avgEntry = (entry[0] + entry[1]) / 2;
+    stopLoss = Math.max(localResistance + averageAtr * 0.25, avgEntry + averageAtr * 1.25);
+    if (stopLoss <= avgEntry) {
+      stopLoss = avgEntry + averageAtr * 1.25;
+    }
+    risk = Math.max(Math.abs(stopLoss - avgEntry), averageAtr * 0.8);
+    const tp1 = Math.max(h1Sr.support, avgEntry - risk * 1.2);
+    const tp2 = Math.min(tp1, avgEntry - risk * 2);
+    const tp3 = Math.min(h1Sr.support, avgEntry - risk * 3);
+    return { entry, stopLoss, takeProfit: [tp1, tp2, tp3] as [number, number, number] };
+  }
 }
 
 function managementText(side: Side, entryStatus: Signal["entryStatus"]) {
@@ -788,4 +852,44 @@ function signalTtlMs(score: number) {
 
 function neutralCorrelation(): CorrelationContext {
   return { btcDirection: 0, ethDirection: 0, total3Direction: 0, btcDominanceDirection: 0, dxyDirection: 0, nasdaqDirection: 0, aligned: false, riskOff: false, details: ["correlation data unavailable"] };
+}
+
+function emptyNoTradeSignal(snapshot: MarketSnapshot): Signal {
+  return {
+    id: `${snapshot.symbol}-${snapshot.mode}-${Date.now()}`,
+    createdAt: new Date().toISOString(),
+    symbol: snapshot.symbol,
+    mode: snapshot.mode,
+    side: "NO_TRADE",
+    score: 0,
+    winProbability: 0,
+    confidence: 0,
+    grade: "D",
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    session: { name: "OFF_HOURS", active: false, confidenceAdjustment: 0, message: "" },
+    newsRisk: { blocked: true, severity: "HIGH", message: "Symbol paused by learning engine", reasons: ["Symbol paused due to poor performance"] },
+    higherTimeframe: { direction: 0, aligned: false, executionAligned: false, counterTrend: false, confidenceAdjustment: 0, score: 0, details: [] },
+    liquidityIntelligence: { direction: 0, score: 0, sweptAbove: false, sweptBelow: false, liquidityPoolAbove: 0, liquidityPoolBelow: 0, message: "" },
+    orderFlow: { cvd: 0, direction: 0, score: 0, trapRisk: false, message: "" },
+    openInterestAnalysis: { direction: 0, score: 0, message: "" },
+    fakeBreakout: { risk: true, score: 0, reasons: ["Symbol paused"], message: "" },
+    fastMoveQuality: { clean: false, score: 0, message: "", reasons: [] },
+    correlation: neutralCorrelation(),
+    currentPrice: snapshot.candles["15"]?.at(-1)?.close ?? 0,
+    entryStatus: "NO_TRADE",
+    entry: [0, 0],
+    stopLoss: 0,
+    takeProfit: [0, 0, 0],
+    riskReward: "Немає даних",
+    invalidationLevel: 0,
+    holdTime: "",
+    marketRegime: snapshot.regime,
+    btcStable: snapshot.btcStable,
+    confirmations: snapshot.confirmations,
+    reasons: ["Symbol paused by learning engine due to poor performance"],
+    rejectionReason: "Symbol temporarily paused - too many consecutive losses or low win rate",
+    scoreBreakdown: {},
+    tradeManagementActions: [],
+    management: "PAUSED"
+  };
 }

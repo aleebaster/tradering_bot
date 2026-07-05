@@ -1,10 +1,13 @@
 import { config } from "./config";
 import { conservativeModeActive } from "./lossProtection";
 import { loadTelegramSettings, maxLeverageNumber, riskMultiplier } from "./telegramSettings";
+import { logger } from "./logger";
 import type { MarketRegime, PositionSizing, Side } from "./types";
 
 const ALLOWED_LEVERAGE = [2, 3] as const;
 const BYBIT_ROUND_TRIP_TAKER_FEE_PERCENT = 0.11;
+const MIN_NOTIONAL_USDT = 5;
+const MIN_QUANTITY = 0.001;
 
 export interface PositionSizingInput {
   symbol: string;
@@ -49,9 +52,21 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
   const positionSizeUsdt = roundMoney(Math.max(0, Math.min(fullNotional, maxSafeNotional)) * starterFactor);
   if (!isFinitePositive(positionSizeUsdt)) return undefined;
 
+  if (positionSizeUsdt < MIN_NOTIONAL_USDT) {
+    logger.warn({ symbol: input.symbol, positionSizeUsdt, minNotional: MIN_NOTIONAL_USDT }, "Position size below exchange minimum");
+    return undefined;
+  }
+
   const marginUsdt = roundMoney(positionSizeUsdt / leverage);
   const quantity = roundQuantity(positionSizeUsdt / averageEntry);
-  const potentialLossUsdt = roundMoney(quantity * Math.abs(averageEntry - input.stopLoss));
+  const effectiveQty = adjustQuantityForExchange(quantity, input.symbol);
+
+  if (effectiveQty < MIN_QUANTITY) {
+    logger.warn({ symbol: input.symbol, quantity: effectiveQty, minQuantity: MIN_QUANTITY }, "Quantity below exchange minimum");
+    return undefined;
+  }
+
+  const potentialLossUsdt = roundMoney(effectiveQty * Math.abs(averageEntry - input.stopLoss));
   const potentialProfitUsdt = input.takeProfit.map((tp) => roundMoney(quantity * Math.abs(tp - averageEntry))) as [number, number, number];
   const accountRiskPercent = roundPercent(balanceUsdt > 0 ? potentialLossUsdt / balanceUsdt * 100 : 0);
   const liquidationSafetyPercent = roundPercent(Math.max(0, 100 / leverage - priceRiskPercent));
@@ -63,7 +78,7 @@ export function calculatePositionSizing(input: PositionSizingInput): PositionSiz
     marginUsdt,
     leverage: `x${leverage}` as PositionSizing["leverage"],
     positionSizeUsdt,
-    quantity,
+    quantity: effectiveQty,
     baseAsset: baseAsset(input.symbol),
     entryRange: input.entry,
     averageEntry,
@@ -241,4 +256,18 @@ function roundQuantity(value: number) {
   if (value >= 1000) return Math.floor(value);
   if (value >= 1) return Math.floor(value * 1000) / 1000;
   return Math.floor(value * 1_000_000) / 1_000_000;
+}
+
+function adjustQuantityForExchange(qty: number, symbol: string): number {
+  if (symbol.includes("1000")) {
+    if (qty >= 1000) return Math.floor(qty);
+    if (qty >= 100) return Math.floor(qty * 10) / 10;
+    if (qty >= 10) return Math.floor(qty * 100) / 100;
+    return Math.floor(qty * 1000) / 1000;
+  }
+  if (qty >= 1000) return Math.floor(qty);
+  if (qty >= 100) return Math.floor(qty * 10) / 10;
+  if (qty >= 10) return Math.floor(qty * 100) / 100;
+  if (qty >= 1) return Math.floor(qty * 1000) / 1000;
+  return Math.floor(qty * 1_000_000) / 1_000_000;
 }

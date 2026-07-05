@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { MarketRegime, Signal } from "./types";
+import { logger } from "./logger";
 
 const filePath = path.join(process.cwd(), "data", "learning-state.json");
 const minTradesToAdapt = 20;
@@ -11,6 +12,19 @@ const defaultWeights = { smc: 1, macd: 1, volume: 1, orderFlow: 1, liquidity: 1,
 type WeightKey = keyof typeof defaultWeights;
 type Outcome = "TP" | "SL" | "FAKE_BREAKOUT";
 type RegimeBucket = "trending" | "sideways" | "high_volatility" | "low_volatility";
+
+interface SymbolStats {
+  wins: number;
+  losses: number;
+  totalPnl: number;
+  winRate: number;
+  avgConfidence: number;
+  lastTradeAt: string;
+  consecutiveLosses: number;
+  confidenceMultiplier: number;
+  isPaused: boolean;
+  pauseUntil: string | null;
+}
 
 interface LearningTrade {
   id: string;
@@ -32,6 +46,7 @@ interface LearningState {
   weights: Record<WeightKey, number>;
   regimeModifiers: Record<RegimeBucket, Record<WeightKey, number>>;
   patterns: Record<string, { wins: number; losses: number }>;
+  symbolStats: Record<string, SymbolStats>;
   trades: LearningTrade[];
 }
 
@@ -43,6 +58,7 @@ const defaults: LearningState = {
   weights: { ...defaultWeights },
   regimeModifiers: emptyRegimeModifiers(),
   patterns: {},
+  symbolStats: {},
   trades: []
 };
 
@@ -72,12 +88,15 @@ export function recordLearningOutcome(signal: Signal, outcome: Outcome) {
     createdAt: new Date().toISOString()
   });
   state.trades = state.trades.slice(0, 300);
+
+  updateSymbolStats(state, signal, outcome);
+
   recomputeSafeLearning(state);
   save(state);
 }
 
 export function resetLearning() {
-  const state = { ...defaults, weights: { ...defaultWeights }, regimeModifiers: emptyRegimeModifiers(), patterns: {}, trades: [] };
+  const state = { ...defaults, weights: { ...defaultWeights }, regimeModifiers: emptyRegimeModifiers(), patterns: {}, symbolStats: {}, trades: [] };
   save(state);
   return state;
 }
@@ -86,8 +105,18 @@ export function learningStatusText() {
   const state = load();
   const best = rankedPattern(state, true);
   const worst = rankedPattern(state, false);
+  const symbolLines = Object.entries(state.symbolStats)
+    .sort(([, a], [, b]) => b.wins + b.losses - (a.wins + a.losses))
+    .slice(0, 10)
+    .map(([symbol, stats]) => {
+      const wr = stats.wins + stats.losses > 0 ? Math.round(stats.wins / (stats.wins + stats.losses) * 100) : 0;
+      const status = stats.isPaused ? "PAUSED" : stats.consecutiveLosses >= 3 ? "WARNING" : "ACTIVE";
+      const confMult = stats.confidenceMultiplier !== 1 ? ` (conf x${stats.confidenceMultiplier.toFixed(2)})` : "";
+      return `  ${symbol}: ${wr}% WR, ${stats.wins}W/${stats.losses}L, ${status}${confMult}`;
+    });
+
   return [
-    "🧠 Режим навчання",
+    "Режим навчання",
     "",
     "Режим: БЕЗПЕЧНИЙ / КОНТРОЛЬОВАНИЙ",
     `Завершені угоди: ${state.total}`,
@@ -105,7 +134,10 @@ export function learningStatusText() {
     `Найгірший сетап: ${worst}`,
     "",
     "Модифікатори режимів:",
-    ...Object.entries(state.regimeModifiers).map(([regime, weights]) => `${regime}: MACD ${modifier(weights.macd)}, VOL ${modifier(weights.volume)}, LIQ ${modifier(weights.liquidity)}`)
+    ...Object.entries(state.regimeModifiers).map(([regime, weights]) => `${regime}: MACD ${modifier(weights.macd)}, VOL ${modifier(weights.volume)}, LIQ ${modifier(weights.liquidity)}`),
+    "",
+    "Статистика по символах:",
+    ...symbolLines
   ].join("\n");
 }
 
@@ -223,12 +255,12 @@ function decayFactor(index: number) {
 function load(): LearningState {
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Partial<LearningState>;
-    const migrated = { ...defaults, ...parsed, weights: { ...defaultWeights, ...(parsed.weights ?? {}) }, regimeModifiers: { ...emptyRegimeModifiers(), ...(parsed.regimeModifiers ?? {}) }, patterns: parsed.patterns ?? {}, trades: Array.isArray(parsed.trades) ? parsed.trades : [] };
+    const migrated = { ...defaults, ...parsed, weights: { ...defaultWeights, ...(parsed.weights ?? {}) }, regimeModifiers: { ...emptyRegimeModifiers(), ...(parsed.regimeModifiers ?? {}) }, patterns: parsed.patterns ?? {}, symbolStats: parsed.symbolStats ?? {}, trades: Array.isArray(parsed.trades) ? parsed.trades : [] };
     const safe = { ...migrated, weights: sanitizeWeights(migrated.weights), regimeModifiers: sanitizeRegimes(migrated.regimeModifiers), patterns: patternStats(migrated.trades) };
     if (safe.total < minTradesToAdapt || safe.trades.filter((trade) => (trade.impact ?? 0) > 0).length < minTradesToAdapt) return { ...safe, weights: { ...defaultWeights }, regimeModifiers: emptyRegimeModifiers() };
     return safe;
   } catch {
-    return { ...defaults, weights: { ...defaultWeights }, regimeModifiers: emptyRegimeModifiers(), patterns: {}, trades: [] };
+    return { ...defaults, weights: { ...defaultWeights }, regimeModifiers: emptyRegimeModifiers(), patterns: {}, symbolStats: {}, trades: [] };
   }
 }
 
@@ -263,4 +295,100 @@ function clampWeight(value: number) {
 function modifier(value: number) {
   const pct = Math.round((value - 1) * 1000) / 10;
   return `${pct > 0 ? "+" : ""}${pct}%`;
+}
+
+function updateSymbolStats(state: LearningState, signal: Signal, outcome: Outcome) {
+  const symbol = signal.symbol;
+  if (!state.symbolStats[symbol]) {
+    state.symbolStats[symbol] = {
+      wins: 0,
+      losses: 0,
+      totalPnl: 0,
+      winRate: 0,
+      avgConfidence: 0,
+      lastTradeAt: new Date().toISOString(),
+      consecutiveLosses: 0,
+      confidenceMultiplier: 1,
+      isPaused: false,
+      pauseUntil: null
+    };
+  }
+
+  const stats = state.symbolStats[symbol];
+  const tradeCount = stats.wins + stats.losses;
+
+  if (outcome === "TP") {
+    stats.wins += 1;
+    stats.consecutiveLosses = 0;
+  } else {
+    stats.losses += 1;
+    stats.consecutiveLosses += 1;
+  }
+
+  stats.winRate = stats.wins + stats.losses > 0 ? stats.wins / (stats.wins + stats.losses) : 0;
+  stats.avgConfidence = ((stats.avgConfidence * tradeCount) + signal.confidence) / (tradeCount + 1);
+  stats.lastTradeAt = new Date().toISOString();
+
+  if (stats.consecutiveLosses >= 3) {
+    stats.confidenceMultiplier = Math.max(0.5, stats.confidenceMultiplier - 0.1);
+    stats.isPaused = true;
+    stats.pauseUntil = new Date(Date.now() + 4 * 60 * 60_000).toISOString();
+    logger.warn({ symbol, consecutiveLosses: stats.consecutiveLosses, confidenceMultiplier: stats.confidenceMultiplier }, "Symbol paused due to consecutive losses");
+  } else if (stats.consecutiveLosses >= 2) {
+    stats.confidenceMultiplier = Math.max(0.7, stats.confidenceMultiplier - 0.05);
+  }
+
+  if (stats.isPaused && stats.pauseUntil && Date.now() > Date.parse(stats.pauseUntil)) {
+    stats.isPaused = false;
+    stats.pauseUntil = null;
+    logger.info({ symbol }, "Symbol pause expired - resuming");
+  }
+
+  if (tradeCount >= 10 && stats.winRate < 0.3) {
+    stats.confidenceMultiplier = Math.max(0.5, stats.confidenceMultiplier - 0.15);
+    logger.warn({ symbol, winRate: Math.round(stats.winRate * 100), confidenceMultiplier: stats.confidenceMultiplier }, "Low win rate - reducing confidence multiplier");
+  }
+
+  if (tradeCount >= 10 && stats.winRate > 0.65) {
+    stats.confidenceMultiplier = Math.min(1.2, stats.confidenceMultiplier + 0.05);
+  }
+}
+
+export function symbolConfidenceMultiplier(symbol: string): number {
+  const state = load();
+  const stats = state.symbolStats[symbol];
+  if (!stats) return 1;
+  if (stats.isPaused) return 0;
+  return stats.confidenceMultiplier;
+}
+
+export function isSymbolPaused(symbol: string): boolean {
+  const state = load();
+  const stats = state.symbolStats[symbol];
+  if (!stats || !stats.isPaused) return false;
+  if (stats.pauseUntil && Date.now() > Date.parse(stats.pauseUntil)) {
+    stats.isPaused = false;
+    stats.pauseUntil = null;
+    save(state);
+    return false;
+  }
+  return true;
+}
+
+export function symbolStatsText(symbol: string): string {
+  const state = load();
+  const stats = state.symbolStats[symbol];
+  if (!stats) return `${symbol}: немає даних`;
+  const wr = stats.wins + stats.losses > 0 ? Math.round(stats.winRate * 100) : 0;
+  return [
+    `${symbol}:`,
+    `  Win rate: ${wr}%`,
+    `  Wins: ${stats.wins}`,
+    `  Losses: ${stats.losses}`,
+    `  Consecutive losses: ${stats.consecutiveLosses}`,
+    `  Confidence multiplier: ${stats.confidenceMultiplier.toFixed(2)}x`,
+    `  Status: ${stats.isPaused ? "PAUSED" : "ACTIVE"}`,
+    stats.pauseUntil ? `  Pause until: ${stats.pauseUntil}` : "",
+    `  Last trade: ${stats.lastTradeAt}`
+  ].filter(Boolean).join("\n");
 }

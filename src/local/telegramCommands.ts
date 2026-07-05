@@ -10,7 +10,7 @@ import { paperMemoryStatsText, paperStatsText, setPaperMode } from "./paperTradi
 import { addPriorityPair, loadPriorityWatchlist, normalizePriorityPair, removePriorityPair } from "./watchlistStore";
 import { loadTelegramSettings, updateTelegramSettings, type MaxLeverage, type RiskMode } from "./telegramSettings";
 import { performanceText, tradeStatsText } from "./tradeMemory";
-import { learningStatusText, resetLearning } from "./learning";
+import { learningStatusText, resetLearning, symbolStatsText } from "./learning";
 import { analyzeBybitNewToken, formatNewTokenCard, formatNewTokenWatch, scanBybitNewTokens } from "./newTokenScanner";
 import { logger } from "./logger";
 import { marketThresholdProfile } from "./scoring";
@@ -340,6 +340,10 @@ export class TelegramCommandCenter {
     if (command === "/settings") return this.notifier.send(settingsText(), settingsKeyboard());
     if (command === "/performance") return this.notifier.send(performanceText(), mainMenuKeyboard());
     if (command === "/learning") return this.notifier.send(learningStatusText(), mainMenuKeyboard());
+    if (command === "/symbolstats") {
+      if (!rawPair) return this.askPair("search");
+      return this.notifier.send(symbolStatsText(rawPair.toUpperCase()), mainMenuKeyboard());
+    }
     if (command === "/resetlearning") return this.resetLearningCommand();
     if (command === "/top") return this.sendBusyThen("🔥 Топ Сетапи", () => this.sendTopSetups());
     if (command === "/search") {

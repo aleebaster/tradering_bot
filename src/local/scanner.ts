@@ -156,7 +156,52 @@ export class Scanner {
           const snapshotReadyAt = Date.now();
           const signal = buildSignal(snapshot);
           const signalConfirmedAt = Date.now();
-          logger.info({ symbol, mode, side: signal.side, score: signal.score, winProbability: signal.winProbability, entryStatus: signal.entryStatus, rejectionReason: signal.rejectionReason, scoreBreakdown: signal.scoreBreakdown, latencyMs: { marketDataFetch: marketDataFetchedAt - symbolStartedAt, snapshot: snapshotReadyAt - marketDataFetchedAt, confirmation: signalConfirmedAt - snapshotReadyAt, detectedToConfirmed: signalConfirmedAt - symbolStartedAt } }, "рішення сканера");
+          logger.info({
+            symbol,
+            mode,
+            side: signal.side,
+            score: signal.score,
+            winProbability: signal.winProbability,
+            confidence: signal.confidence,
+            entryStatus: signal.entryStatus,
+            entry: signal.entry,
+            stopLoss: signal.stopLoss,
+            takeProfit: signal.takeProfit,
+            riskReward: signal.riskReward,
+            leverage: signal.leverage,
+            positionSizing: signal.positionSizing ? {
+              positionSizeUsdt: signal.positionSizing.positionSizeUsdt,
+              marginUsdt: signal.positionSizing.marginUsdt,
+              quantity: signal.positionSizing.quantity,
+              leverage: signal.positionSizing.leverage
+            } : null,
+            rejectionReason: signal.rejectionReason,
+            marketRegime: signal.marketRegime,
+            btcStable: signal.btcStable,
+            scoreBreakdown: {
+              trendStrength: signal.scoreBreakdown.trendStrength,
+              momentumQuality: signal.scoreBreakdown.momentumQuality,
+              volumeConfirmation: signal.scoreBreakdown.volumeConfirmation,
+              liquiditySweep: signal.scoreBreakdown.liquiditySweep,
+              entrySniper: signal.scoreBreakdown.entrySniper,
+              orderBookImbalance: signal.scoreBreakdown.orderBookImbalance,
+              multiTimeframeAlignment: signal.scoreBreakdown.multiTimeframeAlignment,
+              higherTimeframeBias: signal.scoreBreakdown.higherTimeframeBias,
+              fakeBreakoutProtection: signal.scoreBreakdown.fakeBreakoutProtection,
+              cvdOrderFlow: signal.scoreBreakdown.cvdOrderFlow,
+              smartOpenInterest: signal.scoreBreakdown.smartOpenInterest,
+              smcConfirmation: signal.scoreBreakdown.smcConfirmation,
+              fundingConfirmation: signal.scoreBreakdown.fundingConfirmation,
+              openInterestConfirmation: signal.scoreBreakdown.openInterestConfirmation,
+              adaptiveConfirmationRequired: signal.scoreBreakdown.adaptiveConfirmationRequired
+            },
+            latencyMs: {
+              marketDataFetch: marketDataFetchedAt - symbolStartedAt,
+              snapshot: snapshotReadyAt - marketDataFetchedAt,
+              confirmation: signalConfirmedAt - snapshotReadyAt,
+              detectedToConfirmed: signalConfirmedAt - symbolStartedAt
+            }
+          }, "рішення сканера");
           recordSignal(signal);
           if (mode === "futures") updatePaperTradeMemory(signal.symbol, signal.currentPrice);
           candidates.push(signal);

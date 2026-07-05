@@ -243,7 +243,10 @@ function averageEntry(signal: Signal) {
 function potentialDirection(signal: Signal): "LONG" | "SHORT" {
   if (signal.side === "SHORT") return "SHORT";
   if (signal.side === "LONG" || signal.side === "BUY") return "LONG";
-  return signal.stopLoss > averageEntry(signal) ? "SHORT" : "LONG";
+  const avg = averageEntry(signal);
+  if (signal.stopLoss < avg && signal.takeProfit[0] > avg) return "LONG";
+  if (signal.stopLoss > avg && signal.takeProfit[0] < avg) return "SHORT";
+  return "LONG";
 }
 
 function setupType(signal: Signal) {
