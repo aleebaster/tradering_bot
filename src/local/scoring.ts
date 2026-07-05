@@ -267,39 +267,27 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   }
 
   if (signal.side === "LONG" || signal.side === "SHORT") {
-    logger.info({ symbol: signal.symbol, pipelineStage: "PRE_VALIDATION", side: signal.side, entry: signal.entry, avgEntry: Math.round(avgEntry * 100) / 100, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit, score: signal.score, entryStatus: signal.entryStatus }, "DecisionEngine: signal before validation");
-
-    const validatedSide = validateSignalDirection(signal);
-    if (validatedSide !== signal.side) {
-      logger.warn({ symbol: signal.symbol, originalSide: signal.side, detectedSide: validatedSide }, "Signal direction corrected based on SL/TP levels");
-      signal.side = validatedSide as Side;
-    }
-
-    const corrected = correctSignalLevels(signal);
-    if (corrected.stopLoss !== signal.stopLoss || corrected.takeProfit.some((tp, i) => tp !== signal.takeProfit[i])) {
-      logger.warn({ symbol: signal.symbol, originalSL: signal.stopLoss, correctedSL: corrected.stopLoss, originalTP: signal.takeProfit, correctedTP: corrected.takeProfit }, "Signal levels corrected");
-      signal.stopLoss = corrected.stopLoss;
-      signal.takeProfit = corrected.takeProfit;
+    const avgEntryCheck = (signal.entry[0] + signal.entry[1]) / 2;
+    const levelsOk = signal.side === "LONG"
+      ? signal.stopLoss < avgEntryCheck && signal.takeProfit[0] > avgEntryCheck && signal.takeProfit[1] > signal.takeProfit[0] && signal.takeProfit[2] > signal.takeProfit[1]
+      : signal.stopLoss > avgEntryCheck && signal.takeProfit[0] < avgEntryCheck && signal.takeProfit[1] < signal.takeProfit[0] && signal.takeProfit[2] < signal.takeProfit[1];
+    if (!levelsOk) {
+      logger.error({ symbol: signal.symbol, pipelineStage: "LEVELS_INVALID", side: signal.side, entry: signal.entry, avgEntry: Math.round(avgEntryCheck * 100) / 100, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit }, "DecisionEngine: CRITICAL - levels invalid for declared side, downgrading to NO_TRADE");
+      signal.entryStatus = "NO_TRADE";
+      signal.side = "NO_TRADE";
+      signal.rejectionReason = `Internal levels invalid: ${signal.side} signal has SL/TP that don't match direction`;
+      return signal;
     }
 
     const symbolMult = symbolConfidenceMultiplier(snapshot.symbol);
     if (symbolMult !== 1) {
       const adjusted = Math.round(clamp(signal.score * symbolMult, 0, 100));
-      logger.info({ symbol: signal.symbol, originalScore: signal.score, adjustedScore: adjusted, multiplier: symbolMult }, "Applied symbol confidence multiplier");
       signal.score = adjusted;
       signal.confidence = adjusted;
       signal.winProbability = Math.round(clamp(adjusted, 0, 94));
     }
 
-    const validation = validateTrade(signal);
-    if (!validation.valid) {
-      logger.warn({ symbol: signal.symbol, pipelineStage: "VALIDATION_FAILED", reason: validation.reason, side: signal.side, entry: signal.entry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit }, "DecisionEngine: signal REJECTED by validator");
-      signal.entryStatus = "NO_TRADE";
-      signal.side = "NO_TRADE";
-      signal.rejectionReason = validation.reason;
-    } else {
-      logger.info({ symbol: signal.symbol, pipelineStage: "VALIDATION_PASSED", side: signal.side, entry: signal.entry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit, score: signal.score, entryStatus: signal.entryStatus }, "DecisionEngine: signal VALIDATED, ready for execution");
-    }
+    logger.info({ symbol: signal.symbol, pipelineStage: "SIGNAL_READY", side: signal.side, entry: signal.entry, avgEntry: Math.round(avgEntryCheck * 100) / 100, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit, score: signal.score, entryStatus: signal.entryStatus }, "DecisionEngine: signal validated at source, ready for execution");
   }
 
   return signal;

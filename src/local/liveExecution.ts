@@ -59,28 +59,6 @@ export class LiveExecution {
 
     logger.info({ symbol: signal.symbol, pipelineStage: "PRE_ORDER_SEND", signalSide: signal.side, signalEntry: signal.entry, signalStopLoss: signal.stopLoss, signalTakeProfit: signal.takeProfit, orderSide: order.side, orderQty: order.quantity, leverage: order.leverage, marginMode: order.marginMode, stopLoss: order.stopLoss, takeProfit: order.takeProfit }, "LiveExecution: pre-order validation PASSED");
 
-    const avgEntry = (signal.entry[0] + signal.entry[1]) / 2;
-    if (signal.side === "LONG") {
-      if (signal.stopLoss >= avgEntry) {
-        logger.error({ symbol: signal.symbol, side: signal.side, stopLoss: signal.stopLoss, avgEntry }, "CRITICAL PRE-SEND CHECK FAILED: LONG SL is above entry! Aborting execution.");
-        return { success: false, error: `LONG SL (${signal.stopLoss}) >= entry (${avgEntry})`, takeProfitOrderIds: [] };
-      }
-      if (signal.takeProfit[0] <= avgEntry) {
-        logger.error({ symbol: signal.symbol, side: signal.side, tp1: signal.takeProfit[0], avgEntry }, "CRITICAL PRE-SEND CHECK FAILED: LONG TP1 is below entry! Aborting execution.");
-        return { success: false, error: `LONG TP1 (${signal.takeProfit[0]}) <= entry (${avgEntry})`, takeProfitOrderIds: [] };
-      }
-    }
-    if (signal.side === "SHORT") {
-      if (signal.stopLoss <= avgEntry) {
-        logger.error({ symbol: signal.symbol, side: signal.side, stopLoss: signal.stopLoss, avgEntry }, "CRITICAL PRE-SEND CHECK FAILED: SHORT SL is below entry! Aborting execution.");
-        return { success: false, error: `SHORT SL (${signal.stopLoss}) <= entry (${avgEntry})`, takeProfitOrderIds: [] };
-      }
-      if (signal.takeProfit[0] >= avgEntry) {
-        logger.error({ symbol: signal.symbol, side: signal.side, tp1: signal.takeProfit[0], avgEntry }, "CRITICAL PRE-SEND CHECK FAILED: SHORT TP1 is above entry! Aborting execution.");
-        return { success: false, error: `SHORT TP1 (${signal.takeProfit[0]}) >= entry (${avgEntry})`, takeProfitOrderIds: [] };
-      }
-    }
-
     logger.info({ symbol: signal.symbol, side: order.side, quantity: order.quantity, leverage: order.leverage, marginMode: order.marginMode }, "ORDER SENT: submitting main order to Bybit");
 
     const mainResult = await this.submitOrder(order);
