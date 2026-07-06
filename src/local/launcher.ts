@@ -5,6 +5,7 @@ import { checkAllModules, checkConfig, printBanner, printConfigCheck, printExcha
 import { analyzeMomentumHunter, formatMomentumDashboard } from "./engines/MomentumHunterEngine";
 import { btcStable, buildSignal, regimeFrom, validateSignal } from "./scoring";
 import { PumpDetectorBot, WhaleTrackerBot, LiqBot, MarketReportBot } from "./bots";
+import { applyPositionSizeLimit } from "./positionSizeLimiter";
 import type { MarketRegime, MarketSnapshot, Signal, Candle } from "./types";
 
 export type BotMode = "demo" | "live" | "bot" | "one" | "scan" | "dry" | "doctor" | "health";
@@ -397,27 +398,10 @@ async function handleOneShot() {
 
   const bybitSide = signal.side === "LONG" || signal.side === "BUY" ? "Buy" as const : "Sell" as const;
   const riskQty = validation?.risk?.adjustments?.quantity;
-  let finalQty = Math.max(riskQty && riskQty > 0 ? riskQty : signal.positionSizing?.quantity ?? 0, 0);
+  const rawQty = Math.max(riskQty && riskQty > 0 ? riskQty : signal.positionSizing?.quantity ?? 0, 0);
 
-  if (finalQty > 0 && config.safeTestMode) {
-    const entryPrice = signal.currentPrice;
-    if (entryPrice > 0) {
-      const positionValueUsdt = finalQty * entryPrice;
-      if (positionValueUsdt > config.maxPositionUsdt) {
-        const cappedQty = Math.floor(config.maxPositionUsdt / entryPrice * 1e6) / 1e6;
-        logger.info({
-          symbol: signal.symbol,
-          calculatedPosition: `${positionValueUsdt.toFixed(2)} USDT`,
-          safeLimit: `${config.maxPositionUsdt.toFixed(2)} USDT`,
-          finalPosition: `${(cappedQty * entryPrice).toFixed(2)} USDT`,
-          reason: "SAFE_TEST_MODE"
-        }, "openTrade: position capped by safe test mode");
-        finalQty = cappedQty;
-      }
-    }
-  }
-
-  const qty = finalQty > 0 ? String(finalQty) : "0";
+  const limitResult = rawQty > 0 ? await applyPositionSizeLimit(client, signal.symbol, rawQty, signal.currentPrice) : { qty: "0", capped: false };
+  const qty = limitResult.qty;
   const stopLoss = signal.stopLoss.toFixed(6);
   const tp1 = signal.takeProfit[0].toFixed(6);
 

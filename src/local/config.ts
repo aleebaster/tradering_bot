@@ -63,7 +63,7 @@ export const config = {
   liveTrading: env.LIVE_TRADING === "1",
   safeScalpingMode: env.SAFE_SCALPING_MODE !== "0",
   dryRun: env.DRY_RUN === "1",
-  safeTestMode: env.SAFE_TEST_MODE !== "0",
+  safeTestMode: env.SAFE_TEST_MODE === "true" || env.SAFE_TEST_MODE === "1",
   maxPositionUsdt: env.MAX_POSITION_USDT
 };
 

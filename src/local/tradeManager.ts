@@ -5,6 +5,7 @@ import { recordProtectionOutcome, signalsPaused } from "./lossProtection";
 import { recordSignal, state } from "./state";
 import { config } from "./config";
 import { logger } from "./logger";
+import { applyPositionSizeLimit } from "./positionSizeLimiter";
 import type { BybitPosition, MarketSnapshot, Signal } from "./types";
 
 export interface TradeState {
@@ -57,27 +58,10 @@ export class TradeManager {
 
     const bybitSide = signal.side === "LONG" || signal.side === "BUY" ? "Buy" as const : "Sell" as const;
     const riskQty = validation?.risk?.adjustments?.quantity;
-    let finalQty = Math.max(riskQty && riskQty > 0 ? riskQty : signal.positionSizing?.quantity ?? 0, 0);
+    const rawQty = Math.max(riskQty && riskQty > 0 ? riskQty : signal.positionSizing?.quantity ?? 0, 0);
 
-    if (finalQty > 0 && config.safeTestMode) {
-      const entryPrice = signal.currentPrice;
-      if (entryPrice > 0) {
-        const positionValueUsdt = finalQty * entryPrice;
-        if (positionValueUsdt > config.maxPositionUsdt) {
-          const cappedQty = Math.floor(config.maxPositionUsdt / entryPrice * 1e6) / 1e6;
-          logger.info({
-            symbol: signal.symbol,
-            calculatedPosition: `${positionValueUsdt.toFixed(2)} USDT`,
-            safeLimit: `${config.maxPositionUsdt.toFixed(2)} USDT`,
-            finalPosition: `${(cappedQty * entryPrice).toFixed(2)} USDT`,
-            reason: "SAFE_TEST_MODE"
-          }, "openTrade: position capped by safe test mode");
-          finalQty = cappedQty;
-        }
-      }
-    }
-
-    const qty = finalQty > 0 ? String(finalQty) : "0";
+    const limitResult = rawQty > 0 ? await applyPositionSizeLimit(this.client, signal.symbol, rawQty, signal.currentPrice) : { qty: "0", capped: false };
+    const qty = limitResult.qty;
 
     logger.info({ symbol: signal.symbol, side: bybitSide, qty, entry: signal.entry, sl: signal.stopLoss, tp: signal.takeProfit[0] }, "openTrade: placing order");
 
