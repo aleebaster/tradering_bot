@@ -3,11 +3,17 @@ import { logger } from "./logger";
 import { ExchangeClient } from "./exchanges";
 import { checkAllModules, checkConfig, printBanner, printConfigCheck, printExchangeCheck, checkDemoAccount, checkLiveAccount, fullDiagnostics } from "./validation";
 import { analyzeMomentumHunter, formatMomentumDashboard } from "./engines/MomentumHunterEngine";
-import type { MarketRegime } from "./types";
+import { btcStable, buildSignal, regimeFrom } from "./scoring";
+import { PumpDetectorBot, WhaleTrackerBot, LiqBot, MarketReportBot } from "./bots";
+import type { MarketRegime, MarketSnapshot, Signal, Candle } from "./types";
 
 export type BotMode = "demo" | "live" | "bot" | "one" | "scan" | "dry" | "doctor" | "health";
 
 const client = new ExchangeClient();
+const pumpBot = new PumpDetectorBot();
+const whaleBot = new WhaleTrackerBot();
+const liqBot = new LiqBot();
+const marketReportBot = new MarketReportBot();
 
 function printHeader(step: string): void {
   logger.info(`\n----------- ${step} ${"-".repeat(Math.max(0, 41 - step.length))}`);
@@ -119,6 +125,52 @@ async function executeScan() {
   logger.info(lines.join("\n"));
 
   return opportunities;
+}
+
+async function buildSignalForSymbol(symbol: string): Promise<Signal> {
+  const [candles, btcCandles] = await Promise.all([loadFuturesCandles(symbol), loadFuturesCandles("BTCUSDT")]);
+  const btcOk = symbol === "BTCUSDT" ? true : btcStable(btcCandles);
+  const [orderBook, fundingRate, openInterestChange] = await Promise.all([
+    client.bybitOrderBookStats(symbol, "linear").catch(() => ({ spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false })),
+    client.fundingRate(symbol).catch(() => 0),
+    client.openInterestChange(symbol).catch(() => 0)
+  ]);
+  const primary = candles["15"] ?? [];
+  const dollarVolume = primary.slice(-24).reduce((s, c) => s + c.volume * c.close, 0) / 24;
+  const liquidityScore = Math.min(100, Math.log10(Math.max(dollarVolume, 1)) * 11);
+  const regime = regimeFrom(candles);
+  const intelligenceInput = { symbol, candles, orderBook, fundingRate, openInterestChange, liquidityScore, btcStable: btcOk, regime };
+  const intelligence = {
+    pump: pumpBot.analyze(intelligenceInput),
+    whale: whaleBot.analyze(intelligenceInput),
+    liq: liqBot.analyze(intelligenceInput),
+    market: marketReportBot.analyze(intelligenceInput),
+    updatedAt: new Date().toISOString()
+  };
+  const snapshot: MarketSnapshot = {
+    symbol,
+    mode: "futures",
+    candles,
+    okxCandles: {},
+    kucoinCandles: {},
+    binanceCandles: {},
+    orderBookImbalance: orderBook.imbalance,
+    fundingRate,
+    openInterestChange,
+    liquidityScore,
+    whaleScore: intelligence.whale.smartMoneyScore,
+    btcStable: btcOk,
+    regime,
+    confirmations: { bybit: true, okx: false, kucoin: false, binance: false, alignedCount: 1, conflict: false, details: ["one-shot analysis"] },
+    intelligence
+  };
+  return buildSignal(snapshot);
+}
+
+async function loadFuturesCandles(symbol: string) {
+  const out: Record<string, Candle[]> = {};
+  for (const tf of ["1", "3", "5", "15", "60"]) out[tf] = await client.bybitKlines(symbol, tf, "linear", 180);
+  return out;
 }
 
 async function boot(mode: BotMode) {
@@ -278,9 +330,9 @@ async function handleOneShot() {
   updateStage(0, "PASS", "scanning " + config.symbols.length + " symbols");
 
   const opportunities = await executeScan();
-  const best = opportunities.filter((o) => o.decision === "ENTER").sort((a, b) => b.confidence - a.confidence)[0];
+  const bestCand = opportunities.filter((o) => o.decision === "ENTER").sort((a, b) => b.confidence - a.confidence)[0];
 
-  if (!best) {
+  if (!bestCand) {
     updateStage(1, "FAIL", "no ENTER candidates found");
     logger.info("\n  No trade opened — no candidate passed all filters");
     logger.info("  Top candidates:");
@@ -289,14 +341,126 @@ async function handleOneShot() {
     process.exit(0);
   }
 
-  updateStage(1, "PASS", `${best.symbol} confidence ${best.confidence}%`);
-  updateStage(2, "PASS", "risk within limits");
-  updateStage(3, "PASS", "trade validation");
-  updateStage(4, "PASS", "order placed");
+  updateStage(1, "PASS", `${bestCand.symbol} confidence ${bestCand.confidence}%`);
 
-  logger.info(`\n  ✅ Trade opened: ${best.symbol}`);
-  logger.info(`  Confidence: ${best.confidence}%`);
-  logger.info(`  Decision  : ${best.decision}`);
+  logger.info(`\n----------- BUILDING SIGNAL ----------------------`);
+  logger.info(`  Building full signal for ${bestCand.symbol}...`);
+  const signal = await buildSignalForSymbol(bestCand.symbol);
+  logger.info({ side: signal.side, score: signal.score, entryStatus: signal.entryStatus, entry: signal.entry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit, currentPrice: signal.currentPrice }, "signal built");
+
+  if (signal.side === "NO_TRADE" || signal.side === "WATCHLIST") {
+    updateStage(2, "FAIL", `signal rejected: ${signal.rejectionReason}`);
+    logger.error(`\n  ✗ Trade FAILED: ${bestCand.symbol} — ${signal.rejectionReason}`);
+    printFooter();
+    process.exit(1);
+  }
+
+  updateStage(2, "PASS", `score ${signal.score}, side ${signal.side}`);
+
+  if (!signal.positionSizing || !signal.positionSizing.quantity || signal.positionSizing.quantity <= 0) {
+    updateStage(3, "FAIL", "invalid position sizing");
+    logger.error(`\n  ✗ Trade FAILED: invalid position sizing`);
+    printFooter();
+    process.exit(1);
+  }
+
+  updateStage(3, "PASS", `${signal.positionSizing.quantity} @ ${signal.positionSizing.leverage}`);
+
+  const bybitSide = signal.side === "LONG" || signal.side === "BUY" ? "Buy" as const : "Sell" as const;
+  const qty = signal.positionSizing.quantity.toFixed(6);
+  const avgEntry = (signal.entry[0] + signal.entry[1]) / 2;
+  const stopLoss = signal.stopLoss.toFixed(6);
+  const tp1 = signal.takeProfit[0].toFixed(6);
+
+  logger.info(`\n----------- ORDER EXECUTION ----------------------`);
+  logger.info(`  Symbol     : ${signal.symbol}`);
+  logger.info(`  Side       : ${bybitSide}`);
+  logger.info(`  Qty        : ${qty}`);
+  logger.info(`  Avg Entry  : ${avgEntry}`);
+  logger.info(`  Stop Loss  : ${stopLoss}`);
+  logger.info(`  Take Profit: ${tp1}`);
+
+  const orderResult = await client.bybitPlaceOrder(signal.symbol, bybitSide, qty);
+  logger.info({ retCode: orderResult.retCode, retMsg: orderResult.retMsg, orderId: orderResult.result?.orderId }, "submitOrder response");
+
+  if (orderResult.retCode !== 0) {
+    updateStage(4, "FAIL", `submitOrder failed: ${orderResult.retMsg}`);
+    logger.error(`\n  ✗ Trade FAILED: ${signal.symbol} — ${orderResult.retMsg}`);
+    printFooter();
+    process.exit(1);
+  }
+
+  const orderId = orderResult.result?.orderId;
+  if (!orderId) {
+    updateStage(4, "FAIL", "orderId not returned");
+    logger.error(`\n  ✗ Trade FAILED: ${signal.symbol} — no orderId in response`);
+    printFooter();
+    process.exit(1);
+  }
+
+  logger.info(`  ✅ orderId: ${orderId}`);
+  logger.info(`  Waiting for fill...`);
+  await new Promise((r) => setTimeout(r, 1500));
+
+  let position = await client.bybitGetPosition(signal.symbol);
+  logger.info({ positionFound: !!position, position }, "getPosition after fill");
+
+  if (!position || !position.size || Number(position.size) <= 0) {
+    const openOrders = await client.bybitOpenOrders();
+    const orderStillOpen = openOrders.find((o) => o.orderId === orderId);
+    const reason = orderStillOpen ? "order still open — not filled" : "position not found after order";
+    updateStage(4, "FAIL", reason);
+    logger.error(`\n  ✗ Trade FAILED: ${signal.symbol} — ${reason}`);
+    printFooter();
+    process.exit(1);
+  }
+
+  logger.info(`  ✅ Position confirmed: ${position.side} ${position.size} @ ${position.avgPrice}`);
+
+  if (signal.stopLoss > 0 || signal.takeProfit[0] > 0) {
+    logger.info(`  Setting SL/TP...`);
+    logger.info({ stopLoss: stopLoss, takeProfit: tp1 }, "setTradingStop params");
+    const slResult = await client.bybitSetTradingStop(signal.symbol, bybitSide, stopLoss, tp1);
+    logger.info({ retCode: slResult.retCode, retMsg: slResult.retMsg }, "setTradingStop response");
+
+    if (slResult.retCode !== 0) {
+      updateStage(4, "FAIL", `trading stop failed: ${slResult.retMsg}`);
+      logger.error(`\n  ✗ Trade opened but SL/TP FAILED: ${signal.symbol} — ${slResult.retMsg}`);
+      printFooter();
+      process.exit(1);
+    }
+
+    logger.info(`  ✅ SL/TP set successfully`);
+  } else {
+    logger.info(`  ⚠ SL/TP not set — signal did not provide levels`);
+  }
+
+  await new Promise((r) => setTimeout(r, 1000));
+  const verifiedPosition = await client.bybitGetPosition(signal.symbol);
+  logger.info({ verifiedPosition }, "getPosition after SL/TP");
+
+  const slOk = !verifiedPosition?.stopLoss || signal.stopLoss <= 0 || Number(verifiedPosition.stopLoss) > 0;
+  const tpOk = !verifiedPosition?.takeProfit || signal.takeProfit[0] <= 0 || Number(verifiedPosition.takeProfit) > 0;
+
+  if (!slOk || !tpOk) {
+    updateStage(4, "FAIL", "SL/TP verification failed");
+    logger.error(`\n  ✗ Trade opened but SL/TP verification FAILED`);
+    printFooter();
+    process.exit(1);
+  }
+
+  updateStage(4, "PASS", `order ${orderId} — position confirmed`);
+
+  logger.info(`\n  ✅ Trade opened: ${signal.symbol}`);
+  logger.info(`  Order ID  : ${orderId}`);
+  logger.info(`  Side      : ${position.side}`);
+  logger.info(`  Size      : ${position.size}`);
+  logger.info(`  Entry     : ${position.avgPrice}`);
+  if (verifiedPosition?.stopLoss) logger.info(`  Stop Loss : ${verifiedPosition.stopLoss}`);
+  if (verifiedPosition?.takeProfit) logger.info(`  Take Profit: ${verifiedPosition.takeProfit}`);
+  logger.info(`  Leverage  : ${position.leverage}`);
+  logger.info(`  Confidence: ${bestCand.confidence}%`);
+  logger.info(`  Decision  : ${bestCand.decision}`);
   printFooter();
   process.exit(0);
 }

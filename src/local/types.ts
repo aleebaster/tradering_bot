@@ -101,6 +101,29 @@ export interface Signal {
   management: string;
 }
 
+export interface BybitOrderResult {
+  retCode: number;
+  retMsg: string;
+  result?: { orderId: string; orderLinkId: string };
+}
+
+export interface BybitPosition {
+  symbol: string;
+  side: "Buy" | "Sell";
+  size: string;
+  avgPrice: string;
+  stopLoss: string;
+  takeProfit: string;
+  positionStatus: string;
+  leverage: string;
+  unrealisedPnl: string;
+}
+
+export interface BybitTradingStopResult {
+  retCode: number;
+  retMsg: string;
+}
+
 export interface AccuracySession {
   name: "LONDON_OPEN" | "NEW_YORK_OPEN" | "LONDON_NY_OVERLAP" | "ASIA_CHOP" | "OFF_HOURS";
   active: boolean;

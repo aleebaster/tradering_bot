@@ -199,6 +199,26 @@ export class Scanner {
             this.markSignalSent(signal);
             if (notificationsEnabled()) await this.sendRealEntryFast(signal, { symbolStartedAt, marketDataFetchedAt, snapshotReadyAt, signalConfirmedAt });
             recordPaperOpen(signal);
+            if (config.liveTrading || config.botAccount === "demo") {
+              const bybitSide = signal.side === "LONG" || signal.side === "BUY" ? "Buy" as const : "Sell" as const;
+              const qty = signal.positionSizing?.quantity?.toFixed(6) ?? "1";
+              const orderResult = await this.client.bybitPlaceOrder(signal.symbol, bybitSide, qty).catch(() => null);
+              logger.info({ symbol: signal.symbol, side: signal.side, orderResult }, "submitOrder");
+              if (orderResult?.retCode === 0 && orderResult?.result?.orderId) {
+                await new Promise((r) => setTimeout(r, 1500));
+                const pos = await this.client.bybitGetPosition(signal.symbol);
+                logger.info({ symbol: signal.symbol, positionFound: !!pos, pos }, "getPosition");
+                if (pos && pos.size && Number(pos.size) > 0) {
+                  logger.info({ symbol: signal.symbol, orderId: orderResult.result.orderId, side: pos.side, size: pos.size, entry: pos.avgPrice }, "POSITION OPENED");
+                  if (signal.stopLoss > 0 || signal.takeProfit[0] > 0) {
+                    const sl = signal.stopLoss > 0 ? signal.stopLoss.toFixed(6) : undefined;
+                    const tp = signal.takeProfit[0] > 0 ? signal.takeProfit[0].toFixed(6) : undefined;
+                    const slResult = await this.client.bybitSetTradingStop(signal.symbol, bybitSide, sl, tp).catch(() => null);
+                    if (slResult?.retCode === 0) logger.info({ symbol: signal.symbol }, "SL/TP set");
+                  }
+                }
+              }
+            }
           }
           await this.trackWatchlist(signal);
         } catch (symbolError) {
@@ -548,6 +568,26 @@ export class Scanner {
           logger.info({ symbol: activated.symbol, side: activated.side, score: activated.score, reasons: activationReasons(activated, evolution), latencyMs: { marketDataFetch: marketDataFetchedAt - symbolStartedAt, snapshot: snapshotReadyAt - marketDataFetchedAt, confirmation: signalConfirmedAt - snapshotReadyAt, detectedToConfirmed: signalConfirmedAt - symbolStartedAt } }, "watchlist setup upgraded to real entry");
           if (notificationsEnabled()) await this.sendRealEntryFast(activated, { symbolStartedAt, marketDataFetchedAt, snapshotReadyAt, signalConfirmedAt });
           recordPaperOpen(activated);
+          if (config.liveTrading || config.botAccount === "demo") {
+            const bybitSide = activated.side === "LONG" || activated.side === "BUY" ? "Buy" as const : "Sell" as const;
+            const qty = activated.positionSizing?.quantity?.toFixed(6) ?? "1";
+            const orderResult = await this.client.bybitPlaceOrder(activated.symbol, bybitSide, qty).catch(() => null);
+            logger.info({ symbol: activated.symbol, side: activated.side, orderResult }, "submitOrder");
+            if (orderResult?.retCode === 0 && orderResult?.result?.orderId) {
+              await new Promise((r) => setTimeout(r, 1500));
+              const pos = await this.client.bybitGetPosition(activated.symbol);
+              logger.info({ symbol: activated.symbol, positionFound: !!pos, pos }, "getPosition");
+              if (pos && pos.size && Number(pos.size) > 0) {
+                logger.info({ symbol: activated.symbol, orderId: orderResult.result.orderId, side: pos.side, size: pos.size, entry: pos.avgPrice }, "POSITION OPENED");
+                if (activated.stopLoss > 0 || activated.takeProfit[0] > 0) {
+                  const sl = activated.stopLoss > 0 ? activated.stopLoss.toFixed(6) : undefined;
+                  const tp = activated.takeProfit[0] > 0 ? activated.takeProfit[0].toFixed(6) : undefined;
+                  const slResult = await this.client.bybitSetTradingStop(activated.symbol, bybitSide, sl, tp).catch(() => null);
+                  if (slResult?.retCode === 0) logger.info({ symbol: activated.symbol }, "SL/TP set");
+                }
+              }
+            }
+          }
           continue;
         }
         if (watchlistDecayed(item, signal, evolution)) {
@@ -590,7 +630,6 @@ export class Scanner {
             logger.info({ symbol: signal.symbol, side: signal.side, score: signal.score, entryStatus: signal.entryStatus, momentumScore: move.score, setupType: move.setupType }, "momentum candidate → signal built");
             if (!["NO_TRADE", "WATCHLIST"].includes(signal.side) && this.canSendSignal(signal)) {
               this.markSignalSent(signal);
-              logger.info({ symbol: signal.symbol, side: signal.side, score: signal.score, price: signal.currentPrice }, "ORDER SUBMITTED");
               if (notificationsEnabled()) await this.sendRealEntryFast(signal, {
                 symbolStartedAt: startedAt,
                 marketDataFetchedAt: startedAt,
@@ -598,7 +637,31 @@ export class Scanner {
                 signalConfirmedAt: Date.now()
               });
               recordPaperOpen(signal);
-              logger.info({ symbol: signal.symbol, side: signal.side, entry: signal.entry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit }, "POSITION OPENED");
+              if (config.liveTrading || config.botAccount === "demo") {
+                const bybitSide = signal.side === "LONG" || signal.side === "BUY" ? "Buy" as const : "Sell" as const;
+                const qty = signal.positionSizing?.quantity?.toFixed(6) ?? "1";
+                const orderResult = await this.client.bybitPlaceOrder(signal.symbol, bybitSide, qty).catch(() => null);
+                logger.info({ symbol: signal.symbol, side: signal.side, orderResult }, "submitOrder");
+                if (orderResult?.retCode === 0 && orderResult?.result?.orderId) {
+                  await new Promise((r) => setTimeout(r, 1500));
+                  const pos = await this.client.bybitGetPosition(signal.symbol);
+                  logger.info({ symbol: signal.symbol, positionFound: !!pos, pos }, "getPosition after momentum order");
+                  if (pos && pos.size && Number(pos.size) > 0) {
+                    logger.info({ symbol: signal.symbol, orderId: orderResult.result.orderId, side: pos.side, size: pos.size, entry: pos.avgPrice }, "POSITION OPENED");
+                    if (signal.stopLoss > 0 || signal.takeProfit[0] > 0) {
+                      const sl = signal.stopLoss > 0 ? signal.stopLoss.toFixed(6) : undefined;
+                      const tp = signal.takeProfit[0] > 0 ? signal.takeProfit[0].toFixed(6) : undefined;
+                      const slResult = await this.client.bybitSetTradingStop(signal.symbol, bybitSide, sl, tp).catch(() => null);
+                      logger.info({ slResult }, "setTradingStop after momentum order");
+                      if (slResult?.retCode === 0) logger.info({ symbol: signal.symbol }, "SL/TP set for momentum position");
+                    }
+                  } else {
+                    logger.warn({ symbol: signal.symbol }, "momentum order placed but position not found");
+                  }
+                } else {
+                  logger.warn({ symbol: signal.symbol, retCode: orderResult?.retCode, retMsg: orderResult?.retMsg }, "momentum submitOrder failed");
+                }
+              }
             } else {
               logger.info({ symbol: signal.symbol, side: signal.side, score: signal.score, rejectionReason: signal.rejectionReason, entryStatus: signal.entryStatus }, "momentum candidate rejected by signal validation");
             }

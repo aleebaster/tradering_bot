@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import WebSocket from "ws";
-import type { Candle } from "./types";
+import type { Candle, BybitOrderResult, BybitPosition, BybitTradingStopResult } from "./types";
 import { config } from "./config";
 import { logger } from "./logger";
 
@@ -383,6 +383,57 @@ export class ExchangeClient {
       return list.map((o) => ({ symbol: o.symbol ?? "", orderId: o.orderId ?? "", price: o.price ?? "", qty: o.qty ?? "", side: o.side ?? "" }));
     } catch {
       return [];
+    }
+  }
+
+  async bybitPlaceOrder(symbol: string, side: "Buy" | "Sell", qty: string, orderType: "Market" | "Limit" = "Market", price?: string): Promise<BybitOrderResult> {
+    const body: Record<string, unknown> = {
+      category: "linear",
+      symbol,
+      side,
+      orderType,
+      qty,
+      timeInForce: "IOC",
+      positionIdx: 0
+    };
+    if (orderType === "Limit" && price) body.price = price;
+    return this.bybitPrivatePost<BybitOrderResult>(`${BYBIT}/v5/order/create`, body);
+  }
+
+  async bybitSetTradingStop(symbol: string, side: "Buy" | "Sell", stopLoss?: string, takeProfit?: string): Promise<BybitTradingStopResult> {
+    const body: Record<string, unknown> = {
+      category: "linear",
+      symbol
+    };
+    if (side === "Buy") body.positionIdx = 0;
+    else body.positionIdx = 0;
+    if (stopLoss) body.stopLoss = stopLoss;
+    if (takeProfit) body.takeProfit = takeProfit;
+    return this.bybitPrivatePost<BybitTradingStopResult>(`${BYBIT}/v5/position/trading-stop`, body);
+  }
+
+  async bybitGetPosition(symbol: string): Promise<BybitPosition | null> {
+    try {
+      const body = await this.bybitPrivateGet<Record<string, unknown>>(`${BYBIT}/v5/position/list?category=linear&symbol=${symbol}&settleCoin=USDT`);
+      const retCode = body?.retCode as number | undefined;
+      if (retCode && retCode !== 0) return null;
+      const result = body?.result as Record<string, unknown> | undefined;
+      const list = (result?.list as Array<Record<string, string>> | undefined) ?? [];
+      const pos = list.find((p) => p.size && Number(p.size) > 0);
+      if (!pos) return null;
+      return {
+        symbol: pos.symbol ?? "",
+        side: pos.side as "Buy" | "Sell",
+        size: pos.size ?? "0",
+        avgPrice: pos.avgPrice ?? "0",
+        stopLoss: pos.stopLoss ?? "",
+        takeProfit: pos.takeProfit ?? "",
+        positionStatus: pos.positionStatus ?? "",
+        leverage: pos.leverage ?? "",
+        unrealisedPnl: pos.unrealisedPnl ?? ""
+      };
+    } catch {
+      return null;
     }
   }
 
