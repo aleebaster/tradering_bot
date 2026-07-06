@@ -27,6 +27,14 @@ export interface ProfitReport {
   slDistanceAtr: number;
   tpCanIncrease: boolean;
   tpIncreaseReason: string;
+  requiredProfit: number;
+  profitPercent: number;
+  netProfitPercent: number;
+  breakevenPrice: number;
+  breakevenDistance: number;
+  safetyMargin: number;
+  holdHours: number;
+  profitPerHour: number;
   passed: {
     netProfit: boolean;
     rrAfterFees: boolean;
@@ -70,6 +78,21 @@ export async function analyzeProfitability(
   const rrAfterFees = netLoss > 0 ? netProfit / netLoss : 0;
   const profitFeeRatio = feeBreakdown.totalFees > 0 ? grossProfit / feeBreakdown.totalFees : 99;
 
+  const profitPercent = positionValueUsdt > 0 ? (grossProfit / positionValueUsdt) * 100 : 0;
+  const netProfitPercent = positionValueUsdt > 0 ? (netProfit / positionValueUsdt) * 100 : 0;
+
+  const totalCost = feeBreakdown.totalFees + slippageEstimate + fundingEstimate;
+  const breakevenPrice = long ? entryPrice + (totalCost / qty) : entryPrice - (totalCost / qty);
+  const breakevenDistance = Math.abs(breakevenPrice - entryPrice);
+
+  const requiredProfit = Math.max(
+    positionValueUsdt * (config.minNetProfitPercent / 100),
+    config.minNetProfitUsdt
+  );
+
+  const safetyMargin = requiredProfit > 0 ? netProfit / requiredProfit : 0;
+  const profitPerHour = holdHours > 0 ? netProfit / holdHours : netProfit;
+
   const candles = await client.bybitKlines(signal.symbol, "5", "linear", 20).catch(() => []);
   const atr = candles.length > 14 ? calcATR(candles, 14) : 0;
   const slDistance = long ? (entryPrice - sl) : (sl - entryPrice);
@@ -79,14 +102,14 @@ export async function analyzeProfitability(
   const { tpCanIncrease, tpIncreaseReason } = await checkTpCanIncrease(client, signal, orderBook, candles, long);
 
   const passed = {
-    netProfit: netProfit >= config.minNetProfitUsdt,
+    netProfit: netProfit >= requiredProfit,
     rrAfterFees: rrAfterFees >= config.minRrAfterFees,
     profitFeeRatio: profitFeeRatio >= config.minProfitFeeRatio,
     minSlDistance: slDistanceAtr >= config.minSlDistanceAtr
   };
 
   const failures: string[] = [];
-  if (!passed.netProfit) failures.push(`net profit ${netProfit.toFixed(2)} USDT < min ${config.minNetProfitUsdt} USDT`);
+  if (!passed.netProfit) failures.push(`net profit ${netProfit.toFixed(4)} USDT < required ${requiredProfit.toFixed(4)} USDT`);
   if (!passed.rrAfterFees) failures.push(`RR after fees ${rrAfterFees.toFixed(2)} < min ${config.minRrAfterFees}`);
   if (!passed.profitFeeRatio) failures.push(`profit/fee ratio ${profitFeeRatio.toFixed(1)}x < min ${config.minProfitFeeRatio}x`);
   if (!passed.minSlDistance) failures.push(`SL distance ${slDistanceAtr.toFixed(2)} ATR < min ${config.minSlDistanceAtr} ATR`);
@@ -114,6 +137,14 @@ export async function analyzeProfitability(
     slDistanceAtr,
     tpCanIncrease,
     tpIncreaseReason,
+    requiredProfit,
+    profitPercent,
+    netProfitPercent,
+    breakevenPrice,
+    breakevenDistance,
+    safetyMargin,
+    holdHours,
+    profitPerHour,
     passed,
     rejectReason: failures.length ? failures.join("; ") : ""
   };
@@ -121,22 +152,17 @@ export async function analyzeProfitability(
 
 function rejectReport(reason: string): ProfitReport {
   return {
-    entryPrice: 0,
-    positionValueUsdt: 0,
-    grossProfit: 0,
-    grossLoss: 0,
+    entryPrice: 0, positionValueUsdt: 0,
+    grossProfit: 0, grossLoss: 0,
     fees: { takerFeeRate: 0, makerFeeRate: 0, entryFee: 0, exitFee: 0, totalFees: 0 },
-    slippageEstimate: 0,
-    fundingEstimate: 0,
-    netProfit: 0,
-    netLoss: 0,
-    rrRaw: 0,
-    rrAfterFees: 0,
-    profitFeeRatio: 0,
-    slDistancePct: 0,
-    slDistanceAtr: 0,
-    tpCanIncrease: false,
-    tpIncreaseReason: "",
+    slippageEstimate: 0, fundingEstimate: 0,
+    netProfit: 0, netLoss: 0,
+    rrRaw: 0, rrAfterFees: 0, profitFeeRatio: 0,
+    slDistancePct: 0, slDistanceAtr: 0,
+    tpCanIncrease: false, tpIncreaseReason: "",
+    requiredProfit: 0, profitPercent: 0, netProfitPercent: 0,
+    breakevenPrice: 0, breakevenDistance: 0,
+    safetyMargin: 0, holdHours: 0, profitPerHour: 0,
     passed: { netProfit: false, rrAfterFees: false, profitFeeRatio: false, minSlDistance: false },
     rejectReason: reason
   };
@@ -164,36 +190,50 @@ function calcATR(candles: { high: number; low: number; close: number }[], period
 }
 
 async function checkTpCanIncrease(
-  client: ExchangeClient,
-  signal: Signal,
+  _client: ExchangeClient,
+  _signal: Signal,
   orderBook: { spreadPct: number; depthUsdt: number; imbalance: number; spoofRisk: boolean },
-  candles: { high: number; low: number; close: number }[],
-  long: boolean
+  _candles: { high: number; low: number; close: number }[],
+  _long: boolean
 ): Promise<{ tpCanIncrease: boolean; tpIncreaseReason: string }> {
   if (orderBook.depthUsdt < 50000) return { tpCanIncrease: false, tpIncreaseReason: "low order book depth" };
-  if (candles.length < 5) return { tpCanIncrease: false, tpIncreaseReason: "insufficient candles" };
+  if (_candles.length < 5) return { tpCanIncrease: false, tpIncreaseReason: "insufficient candles" };
   return { tpCanIncrease: true, tpIncreaseReason: "sufficient liquidity and momentum" };
 }
 
 export function logProfitReport(report: ProfitReport): void {
-  logger.info({
-    entryPrice: report.entryPrice.toFixed(6),
-    positionValue: `${report.positionValueUsdt.toFixed(2)} USDT`,
-    grossProfit: `${report.grossProfit.toFixed(4)} USDT`,
-    grossLoss: `${report.grossLoss.toFixed(4)} USDT`,
-    fees: `${report.fees.totalFees.toFixed(4)} USDT`,
-    slippage: `${report.slippageEstimate.toFixed(4)} USDT`,
-    funding: `${report.fundingEstimate.toFixed(4)} USDT`,
-    netProfit: `${report.netProfit.toFixed(4)} USDT`,
-    netLoss: `${report.netLoss.toFixed(4)} USDT`,
-    rrRaw: report.rrRaw.toFixed(2),
-    rrAfterFees: report.rrAfterFees.toFixed(2),
-    profitFeeRatio: `${report.profitFeeRatio.toFixed(1)}x`,
-    slDistanceAtr: report.slDistanceAtr.toFixed(2),
-    tpCanIncrease: report.tpCanIncrease,
-    netProfitPass: report.passed.netProfit,
-    rrPass: report.passed.rrAfterFees,
-    ratioPass: report.passed.profitFeeRatio,
-    slPass: report.passed.minSlDistance
-  }, "PROFIT ANALYSIS");
+  const lines = [
+    "",
+    "=================================================",
+    "PROFIT ANALYSIS",
+    "=================================================",
+    "",
+    `Position Size        ${report.positionValueUsdt.toFixed(2)} USDT`,
+    `Required Profit      ${report.requiredProfit.toFixed(4)} USDT  (${(config.minNetProfitPercent).toFixed(1)}% of pos | min ${config.minNetProfitUsdt.toFixed(2)} USDT)`,
+    "",
+    `Gross Profit         ${report.grossProfit.toFixed(4)} USDT  (${report.profitPercent.toFixed(2)}%)`,
+    `Fees                 ${report.fees.totalFees.toFixed(4)} USDT  (taker ${(report.fees.takerFeeRate * 100).toFixed(3)}%)`,
+    `Funding              ${report.fundingEstimate.toFixed(4)} USDT`,
+    `Slippage             ${report.slippageEstimate.toFixed(4)} USDT`,
+    `─────────────────────────────────────────────────`,
+    `Net Profit           ${report.netProfit.toFixed(4)} USDT  (${report.netProfitPercent.toFixed(2)}%)`,
+    `Net Loss (if SL)     ${report.netLoss.toFixed(4)} USDT`,
+    "",
+    `RR raw               ${report.rrRaw.toFixed(2)}`,
+    `RR after fees        ${report.rrAfterFees.toFixed(2)}`,
+    `Profit / Fee ratio   ${report.profitFeeRatio.toFixed(1)}x`,
+    `Safety Margin        ${report.safetyMargin.toFixed(2)}x`,
+    "",
+    `Break-even Price     ${report.breakevenPrice.toFixed(6)}  (dist ${report.breakevenDistance.toFixed(6)})`,
+    `SL distance          ${report.slDistancePct.toFixed(2)}% / ${report.slDistanceAtr.toFixed(2)} ATR`,
+    `Expected Hold        ${report.holdHours.toFixed(1)}h  (${report.profitPerHour.toFixed(4)} USDT/h)`,
+    "",
+    `TP can increase      ${report.tpCanIncrease ? "YES" : "NO"}  (${report.tpIncreaseReason})`,
+    "",
+    `Result               ${report.rejectReason ? "FAIL" : "PASS"}`,
+    ...(report.rejectReason ? [`Reason               ${report.rejectReason}`] : []),
+    "=================================================",
+    ""
+  ];
+  logger.info(lines.join("\n"));
 }
