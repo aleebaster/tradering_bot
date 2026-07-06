@@ -378,16 +378,17 @@ function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, we
 function adaptiveConfirmationProfile(snapshot: MarketSnapshot, quality: { volume: number; momentum: number; liquidityScore: number; orderbook: number; fastMoveScore: number }) {
   if (snapshot.confirmations.conflict) return { allowed: false, penalty: 35, smallAltStrict: false, reason: "exchange conflict" };
   const topCoin = ["BTCUSDT", "ETHUSDT", "SOLUSDT"].includes(snapshot.symbol);
-  const bybitBinanceOnly = snapshot.confirmations.bybit && snapshot.confirmations.binance && !snapshot.confirmations.okx && !snapshot.confirmations.kucoin;
   const microStrong = quality.momentum >= 82 && quality.fastMoveScore >= 70 || quality.orderbook >= 70 && quality.volume >= 68;
-  if (topCoin) return { allowed: snapshot.confirmations.alignedCount >= 2, penalty: snapshot.confirmations.alignedCount >= 2 ? 0 : 35, smallAltStrict: false, reason: "top coin requires 2+ exchanges" };
-  if (bybitBinanceOnly) {
-    const strongInternal = quality.volume >= 72 && quality.momentum >= 76 && quality.liquidityScore >= 58 && quality.orderbook >= 60 && quality.fastMoveScore >= 60;
-    return { allowed: strongInternal, penalty: strongInternal ? 6 : 35, smallAltStrict: true, reason: strongInternal ? "Bybit+Binance with strict internal validation" : "small alt internal validation too weak" };
+  const stableMarket = snapshot.btcStable;
+  if (snapshot.confirmations.alignedCount >= 2) {
+    const penalty = topCoin ? 0 : microStrong ? 0 : 4;
+    return { allowed: true, penalty, smallAltStrict: false, reason: "2+ exchanges confirmed" };
   }
-  if (snapshot.confirmations.alignedCount >= 2) return { allowed: true, penalty: 0, smallAltStrict: false, reason: "2+ exchanges confirmed" };
-  if (snapshot.confirmations.alignedCount >= 1 && microStrong && snapshot.btcStable && snapshot.regime !== "CHOPPY" && snapshot.regime !== "LOW_VOLATILITY") return { allowed: true, penalty: 8, smallAltStrict: true, reason: "micro-confirmation replaced one weak exchange confirmation" };
-  return { allowed: false, penalty: 35, smallAltStrict: false, reason: "small alt needs Bybit+Binance or 2+ exchanges" };
+  if (snapshot.confirmations.alignedCount >= 1 && stableMarket) {
+    const penalty = topCoin ? 6 : microStrong ? 4 : 10;
+    return { allowed: true, penalty, smallAltStrict: false, reason: "single exchange with stable conditions" };
+  }
+  return { allowed: false, penalty: 35, smallAltStrict: false, reason: "insufficient confirmations or unstable market" };
 }
 
 function microConfirmationProfile(snapshot: MarketSnapshot, quality: { momentum: number; volume: number; orderbook: number; orderFlowScore: number; liquidityScore: number; sniperScore: number; fastMoveScore: number; fakeBreakoutRisk: boolean; newsBlocked: boolean; rrValue: number }) {
@@ -438,7 +439,7 @@ function marketQualityProfile(snapshot: MarketSnapshot, quality: { trendStrength
     SIDEWAYS: { penalty: 22, trendWeight: 0.05, momentumWeight: 0.06, score: 55 },
     LOW_VOLATILITY: { penalty: 18, trendWeight: 0.06, momentumWeight: 0.06, score: 60 },
     HIGH_VOLATILITY: { penalty: 26, trendWeight: 0.08, momentumWeight: 0.07, score: 45 },
-    CHOPPY: { penalty: quality.volume >= 65 && quality.momentum >= 65 ? 18 : 28, trendWeight: 0.06, momentumWeight: 0.07, score: quality.volume >= 65 && quality.momentum >= 65 ? 55 : 35 },
+    CHOPPY: { penalty: quality.volume >= 55 && quality.momentum >= 55 ? 12 : 18, trendWeight: 0.08, momentumWeight: 0.08, score: quality.volume >= 55 && quality.momentum >= 55 ? 55 : 40 },
     RANGING: { penalty: 28, trendWeight: 0.05, momentumWeight: 0.06, score: 50 },
     EXPANSION: { penalty: 2, trendWeight: 0.12, momentumWeight: 0.1, score: 80 },
     COMPRESSION: { penalty: 18, trendWeight: 0.06, momentumWeight: 0.06, score: 55 },
@@ -996,15 +997,26 @@ function runRiskValidation(signal: Signal, snapshot: MarketSnapshot): Validation
     takeProfit: signal.takeProfit,
     mode: signal.mode === "futures" ? "futures" : "spot",
   });
-  if (!sizing) {
-    return { pass: false, reason: "Risk: position sizing returned undefined (score too low or invalid params)" };
+  if (sizing && Number(sizing.quantity) > 0) {
+    const quantity = Number(sizing.quantity);
+    const leverageStr = sizing.leverage;
+    return { pass: true, reason: `Risk: ${quantity.toFixed(4)} @ ${leverageStr}`, adjustments: { quantity, leverage: leverageStr === "x2" ? 2 : leverageStr === "x3" ? 3 : 5 } };
   }
-  const quantity = Number(sizing.quantity) || 0;
-  const leverageStr = sizing.leverage;
+  const balance = config.USER_BALANCE_USDT || 5;
+  const riskPerTrade = balance * 0.02;
+  const riskPerUnit = Math.abs(avgEntry - signal.stopLoss);
+  let quantity = 0;
+  let leverage = 1;
+  if (riskPerUnit > 0 && avgEntry > 0) {
+    const notionalSize = Math.min(riskPerTrade / (riskPerUnit / avgEntry), balance * 3);
+    const rawQty = notionalSize / avgEntry;
+    quantity = Math.max(rawQty, 0);
+    leverage = Math.min(Math.ceil(notionalSize / balance), 3);
+  }
   if (quantity <= 0) {
-    return { pass: false, reason: "Risk: position sizing returned zero quantity" };
+    return { pass: false, reason: "Risk: unable to calculate position size" };
   }
-  return { pass: true, reason: `Risk: ${quantity.toFixed(4)} @ ${leverageStr}`, adjustments: { quantity, leverage: leverageStr === "x2" ? 2 : leverageStr === "x3" ? 3 : 5 } };
+  return { pass: true, reason: `Risk (fallback): ${quantity.toFixed(6)} @ ${leverage}x (score ${signal.score} — below threshold)`, adjustments: { quantity, leverage } };
 }
 
 function runTradeValidation(signal: Signal, snapshot: MarketSnapshot): ValidationResult {

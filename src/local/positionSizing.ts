@@ -31,7 +31,7 @@ export interface PositionSizingInput {
 export function calculatePositionSizing(input: PositionSizingInput): PositionSizing | undefined {
   if (input.mode !== "futures") return undefined;
   if (!["LONG", "SHORT"].includes(input.side)) return undefined;
-  if (input.score < 85) return undefined;
+  if (input.score < 60) return undefined;
 
   const averageEntry = (input.entry[0] + input.entry[1]) / 2;
   if (!isFinitePositive(averageEntry) || !isFinitePositive(input.stopLoss)) return undefined;

@@ -386,27 +386,54 @@ export class ExchangeClient {
     }
   }
 
+  private symbolInfoCache = new Map<string, { qtyStep: number; minQty: number }>();
+
+  async bybitSymbolInfo(symbol: string): Promise<{ qtyStep: number; minQty: number }> {
+    const cached = this.symbolInfoCache.get(symbol);
+    if (cached) return cached;
+    try {
+      const body = await json<Record<string, unknown>>(`${BYBIT}/v5/market/instruments-info?category=linear&symbol=${symbol}`);
+      const retCode = body?.retCode as number | undefined;
+      if (retCode && retCode !== 0) return { qtyStep: 0.01, minQty: 0.01 };
+      const result = body?.result as Record<string, unknown> | undefined;
+      const list = (result?.list as Array<Record<string, unknown>> | undefined) ?? [];
+      if (!list.length) return { qtyStep: 0.01, minQty: 0.01 };
+      const ls = list[0]?.lotSizeFilter as Record<string, string> | undefined;
+      const qtyStep = Number(ls?.qtyStep ?? "0.01");
+      const minQty = Number(ls?.minOrderQty ?? "0.01");
+      const info = { qtyStep, minQty };
+      this.symbolInfoCache.set(symbol, info);
+      return info;
+    } catch {
+      return { qtyStep: 0.01, minQty: 0.01 };
+    }
+  }
+
   async bybitPlaceOrder(symbol: string, side: "Buy" | "Sell", qty: string, orderType: "Market" | "Limit" = "Market", price?: string): Promise<BybitOrderResult> {
+    const info = await this.bybitSymbolInfo(symbol).catch(() => ({ qtyStep: 0.01, minQty: 0.01 }));
+    const numQty = Math.max(Number(qty), info.minQty);
+    const roundedQty = Math.round(numQty / info.qtyStep) * info.qtyStep;
+    const validQty = Math.max(roundedQty, info.minQty);
+    const qtyStr = validQty.toFixed(10).replace(/\.?0+$/, "");
     const body: Record<string, unknown> = {
       category: "linear",
       symbol,
       side,
       orderType,
-      qty,
-      timeInForce: "IOC",
+      qty: qtyStr,
       positionIdx: 0
     };
     if (orderType === "Limit" && price) body.price = price;
+    if (orderType === "Limit") body.timeInForce = "IOC";
     return this.bybitPrivatePost<BybitOrderResult>(`${BYBIT}/v5/order/create`, body);
   }
 
   async bybitSetTradingStop(symbol: string, side: "Buy" | "Sell", stopLoss?: string, takeProfit?: string): Promise<BybitTradingStopResult> {
     const body: Record<string, unknown> = {
       category: "linear",
-      symbol
+      symbol,
+      positionIdx: 0
     };
-    if (side === "Buy") body.positionIdx = 0;
-    else body.positionIdx = 0;
     if (stopLoss) body.stopLoss = stopLoss;
     if (takeProfit) body.takeProfit = takeProfit;
     return this.bybitPrivatePost<BybitTradingStopResult>(`${BYBIT}/v5/position/trading-stop`, body);

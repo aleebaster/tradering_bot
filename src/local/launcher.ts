@@ -394,7 +394,9 @@ async function handleOneShot() {
   }
 
   const bybitSide = signal.side === "LONG" || signal.side === "BUY" ? "Buy" as const : "Sell" as const;
-  const qty = signal.positionSizing?.quantity?.toFixed(6) ?? "0";
+  const riskQty = validation?.risk?.adjustments?.quantity;
+  const rawQty = riskQty && riskQty > 0 ? riskQty : signal.positionSizing?.quantity ?? 0;
+  const qty = Math.max(rawQty, 0) > 0 ? String(Math.max(rawQty, 0)) : "0";
   const stopLoss = signal.stopLoss.toFixed(6);
   const tp1 = signal.takeProfit[0].toFixed(6);
 
