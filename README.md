@@ -1,68 +1,158 @@
-# ШІ-бот криптосигналів
+# AI Trading Bot v2
 
-Локальний Windows-сканер криптосигналів з панеллю Next.js, сумісною з Vercel.
+Professional multi-factor AI crypto trading bot with adaptive learning, momentum hunting, smart money detection, and continuous self-improvement.
 
 ## Architecture
 
-Windows-комп'ютер локально запускає підключення до бірж, сканер, сигнальний рушій, Telegram-сповіщення, WebSocket-сервер і REST API на `http://localhost:4000`.
+```
+src/local/
+  launcher.ts          # Unified entry point (all modes)
+  index.ts             # Express API + WebSocket server
+  scanner.ts           # Main trading loop orchestrator
+  scoring.ts           # Signal builder (weighted multi-factor)
+  exchanges.ts         # Exchange clients (Bybit, OKX, KuCoin, Kraken, Binance)
+  indicators.ts        # Technical indicators (EMA, RSI, MACD, ATR, etc.)
+  validation.ts        # Config validation, startup banner, diagnostics
+  config.ts            # Zod-validated environment config
+  
+  bots/                # Intelligence consensus bots
+    PumpDetectorBot.ts     # Pump/momentum breakout detection
+    WhaleTrackerBot.ts     # Whale/smart-money tracking
+    LiqBot.ts              # Liquidation sweep detection
+    MarketReportBot.ts     # Market regime assessment
+    shared.ts              # Shared bot utilities
+  
+  engines/             # Specialized analysis engines
+    MomentumHunterEngine.ts  # Pump Probability + Momentum Score + Entry AI
+    MomentumDetector.ts      # 13-factor momentum analysis
+    SmartMoneyAnalyzer.ts    # Whale/OI/funding/orderbook analysis
+    MomentumExitEngine.ts    # Pump Exhaustion Score + trailing stop
+  
+  learning/            # Self-learning system
+    ModelRegistry.ts        # Model versioning (active/candidate/history)
+    ParameterGovernor.ts    # One-change-at-a-time control + auto-rollback
 
-Vercel запускає тільки інтерфейс панелі. Сканер, сигнальний рушій і біржові підключення не працюють на Vercel.
-
-## Run Locally
-
-Запустіть `START_BOT.bat` подвійним кліком або виконайте:
-
-```bash
-npm install
-npm run local:all
+  memory/              # [extendable] Learning engine, trade memory
 ```
 
-Панель: `http://localhost:3001`
+## Quick Start
 
-Локальний API: `http://localhost:4000`
+```bash
+# Install
+npm install
 
-На Windows `START_BOT.bat` автоматично вмикає UTF-8 (`chcp 65001`), щоб українські повідомлення в консолі, логах і Telegram не ламалися.
+# Configure
+cp .env.example .env
+# Edit .env with your API keys
 
-## Vercel
+# Run (choose one):
+npm run bot        # Continuous trading
+npm run demo       # Demo account mode
+npm run scan       # Scan only (no orders)
+npm run one        # One-shot: scan + execute single trade
+npm run dry        # Full simulation (no real orders)
+npm run doctor     # Full system diagnostics
+npm run health     # Quick health check
+```
 
-Деплойте репозиторій як Next.js застосунок. Не запускайте сканер і не додавайте біржові секрети на Vercel.
+## Modes
 
-Якщо Vercel-панель не може дістатися до локального `http://localhost:4000`, вона показує `ЛОКАЛЬНИЙ РУШІЙ ПОТРІБЕН`, а не фальшивий статус недоступності. Для віддаленого доступу потрібен безпечний HTTPS API/тунель і відповідне значення `NEXT_PUBLIC_LOCAL_API_URL`.
+| Command | Mode | Description |
+|---------|------|-------------|
+| `npm run bot` | Continuous | Full trading loop: scan → consensus → risk → execute → manage → learn |
+| `npm run live` | Live | Real account trading with safety confirmation prompt |
+| `npm run demo` | Demo | Demo account mode with account verification |
+| `npm run one` | One-Shot | Single scan + execute cycle, shows stage-by-stage pipeline |
+| `npm run scan` | Scan Only | Full analysis, prints best opportunities, NO orders |
+| `npm run dry` | Dry Run | Everything runs (including execution), but orders are simulated |
+| `npm run doctor` | Diagnostics | Full system health check |
+| `npm run health` | Health | Quick config + connection check |
 
-## Trading Safety
+## Pipeline (Continuous Mode)
 
-Бот не відкриває ордери автоматично. Він створює високоселективні сигнали, записи для спостереження і рішення `НЕ ВХОДИТИ` на основі живих ринкових даних і налаштованого біржового контексту.
+```
+========================================
+  SCAN MARKET           → scanner.ts
+  MARKET HEALTH         → scoring.ts (regimeFrom)
+  LIQUIDITY             → exchanges.ts (depth + volume)
+  CORRELATION           → exchanges.ts (multi-exchange)
+  SMART MONEY           → bots/WhaleTrackerBot.ts
+  ORDER BOOK AI         → exchanges.ts (bybitOrderBookStats)
+  MOMENTUM HUNTER       → engines/MomentumHunterEngine.ts
+  AI CONSENSUS          → bots/* (4 bots → IntelligenceBundle)
+  RISK ENGINE           → positionSizing.ts
+  PORTFOLIO HEAT        → learning.ts (symbol stats)
+  TRADE VALIDATION      → tradeValidator.ts
+  EXECUTION             → [simulated in dry mode]
+  POSITION MANAGEMENT   → scanner.ts (monitorActiveTrades)
+  LEARNING              → learning.ts (recordLearningOutcome)
+  STATISTICS            → state.ts + tradeMemory.ts
+  NEXT SCAN             → ▼
+========================================
+```
 
-## Signal Engine
+## Environment
 
-Сигнальний рушій працює як торговий асистент, а не автотрейдер. Для будь-якого торгового сигналу потрібна оцінка `85+`; слабші сетапи відхиляються як `НЕ ВХОДИТИ`.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BYBIT_API_KEY` | — | Bybit API key |
+| `BYBIT_API_SECRET` | — | Bybit API secret |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot token (optional) |
+| `TELEGRAM_CHAT_ID` | — | Telegram chat ID (optional) |
+| `USER_BALANCE_USDT` | 5 | Account balance for position sizing |
+| `BOT_MODE` | LOCAL_ONLY | Trading mode |
+| `BOT_ACCOUNT` | demo | `demo` or `live` |
+| `LIVE_TRADING` | 0 | Set to `1` for real orders |
+| `DRY_RUN` | 0 | Set to `1` for simulation only |
+| `SAFE_SCALPING_MODE` | 1 | Enable safety limits |
+| `SCAN_INTERVAL_SECONDS` | 12 | Seconds between scans (10-15) |
+| `LOCAL_API_PORT` | 4000 | API server port |
 
-Плече для ф'ючерсів обмежене `5x`; рекомендації можливі тільки `2x`, `3x` або `5x` і автоматично знижуються при високій волатильності або слабкому імпульсі.
+## Self-Learning System
 
-Кожен прийнятий сетап містить час входу, зону входу, поточну ціну, стоп-лосс, TP1/TP2/TP3, співвідношення ризик/прибуток, рівень інвалідації, ймовірність успіху, впевненість і дії з управління угодою.
+The bot uses a controlled model evolution system:
 
-## Position Sizing
+1. **Active Model** — currently used for trading decisions
+2. **Candidate Model** — proposed change (ONE parameter only)
+3. **Validation**: Backtest → Monte Carlo → Shadow Mode → Compare
+4. **Decision**: Accept (activate candidate) or Reject (keep active)
+5. **Auto-Rollback**: If performance degrades, returns to parent model
 
-Баланс для розрахунку задається через `USER_BALANCE_USDT`, дефолт `5`. Для кожного реального futures-сигналу бот автоматично рахує маржу, розмір позиції, кількість монет, рекомендоване плече `x2/x3/x5`, ризик від балансу, потенційний збиток, потенційний прибуток TP1/TP2/TP3 і запас до орієнтовної ліквідації.
+### Model Registry
 
-Сигнали `80–84` залишаються тільки `WATCHLIST ONLY`: бот не дає точну кількість монет до активації `score >= 85`, щоб не провокувати слабкий вхід.
+All model versions are stored in `data/model-registry.json`. Each entry records:
+- Parameters (weights, thresholds, multipliers)
+- Performance (win rate, profit factor, drawdown, expectancy)
+- Change history (what changed, old value, new value, reason)
 
-## Accuracy Engine
+### Parameter Governor
 
-Сигнали проходять додаткові hard-фільтри: London/NY session filter, high-impact news block, 5m/15m/1H/4H/Daily bias, liquidity sweep, CVD/order-flow, smart OI, fake-breakout detector, market regime 2.0, BTC/ETH correlation і confidence decay. Якщо будь-який критичний шар не підтверджує сетап, бот повертає `NO TRADE` або `WATCHLIST ONLY` замість слабкого входу.
+- Only ONE parameter can change per candidate
+- Each change must have a documented reason
+- System auto-rejects changes that fail validation
+- Rollback is automatic if performance drops below threshold
 
-Для ручного news-блоку використовуйте `HIGH_IMPACT_NEWS_BLOCK_UNTIL=2026-06-01T15:00:00Z`. До цього часу агресивні сигнали будуть заблоковані як `⚠️ HIGH IMPACT NEWS RISK — NO TRADE`.
+## Development
 
-Grade сигналу: `A+` elite setup, `A` strong setup, `B` acceptable, `C` watchlist only, `D` ignore/no trade.
+```bash
+npm run typecheck    # TypeScript check
+npm run tests        # Full test suite
+npm run clean        # Clear runtime data
+npm run reset-learning  # Reset learning engine state
+npm run local:api    # Start API server only
+npm run dev          # Start dashboard only
+npm run local:all    # API + Dashboard together
+```
 
-## Small Balance Growth Mode
+## Dashboard
 
-`SMALL_BALANCE_GROWTH_MODE=1` увімкнено за замовчуванням для балансу `5 USDT`. Режим ставить збереження капіталу вище росту: максимум `2` активні сигнали на день, мінімальна пауза між сигналами `45` хвилин, risk per trade приблизно `1.25–1.5%` і до `2%` тільки для elite setup. Плече `x2–x3` за замовчуванням, `x5` тільки для найсильніших `92+` сетапів із достатнім liquidation safety.
+The React dashboard runs on `http://localhost:3001`:
+- Real-time state updates via WebSocket
+- Signal history and active positions
+- Market analysis
+- Momentum Hunter output
+- System diagnostics
 
-У цьому режимі бот додатково вимагає fast clean move: короткостроковий імпульс, достатню волатильність, сильний обсяг, order-flow/CVD confirmation і відсутність chop/compression. Якщо clean move не підтверджений, сигнал блокується як `SMALL BALANCE MODE — WAIT`.
-
-## Telegram Format
-
-Telegram показує тільки короткий 3-секундний сигнал: LONG/SHORT, вхід, Stop Loss, TP1/TP2/TP3, плече, баланс `5 USDT`, розмір позиції, кількість монет і правило беззбитку після TP1. Детальна аналітика залишається всередині рушія та логів. Для слабкого сетапу Telegram надсилає тільки `NO TRADE`, `Слабкий сигнал` і `Чекаємо кращу точку входу`.
-
-Безперервний моніторинг надсилає сповіщення про тригер входу, утримання позиції, часткову фіксацію прибутку, перенесення stop loss у беззбиток, трейлінг-стоп, вихід зараз і виявлення розвороту тренду.
+```bash
+npm run dashboard    # Start dashboard only
+```

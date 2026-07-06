@@ -15,6 +15,8 @@ const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json());
 
+const telegramCommands = new TelegramCommandCenter();
+
 app.get("/health", (_req, res) => res.json({ ok: true, mode: config.mode, partialMode: config.partialMode, warnings: state.diagnostics.warnings }));
 app.get("/state", (_req, res) => res.json(state));
 app.get("/signals", (_req, res) => res.json({ active: state.activeSignals, watchlist: state.watchlist, history: state.history }));
@@ -57,17 +59,31 @@ function broadcast(payload: unknown) {
 
 wss.on("connection", (socket) => socket.send(JSON.stringify({ type: "state", state })));
 
-const scanner = new Scanner(broadcast);
-const telegramCommands = new TelegramCommandCenter();
-server.listen(config.LOCAL_API_PORT, () => {
-  logger.info(`Локальний API слухає http://localhost:${config.LOCAL_API_PORT}`);
-  if (config.warning) logger.warn(config.warning);
-  telegramCommands.start();
-  void scanner.start();
-});
+let scannerInstance: Scanner | null = null;
+
+export function startBot(): void {
+  scannerInstance = new Scanner(broadcast);
+  server.listen(config.LOCAL_API_PORT, () => {
+    logger.info(`Локальний API слухає http://localhost:${config.LOCAL_API_PORT}`);
+    if (config.warning) logger.warn(config.warning);
+    telegramCommands.start();
+    void scannerInstance!.start();
+  });
+}
+
+export function stopBot(): void {
+  telegramCommands.stop();
+  if (scannerInstance) scannerInstance.stop();
+  scannerInstance = null;
+}
 
 process.on("SIGINT", () => {
-  telegramCommands.stop();
-  scanner.stop();
+  stopBot();
   server.close(() => process.exit(0));
 });
+
+// Self-start when run directly (not imported)
+const isDirectRun = process.argv[1]?.includes("index.ts") || process.argv[1]?.includes("index.js");
+if (isDirectRun) {
+  startBot();
+}

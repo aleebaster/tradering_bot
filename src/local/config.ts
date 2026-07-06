@@ -27,7 +27,12 @@ const schema = z.object({
   HIGH_IMPACT_NEWS_BLOCK_UNTIL: z.string().optional(),
   LOCAL_API_PORT: z.coerce.number().default(4000),
   SCAN_INTERVAL_SECONDS: z.coerce.number().min(10).max(15).default(12),
-  BOT_MODE: z.enum(["LOCAL_ONLY", "HYBRID", "OFFLINE_TEST"]).optional()
+  BOT_MODE: z.enum(["LOCAL_ONLY", "HYBRID", "OFFLINE_TEST"]).optional(),
+  BOT_ACCOUNT: z.enum(["demo", "live"]).optional(),
+  LIVE_TRADING: z.string().optional(),
+  SAFE_SCALPING_MODE: z.string().optional(),
+  AUTO_NOTIFY_TELEGRAM: z.string().optional(),
+  DRY_RUN: z.string().optional()
 });
 
 const parsed = schema.parse(process.env);
@@ -53,7 +58,11 @@ export const config = {
   futuresTimeframes: ["1", "3", "5", "15", "60"],
   spotTimeframes: ["60", "240", "D"],
   maxSignalsPerDay: env.SMALL_BALANCE_GROWTH_MODE === "0" ? 5 : 2,
-  minSignalCooldownMinutes: env.SMALL_BALANCE_GROWTH_MODE === "0" ? 20 : 45
+  minSignalCooldownMinutes: env.SMALL_BALANCE_GROWTH_MODE === "0" ? 20 : 45,
+  botAccount: (env.BOT_ACCOUNT ?? "demo") as "demo" | "live",
+  liveTrading: env.LIVE_TRADING === "1",
+  safeScalpingMode: env.SAFE_SCALPING_MODE !== "0",
+  dryRun: env.DRY_RUN === "1"
 };
 
 function cleanSecret(value?: string) {

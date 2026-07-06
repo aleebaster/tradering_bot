@@ -345,6 +345,73 @@ export class ExchangeClient {
     return crypto.createHmac("sha256", config.BYBIT_API_SECRET ?? "").update(payload).digest("hex");
   }
 
+  private async bybitPrivatePost<T>(endpoint: string, body: Record<string, unknown> = {}): Promise<T> {
+    if (!config.BYBIT_API_KEY || !config.BYBIT_API_SECRET) throw new Error("Bybit credentials incomplete");
+    const timestamp = Date.now().toString();
+    const payload = timestamp + config.BYBIT_API_KEY + "5000" + JSON.stringify(body);
+    const sign = this.signBybit(payload);
+    return json<T>(endpoint, {
+      method: "POST",
+      headers: {
+        "X-BAPI-API-KEY": config.BYBIT_API_KEY,
+        "X-BAPI-SIGN": sign,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": "5000",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+  }
+
+  private async bybitPrivateGet<T>(endpoint: string): Promise<T> {
+    if (!config.BYBIT_API_KEY || !config.BYBIT_API_SECRET) throw new Error("Bybit credentials incomplete");
+    const timestamp = Date.now().toString();
+    const payload = timestamp + config.BYBIT_API_KEY + "5000";
+    const sign = this.signBybit(payload);
+    return json<T>(endpoint, {
+      headers: {
+        "X-BAPI-API-KEY": config.BYBIT_API_KEY,
+        "X-BAPI-SIGN": sign,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": "5000"
+      }
+    });
+  }
+
+  async bybitWalletBalance(): Promise<{ totalWalletBalance: number; availableBalance: number } | null> {
+    try {
+      const body = await this.bybitPrivateGet<Record<string, unknown>>(`${BYBIT}/v5/account/wallet-balance?accountType=UNIFIED&coin=USDT`);
+      const result = body?.result as Record<string, unknown> | undefined;
+      const list = (result?.list as Array<Record<string, string>> | undefined) ?? [];
+      if (!list.length) return null;
+      return { totalWalletBalance: Number(list[0]?.totalWalletBalance ?? 0), availableBalance: Number(list[0]?.availableBalance ?? 0) };
+    } catch {
+      return null;
+    }
+  }
+
+  async bybitPositions(): Promise<Array<{ symbol: string; size: string; side: string }>> {
+    try {
+      const body = await this.bybitPrivateGet<Record<string, unknown>>(`${BYBIT}/v5/position/list?category=linear&settleCoin=USDT`);
+      const result = body?.result as Record<string, unknown> | undefined;
+      const list = (result?.list as Array<Record<string, string>> | undefined) ?? [];
+      return list.map((p) => ({ symbol: p.symbol ?? "", size: p.size ?? "0", side: p.side ?? "" }));
+    } catch {
+      return [];
+    }
+  }
+
+  async bybitOpenOrders(): Promise<Array<{ symbol: string; orderId: string; price: string; qty: string; side: string }>> {
+    try {
+      const body = await this.bybitPrivateGet<Record<string, unknown>>(`${BYBIT}/v5/order/realtime?category=linear&settleCoin=USDT`);
+      const result = body?.result as Record<string, unknown> | undefined;
+      const list = (result?.list as Array<Record<string, string>> | undefined) ?? [];
+      return list.map((o) => ({ symbol: o.symbol ?? "", orderId: o.orderId ?? "", price: o.price ?? "", qty: o.qty ?? "", side: o.side ?? "" }));
+    } catch {
+      return [];
+    }
+  }
+
   private async okxPrivateGet<T>(path: string): Promise<T> {
     if (!config.OKX_API_KEY || !config.OKX_API_SECRET || !config.OKX_API_PASSPHRASE) throw new Error("OKX credentials incomplete");
     const timestamp = new Date().toISOString();
