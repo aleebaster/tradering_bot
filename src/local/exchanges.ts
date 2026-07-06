@@ -348,7 +348,7 @@ export class ExchangeClient {
   private async bybitPrivatePost<T>(endpoint: string, body: Record<string, unknown> = {}): Promise<T> {
     if (!config.BYBIT_API_KEY || !config.BYBIT_API_SECRET) throw new Error("Bybit credentials incomplete");
     const timestamp = Date.now().toString();
-    const payload = timestamp + config.BYBIT_API_KEY + "5000" + JSON.stringify(body);
+    const payload = timestamp + config.BYBIT_API_KEY + "10000" + JSON.stringify(body);
     const sign = this.signBybit(payload);
     return json<T>(endpoint, {
       method: "POST",
@@ -356,7 +356,7 @@ export class ExchangeClient {
         "X-BAPI-API-KEY": config.BYBIT_API_KEY,
         "X-BAPI-SIGN": sign,
         "X-BAPI-TIMESTAMP": timestamp,
-        "X-BAPI-RECV-WINDOW": "5000",
+        "X-BAPI-RECV-WINDOW": "10000",
         "content-type": "application/json"
       },
       body: JSON.stringify(body)
@@ -366,14 +366,16 @@ export class ExchangeClient {
   private async bybitPrivateGet<T>(endpoint: string): Promise<T> {
     if (!config.BYBIT_API_KEY || !config.BYBIT_API_SECRET) throw new Error("Bybit credentials incomplete");
     const timestamp = Date.now().toString();
-    const payload = timestamp + config.BYBIT_API_KEY + "5000";
+    const qsIdx = endpoint.indexOf("?");
+    const queryString = qsIdx >= 0 ? endpoint.slice(qsIdx + 1) : "";
+    const payload = timestamp + config.BYBIT_API_KEY + "10000" + queryString;
     const sign = this.signBybit(payload);
     return json<T>(endpoint, {
       headers: {
         "X-BAPI-API-KEY": config.BYBIT_API_KEY,
         "X-BAPI-SIGN": sign,
         "X-BAPI-TIMESTAMP": timestamp,
-        "X-BAPI-RECV-WINDOW": "5000"
+        "X-BAPI-RECV-WINDOW": "10000"
       }
     });
   }
@@ -381,11 +383,14 @@ export class ExchangeClient {
   async bybitWalletBalance(): Promise<{ totalWalletBalance: number; availableBalance: number } | null> {
     try {
       const body = await this.bybitPrivateGet<Record<string, unknown>>(`${BYBIT}/v5/account/wallet-balance?accountType=UNIFIED&coin=USDT`);
+      const retCode = body?.retCode as number | undefined;
+      if (retCode && retCode !== 0) return null;
       const result = body?.result as Record<string, unknown> | undefined;
       const list = (result?.list as Array<Record<string, string>> | undefined) ?? [];
       if (!list.length) return null;
       return { totalWalletBalance: Number(list[0]?.totalWalletBalance ?? 0), availableBalance: Number(list[0]?.availableBalance ?? 0) };
-    } catch {
+    } catch (err) {
+      logger.warn({ err }, "bybitWalletBalance exception");
       return null;
     }
   }

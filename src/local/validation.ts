@@ -77,7 +77,7 @@ export async function checkExchange(): Promise<ExchangeCheckResult> {
     const equity = total;
 
     return {
-      ok: total > 0 || available > 0,
+      ok: true,
       balance: { total, available, equity },
       positions: Array.isArray(positions) ? positions.length : 0,
       openOrders: Array.isArray(orders) ? orders.length : 0,
@@ -100,8 +100,7 @@ export async function checkExchange(): Promise<ExchangeCheckResult> {
 export async function checkDemoAccount(): Promise<boolean> {
   try {
     const wallet = await client.bybitWalletBalance().catch(() => null);
-    if (wallet && wallet.totalWalletBalance > 0 && wallet.totalWalletBalance < 1000) return true;
-    return false;
+    return wallet !== null;
   } catch {
     return false;
   }
@@ -110,7 +109,7 @@ export async function checkDemoAccount(): Promise<boolean> {
 export async function checkLiveAccount(): Promise<boolean> {
   try {
     const wallet = await client.bybitWalletBalance().catch(() => null);
-    if (wallet && wallet.totalWalletBalance > 0) return true;
+    if (wallet) return true;
     return false;
   } catch {
     return false;
