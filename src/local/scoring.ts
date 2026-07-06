@@ -131,13 +131,18 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   if (confirmationProfile.smallAltStrict && score < 90) score = Math.min(score, 84);
   if (hardBlock.blocked) score = Math.min(score, hardBlock.maxScore);
   if (intel.hardRisk) score = Math.min(score, 79);
-  const levelSide: "LONG" | "SHORT" = side === "SHORT" ? "SHORT" : "LONG";
-  const levels = professionalTradeLevels(candles, precisionCandles, oneHourCandles, levelSide, a, sr);
-  const entry = levels.entry;
-  const stopLoss = levels.stopLoss;
-  const takeProfit = levels.takeProfit;
-  const avgEntry = (entry[0] + entry[1]) / 2;
-  logger.info({ symbol: snapshot.symbol, pipelineStage: "LEVELS_GENERATED", side: levelSide, entry, avgEntry: Math.round(avgEntry * 100) / 100, stopLoss, takeProfit, risk: Math.round(Math.abs(avgEntry - stopLoss) * 100) / 100, rr: Math.abs(avgEntry - stopLoss) > 0 ? Math.round(Math.abs(takeProfit[2] - avgEntry) / Math.abs(avgEntry - stopLoss) * 10) / 10 : 0 }, "DecisionEngine: professionalTradeLevels output");
+  let entry: [number, number] = [0, 0];
+  let stopLoss = 0;
+  let takeProfit: [number, number, number] = [0, 0, 0];
+  let avgEntry = 0;
+  if (side === "LONG" || side === "SHORT") {
+    const levels = professionalTradeLevels(candles, precisionCandles, oneHourCandles, side, a, sr);
+    entry = levels.entry;
+    stopLoss = levels.stopLoss;
+    takeProfit = levels.takeProfit;
+    avgEntry = (entry[0] + entry[1]) / 2;
+    logger.info({ symbol: snapshot.symbol, pipelineStage: "LEVELS_GENERATED", side, entry, avgEntry: Math.round(avgEntry * 100) / 100, stopLoss, takeProfit, risk: Math.round(Math.abs(avgEntry - stopLoss) * 100) / 100, rr: Math.abs(avgEntry - stopLoss) > 0 ? Math.round(Math.abs(takeProfit[2] - avgEntry) / Math.abs(avgEntry - stopLoss) * 10) / 10 : 0 }, "DecisionEngine: professionalTradeLevels output");
+  }
   const rrValue = riskRewardValue(entry, stopLoss, takeProfit[2], direction);
   if (rrValue < 2) score = Math.min(score, 69);
   score = Math.max(score, earlySetupFloor(snapshot, { side, executionAligned: execution.aligned, htfScore: htf.score, trendStrength, mtf, volume, orderFlowScore: orderFlow.score, liquidityScore: liquidity.score, funding, fakeBreakoutRisk: fakeBreakout.risk, newsBlocked: newsRisk.blocked, rrValue }));
@@ -153,7 +158,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const intelligenceEntry = intel.entryQuality >= 72 && intel.aligned && !intel.hardRisk;
   const strongEntryReady = roundedScore >= entryThreshold && side !== "NO_TRADE" && inEntryZone && (sniper.ready || micro.weightedScore >= 86 && micro.retestForming) && snapshot.btcStable && volume >= 62 && momentum >= 68 && (liquidity.score >= 65 || fastMomentumEntry || intelligenceEntry || micro.strongOrderflow) && !fakeBreakout.risk && !hardBlock.blocked && !intel.hardRisk && micro.tinyAccountOk;
   const earlyEntryReady = !strongEntryReady && roundedScore >= micro.earlyThreshold && side !== "NO_TRADE" && snapshot.mode === "futures" && micro.ready && !hardBlock.blocked && !intel.hardRisk;
-  const qualifiedSide: Side = strongEntryReady ? side : roundedScore >= earlyThreshold && snapshot.mode === "futures" && side !== "NO_TRADE" ? "WATCHLIST" : "NO_TRADE";
+  const qualifiedSide: Side = strongEntryReady ? side : side !== "NO_TRADE" ? (roundedScore >= earlyThreshold ? "WATCHLIST" : side) : "NO_TRADE";
   const entryStatus = strongEntryReady ? "ENTER_NOW" : earlyEntryReady ? "EARLY_ENTRY_READY" : qualifiedSide === "WATCHLIST" ? "WAIT_FOR_ENTRY" : "NO_TRADE";
   const riskReward = riskRewardRatio(rrValue);
   const grade = gradeFrom(roundedScore, hardBlock.blocked, qualifiedSide);
@@ -275,10 +280,9 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
       ? signal.stopLoss < avgEntryCheck && signal.takeProfit[0] > avgEntryCheck && signal.takeProfit[1] > signal.takeProfit[0] && signal.takeProfit[2] > signal.takeProfit[1]
       : signal.stopLoss > avgEntryCheck && signal.takeProfit[0] < avgEntryCheck && signal.takeProfit[1] < signal.takeProfit[0] && signal.takeProfit[2] < signal.takeProfit[1];
     if (!levelsOk) {
-      logger.error({ symbol: signal.symbol, pipelineStage: "LEVELS_INVALID", side: signal.side, entry: signal.entry, avgEntry: Math.round(avgEntryCheck * 100) / 100, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit }, "DecisionEngine: CRITICAL - levels invalid for declared side, downgrading to NO_TRADE");
+      logger.error({ symbol: signal.symbol, pipelineStage: "LEVELS_INVALID", side: signal.side, entry: signal.entry, avgEntry: Math.round(avgEntryCheck * 100) / 100, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit }, "DecisionEngine: CRITICAL - levels invalid for declared side");
       signal.entryStatus = "NO_TRADE";
-      signal.side = "NO_TRADE";
-      signal.rejectionReason = `Internal levels invalid: ${signal.side} signal has SL/TP that don't match direction`;
+      signal.rejectionReason = `Internal levels invalid: SL/TP don't match ${signal.side} direction`;
       return signal;
     }
 
@@ -513,7 +517,8 @@ function executionDirection(candles: Record<string, Candle[]>, mode: "spot" | "f
   const precisionVotes = [one, three, five].filter((dir) => dir !== 0);
   const precisionAligned = !precisionVotes.length || precisionVotes.some((dir) => dir === oneHour);
   const aligned = oneHour !== 0 && oneHour === fifteen && precisionAligned;
-  return { direction: aligned ? oneHour : 0, aligned };
+  const direction = oneHour !== 0 ? oneHour : fifteen !== 0 ? fifteen : one;
+  return { direction, aligned };
 }
 
 function bestEntryTimingCandles(oneMinute: Candle[], threeMinute: Candle[], fiveMinute: Candle[], direction: number) {
@@ -742,22 +747,22 @@ function sessionFilter(now: Date, snapshot?: MarketSnapshot): AccuracySession {
 
   if (minutes >= 420 && minutes <= 570) {
     const adj = clamp(6 + dynamicBoost, -5, 12);
-    return { name: "LONDON_OPEN", active: adj > -2, confidenceAdjustment: adj, message: adj > 0 ? "✅ London Open: ліквідність активна" : "⚠️ London Open: низька активність" };
+    return { name: "LONDON_OPEN", active: true, confidenceAdjustment: adj, message: adj > 0 ? "✅ London Open: ліквідність активна" : "⚠️ London Open: низька активність" };
   }
   if (minutes >= 780 && minutes <= 960) {
     const adj = clamp(8 + dynamicBoost, -3, 14);
-    return { name: "LONDON_NY_OVERLAP", active: adj > -2, confidenceAdjustment: adj, message: adj > 0 ? "✅ London + NY overlap: найкраща ліквідність" : "⚠️ London+NY overlap: знижена активність" };
+    return { name: "LONDON_NY_OVERLAP", active: true, confidenceAdjustment: adj, message: adj > 0 ? "✅ London + NY overlap: найкраща ліквідність" : "⚠️ London+NY overlap: знижена активність" };
   }
   if (minutes >= 780 && minutes <= 930) {
     const adj = clamp(7 + dynamicBoost, -4, 13);
-    return { name: "NEW_YORK_OPEN", active: adj > -2, confidenceAdjustment: adj, message: adj > 0 ? "✅ New York Open: ліквідність активна" : "⚠️ NY Open: знижена активність" };
+    return { name: "NEW_YORK_OPEN", active: true, confidenceAdjustment: adj, message: adj > 0 ? "✅ New York Open: ліквідність активна" : "⚠️ NY Open: знижена активність" };
   }
   if (minutes >= 0 && minutes <= 360) {
     const adj = clamp(-18 + dynamicBoost * 2, -20, 5);
-    return { name: "ASIA_CHOP", active: adj > -2, confidenceAdjustment: adj, message: adj > 0 ? "✅ Asia session: аномальна активність" : "⚠️ Asia low liquidity: тільки sniper entry" };
+    return { name: "ASIA_CHOP", active: true, confidenceAdjustment: adj, message: adj > 0 ? "✅ Asia session: аномальна активність" : "⚠️ Asia low liquidity: тільки sniper entry" };
   }
   const adj = clamp(-10 + dynamicBoost, -16, 6);
-  return { name: "OFF_HOURS", active: adj > -2, confidenceAdjustment: adj, message: adj > 0 ? "✅ Off-hours: підвищена активність" : "⚠️ Off-hours: знижена впевненість" };
+  return { name: "OFF_HOURS", active: true, confidenceAdjustment: adj, message: adj > 0 ? "✅ Off-hours: підвищена активність" : "⚠️ Off-hours: знижена впевненість" };
 }
 
 function highImpactNewsRisk(snapshot: MarketSnapshot, last: Candle, a: number): AccuracyRisk {
@@ -911,14 +916,12 @@ function fastMoveQuality(precision: Candle[], setup: Candle[], direction: number
 function accuracyHardBlock(snapshot: MarketSnapshot, input: { side: Side; direction: number; session: AccuracySession; newsRisk: AccuracyRisk; htf: HigherTimeframeBias; liquidity: LiquidityIntelligence; orderFlow: OrderFlowAnalysis; oiAnalysis: OpenInterestAnalysis; fakeBreakout: FakeBreakoutAnalysis; fastMove: FastMoveQuality; correlation: CorrelationContext }) {
   if (input.newsRisk.blocked && input.newsRisk.severity === "HIGH") return { blocked: true, maxScore: 55, reason: input.newsRisk.message };
   if (input.newsRisk.severity === "MEDIUM") return { blocked: false, maxScore: 82, reason: input.newsRisk.message };
-  if (!input.session.active) return { blocked: true, maxScore: 79, reason: input.session.message };
   if (!input.htf.executionAligned && input.direction !== 0) return { blocked: true, maxScore: 79, reason: "1H/15M/5M execution alignment не підтверджений" };
   if (input.fakeBreakout.risk) return { blocked: true, maxScore: 79, reason: input.fakeBreakout.message };
   if (config.smallBalanceGrowthMode && !input.fastMove.clean) return { blocked: true, maxScore: 84, reason: input.fastMove.message };
   if (input.orderFlow.trapRisk) return { blocked: true, maxScore: 84, reason: "CVD показує trap risk, потрібне підтвердження без пастки" };
   if (snapshot.symbol !== "BTCUSDT" && input.direction === 1 && (input.correlation.riskOff || !input.correlation.aligned)) return { blocked: true, maxScore: 84, reason: "Кореляційний фільтр ще не підтвердив altcoin LONG" };
   if (snapshot.symbol !== "BTCUSDT" && input.direction === -1 && input.correlation.aligned && !input.correlation.riskOff) return { blocked: true, maxScore: 84, reason: "Кореляційний фільтр ще не підтвердив altcoin SHORT" };
-  if ((snapshot.regime === "SIDEWAYS" || snapshot.regime === "RANGING" || snapshot.regime === "CHOPPY") && input.side !== "WATCHLIST") return { blocked: true, maxScore: 84, reason: "SIDEWAYS/CHOPPY ринок: потрібен retest/liquidity sweep перед входом" };
   return { blocked: false, maxScore: 100, reason: undefined };
 }
 
@@ -940,6 +943,85 @@ function signalTtlMs(score: number) {
 
 function neutralCorrelation(): CorrelationContext {
   return { btcDirection: 0, ethDirection: 0, total3Direction: 0, btcDominanceDirection: 0, dxyDirection: 0, nasdaqDirection: 0, aligned: false, riskOff: false, details: ["correlation data unavailable"] };
+}
+
+export type ValidationResult = {
+  pass: boolean;
+  reason: string;
+  adjustments?: { confidence?: number; quantity?: number; leverage?: number };
+  details?: Record<string, unknown>;
+};
+
+export type SignalValidation = {
+  offHours: ValidationResult;
+  risk: ValidationResult;
+  validator: ValidationResult;
+};
+
+export function validateSignal(signal: Signal, snapshot: MarketSnapshot): SignalValidation {
+  const offHours = runOffHoursValidation(signal, snapshot);
+  const risk = runRiskValidation(signal, snapshot);
+  const validator = runTradeValidation(signal, snapshot);
+  return { offHours, risk, validator };
+}
+
+function runOffHoursValidation(signal: Signal, snapshot: MarketSnapshot): ValidationResult {
+  const session = snapshot.candles["15"]?.length
+    ? sessionFilter(new Date(), snapshot)
+    : signal.session;
+  const adj = session.confidenceAdjustment;
+  if (adj < -10) {
+    return { pass: true, reason: `Off-hours: confidence reduced by ${adj} points (low liquidity session)`, adjustments: { confidence: adj } };
+  }
+  if (adj < 0) {
+    return { pass: true, reason: `Off-hours: confidence reduced by ${adj} points`, adjustments: { confidence: adj } };
+  }
+  return { pass: true, reason: `Session: ${session.name} (confidence boost ${adj > 0 ? "+" : ""}${adj})`, adjustments: { confidence: adj } };
+}
+
+function runRiskValidation(signal: Signal, snapshot: MarketSnapshot): ValidationResult {
+  if (signal.side !== "LONG" && signal.side !== "SHORT") {
+    return { pass: false, reason: "Risk: signal side is not LONG/SHORT" };
+  }
+  const avgEntry = (signal.entry[0] + signal.entry[1]) / 2;
+  if (avgEntry <= 0) {
+    return { pass: false, reason: "Risk: invalid entry level" };
+  }
+  const sizing = calculatePositionSizing({
+    symbol: signal.symbol,
+    side: signal.side,
+    score: signal.score,
+    entry: signal.entry,
+    stopLoss: signal.stopLoss,
+    takeProfit: signal.takeProfit,
+    mode: signal.mode === "futures" ? "futures" : "spot",
+  });
+  if (!sizing) {
+    return { pass: false, reason: "Risk: position sizing returned undefined (score too low or invalid params)" };
+  }
+  const quantity = Number(sizing.quantity) || 0;
+  const leverageStr = sizing.leverage;
+  if (quantity <= 0) {
+    return { pass: false, reason: "Risk: position sizing returned zero quantity" };
+  }
+  return { pass: true, reason: `Risk: ${quantity.toFixed(4)} @ ${leverageStr}`, adjustments: { quantity, leverage: leverageStr === "x2" ? 2 : leverageStr === "x3" ? 3 : 5 } };
+}
+
+function runTradeValidation(signal: Signal, snapshot: MarketSnapshot): ValidationResult {
+  if (signal.side !== "LONG" && signal.side !== "SHORT") {
+    return { pass: false, reason: "Validator: signal side is not LONG/SHORT" };
+  }
+  const avgEntry = (signal.entry[0] + signal.entry[1]) / 2;
+  if (avgEntry <= 0 || signal.stopLoss <= 0 || signal.takeProfit[0] <= 0) {
+    return { pass: false, reason: "Validator: missing entry/SL/TP levels" };
+  }
+  const dirOk = signal.side === "LONG"
+    ? signal.stopLoss < avgEntry && signal.takeProfit[0] > avgEntry
+    : signal.stopLoss > avgEntry && signal.takeProfit[0] < avgEntry;
+  if (!dirOk) {
+    return { pass: false, reason: `Validator: SL/TP direction mismatch for ${signal.side}` };
+  }
+  return { pass: true, reason: `Validator: levels valid (entry ${avgEntry.toFixed(2)}, SL ${signal.stopLoss.toFixed(2)}, TP ${signal.takeProfit[0].toFixed(2)})` };
 }
 
 function emptyNoTradeSignal(snapshot: MarketSnapshot): Signal {

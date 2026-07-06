@@ -3,7 +3,7 @@ import { logger } from "./logger";
 import { ExchangeClient } from "./exchanges";
 import { checkAllModules, checkConfig, printBanner, printConfigCheck, printExchangeCheck, checkDemoAccount, checkLiveAccount, fullDiagnostics } from "./validation";
 import { analyzeMomentumHunter, formatMomentumDashboard } from "./engines/MomentumHunterEngine";
-import { btcStable, buildSignal, regimeFrom } from "./scoring";
+import { btcStable, buildSignal, regimeFrom, validateSignal } from "./scoring";
 import { PumpDetectorBot, WhaleTrackerBot, LiqBot, MarketReportBot } from "./bots";
 import type { MarketRegime, MarketSnapshot, Signal, Candle } from "./types";
 
@@ -127,44 +127,51 @@ async function executeScan() {
   return opportunities;
 }
 
-async function buildSignalForSymbol(symbol: string): Promise<Signal> {
-  const [candles, btcCandles] = await Promise.all([loadFuturesCandles(symbol), loadFuturesCandles("BTCUSDT")]);
-  const btcOk = symbol === "BTCUSDT" ? true : btcStable(btcCandles);
-  const [orderBook, fundingRate, openInterestChange] = await Promise.all([
-    client.bybitOrderBookStats(symbol, "linear").catch(() => ({ spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false })),
-    client.fundingRate(symbol).catch(() => 0),
-    client.openInterestChange(symbol).catch(() => 0)
-  ]);
-  const primary = candles["15"] ?? [];
-  const dollarVolume = primary.slice(-24).reduce((s, c) => s + c.volume * c.close, 0) / 24;
-  const liquidityScore = Math.min(100, Math.log10(Math.max(dollarVolume, 1)) * 11);
-  const regime = regimeFrom(candles);
-  const intelligenceInput = { symbol, candles, orderBook, fundingRate, openInterestChange, liquidityScore, btcStable: btcOk, regime };
-  const intelligence = {
-    pump: pumpBot.analyze(intelligenceInput),
-    whale: whaleBot.analyze(intelligenceInput),
-    liq: liqBot.analyze(intelligenceInput),
-    market: marketReportBot.analyze(intelligenceInput),
-    updatedAt: new Date().toISOString()
-  };
-  const snapshot: MarketSnapshot = {
-    symbol,
-    mode: "futures",
-    candles,
-    okxCandles: {},
-    kucoinCandles: {},
-    binanceCandles: {},
-    orderBookImbalance: orderBook.imbalance,
-    fundingRate,
-    openInterestChange,
-    liquidityScore,
-    whaleScore: intelligence.whale.smartMoneyScore,
-    btcStable: btcOk,
-    regime,
-    confirmations: { bybit: true, okx: false, kucoin: false, binance: false, alignedCount: 1, conflict: false, details: ["one-shot analysis"] },
-    intelligence
-  };
-  return buildSignal(snapshot);
+async function buildSnapshot(symbol: string): Promise<MarketSnapshot | null> {
+  try {
+    const [candles, btcCandles] = await Promise.all([loadFuturesCandles(symbol), loadFuturesCandles("BTCUSDT")]);
+    const btcOk = symbol === "BTCUSDT" ? true : btcStable(btcCandles);
+    const [orderBook, fundingRate, openInterestChange] = await Promise.all([
+      client.bybitOrderBookStats(symbol, "linear").catch(() => ({ spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false })),
+      client.fundingRate(symbol).catch(() => 0),
+      client.openInterestChange(symbol).catch(() => 0)
+    ]);
+    const primary = candles["15"] ?? [];
+    const dollarVolume = primary.slice(-24).reduce((s, c) => s + c.volume * c.close, 0) / 24;
+    const liquidityScore = Math.min(100, Math.log10(Math.max(dollarVolume, 1)) * 11);
+    const regime = regimeFrom(candles);
+    const intelligenceInput = { symbol, candles, orderBook, fundingRate, openInterestChange, liquidityScore, btcStable: btcOk, regime };
+    const intelligence = {
+      pump: pumpBot.analyze(intelligenceInput),
+      whale: whaleBot.analyze(intelligenceInput),
+      liq: liqBot.analyze(intelligenceInput),
+      market: marketReportBot.analyze(intelligenceInput),
+      updatedAt: new Date().toISOString()
+    };
+    const snapshot: MarketSnapshot = {
+      symbol,
+      mode: "futures",
+      candles,
+      okxCandles: {},
+      kucoinCandles: {},
+      binanceCandles: {},
+      orderBookImbalance: orderBook.imbalance,
+      fundingRate,
+      openInterestChange,
+      liquidityScore,
+      whaleScore: intelligence.whale.smartMoneyScore,
+      btcStable: btcOk,
+      regime,
+      confirmations: { bybit: true, okx: false, kucoin: false, binance: false, alignedCount: 1, conflict: false, details: ["one-shot analysis"] },
+      intelligence
+    };
+    return snapshot;
+  } catch { return null; }
+}
+
+async function buildSignalForSymbol(symbol: string): Promise<Signal | null> {
+  const snapshot = await buildSnapshot(symbol);
+  return snapshot ? buildSignal(snapshot) : null;
 }
 
 async function loadFuturesCandles(symbol: string) {
@@ -312,28 +319,20 @@ async function handleBot() {
 async function handleOneShot() {
   printHeader("ONE-SHOT MODE");
 
-  type StageStatus = "PENDING" | "PASS" | "FAIL";
-  const stages: Array<{ name: string; status: StageStatus }> = [
-    { name: "Market Scan", status: "PENDING" },
-    { name: "Consensus", status: "PENDING" },
-    { name: "Risk", status: "PENDING" },
-    { name: "Validation", status: "PENDING" },
-    { name: "Execution", status: "PENDING" }
-  ];
+  function stageLog(stage: string, status: "PASS" | "FAIL" | "SKIP", detail: string, ctx?: Record<string, unknown>) {
+    const icon = status === "PASS" ? "✓" : status === "FAIL" ? "✗" : "−";
+    const prefix = ctx ? `  │ ${stage.padEnd(18)} ${icon} ${status}` : `  ${stage.padEnd(18)} ${icon} ${status}`;
+    logger.info(ctx ? { ...ctx, pipelineStage: stage, stageStatus: status } : `${prefix} — ${detail}`);
+    if (!ctx) logger.info(`  │ ${" ".repeat(18)} ${detail}`);
+  }
 
-  const updateStage = (idx: number, status: StageStatus, detail = "") => {
-    stages[idx] = { ...stages[idx], status };
-    const icon = status === "PASS" ? "✓" : status === "FAIL" ? "✗" : "…";
-    logger.info(`  Stage ${idx + 1}: ${stages[idx].name}  ${icon} ${status}${detail ? " — " + detail : ""}`);
-  };
-
-  updateStage(0, "PASS", "scanning " + config.symbols.length + " symbols");
+  stageLog("Market Scan", "PASS", `scanning ${config.symbols.length} symbols`);
 
   const opportunities = await executeScan();
   const bestCand = opportunities.filter((o) => o.decision === "ENTER").sort((a, b) => b.confidence - a.confidence)[0];
 
   if (!bestCand) {
-    updateStage(1, "FAIL", "no ENTER candidates found");
+    stageLog("Consensus", "FAIL", "no ENTER candidates found");
     logger.info("\n  No trade opened — no candidate passed all filters");
     logger.info("  Top candidates:");
     opportunities.slice(0, 3).forEach((o) => logger.info(`    ${o.symbol}: ${o.decision} (${o.confidence}%) — ${o.reason}`));
@@ -341,34 +340,61 @@ async function handleOneShot() {
     process.exit(0);
   }
 
-  updateStage(1, "PASS", `${bestCand.symbol} confidence ${bestCand.confidence}%`);
+  stageLog("Consensus", "PASS", `${bestCand.symbol} confidence ${bestCand.confidence}%`, { symbol: bestCand.symbol, confidence: bestCand.confidence });
 
-  logger.info(`\n----------- BUILDING SIGNAL ----------------------`);
+  logger.info(`\n----------- DECISION ENGINE ----------------------`);
   logger.info(`  Building full signal for ${bestCand.symbol}...`);
   const signal = await buildSignalForSymbol(bestCand.symbol);
-  logger.info({ side: signal.side, score: signal.score, entryStatus: signal.entryStatus, entry: signal.entry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit, currentPrice: signal.currentPrice }, "signal built");
-
-  if (signal.side === "NO_TRADE" || signal.side === "WATCHLIST") {
-    updateStage(2, "FAIL", `signal rejected: ${signal.rejectionReason}`);
-    logger.error(`\n  ✗ Trade FAILED: ${bestCand.symbol} — ${signal.rejectionReason}`);
+  if (!signal) {
+    stageLog("DecisionEngine", "FAIL", "failed to build signal (snapshot error)");
+    logger.error(`\n  ✗ Trade FAILED: ${bestCand.symbol} — snapshot construction failed`);
     printFooter();
     process.exit(1);
   }
+  const avgEntry = (signal.entry[0] + signal.entry[1]) / 2;
+  stageLog("DecisionEngine", "PASS", `${signal.side} score=${signal.score} entry=${avgEntry.toFixed(2)} SL=${signal.stopLoss.toFixed(2)} TP=${signal.takeProfit[0].toFixed(2)}`, {
+    symbol: signal.symbol, side: signal.side, score: signal.score, entry: avgEntry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit[0], entryStatus: signal.entryStatus
+  });
 
-  updateStage(2, "PASS", `score ${signal.score}, side ${signal.side}`);
+  logger.info(`\n----------- VALIDATION PIPELINE ------------------`);
+  const snapshot = await buildSnapshot(bestCand.symbol);
+  const validation = snapshot ? validateSignal(signal, snapshot) : null;
 
-  if (!signal.positionSizing || !signal.positionSizing.quantity || signal.positionSizing.quantity <= 0) {
-    updateStage(3, "FAIL", "invalid position sizing");
-    logger.error(`\n  ✗ Trade FAILED: invalid position sizing`);
+  if (validation) {
+    const offHoursCtx = { side: signal.side, confidence: signal.confidence, score: signal.score, entry: avgEntry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit[0], status: validation.offHours.pass ? "PASS" : "FAIL" };
+    validation.offHours.pass
+      ? stageLog("OffHoursFilter", "PASS", validation.offHours.reason, offHoursCtx)
+      : stageLog("OffHoursFilter", "FAIL", validation.offHours.reason, offHoursCtx);
+
+    const riskCtx = { side: signal.side, confidence: signal.confidence, score: signal.score, entry: avgEntry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit[0], status: validation.risk.pass ? "PASS" : "FAIL" };
+    if (validation.risk.pass) {
+      stageLog("RiskEngine", "PASS", validation.risk.reason, riskCtx);
+    } else {
+      stageLog("RiskEngine", "FAIL", validation.risk.reason, riskCtx);
+    }
+
+    const validatorCtx = { side: signal.side, confidence: signal.confidence, score: signal.score, entry: avgEntry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit[0], status: validation.validator.pass ? "PASS" : "FAIL" };
+    validation.validator.pass
+      ? stageLog("TradeValidator", "PASS", validation.validator.reason, validatorCtx)
+      : stageLog("TradeValidator", "FAIL", validation.validator.reason, validatorCtx);
+  } else {
+    stageLog("Validate", "SKIP", "no snapshot available");
+  }
+
+  const validationOk = !validation || (validation.offHours.pass && validation.risk.pass && validation.validator.pass);
+  if (!validationOk) {
+    logger.error(`\n  ✗ Trade rejected by validation pipeline`);
+    if (validation) {
+      if (!validation.offHours.pass) logger.error(`    OffHoursFilter: ${validation.offHours.reason}`);
+      if (!validation.risk.pass) logger.error(`    RiskEngine: ${validation.risk.reason}`);
+      if (!validation.validator.pass) logger.error(`    TradeValidator: ${validation.validator.reason}`);
+    }
     printFooter();
     process.exit(1);
   }
-
-  updateStage(3, "PASS", `${signal.positionSizing.quantity} @ ${signal.positionSizing.leverage}`);
 
   const bybitSide = signal.side === "LONG" || signal.side === "BUY" ? "Buy" as const : "Sell" as const;
-  const qty = signal.positionSizing.quantity.toFixed(6);
-  const avgEntry = (signal.entry[0] + signal.entry[1]) / 2;
+  const qty = signal.positionSizing?.quantity?.toFixed(6) ?? "0";
   const stopLoss = signal.stopLoss.toFixed(6);
   const tp1 = signal.takeProfit[0].toFixed(6);
 
@@ -376,7 +402,7 @@ async function handleOneShot() {
   logger.info(`  Symbol     : ${signal.symbol}`);
   logger.info(`  Side       : ${bybitSide}`);
   logger.info(`  Qty        : ${qty}`);
-  logger.info(`  Avg Entry  : ${avgEntry}`);
+  logger.info(`  Avg Entry  : ${avgEntry.toFixed(6)}`);
   logger.info(`  Stop Loss  : ${stopLoss}`);
   logger.info(`  Take Profit: ${tp1}`);
 
@@ -384,7 +410,7 @@ async function handleOneShot() {
   logger.info({ retCode: orderResult.retCode, retMsg: orderResult.retMsg, orderId: orderResult.result?.orderId }, "submitOrder response");
 
   if (orderResult.retCode !== 0) {
-    updateStage(4, "FAIL", `submitOrder failed: ${orderResult.retMsg}`);
+    stageLog("Execution", "FAIL", `submitOrder failed: ${orderResult.retMsg}`, { symbol: signal.symbol, side: bybitSide, qty });
     logger.error(`\n  ✗ Trade FAILED: ${signal.symbol} — ${orderResult.retMsg}`);
     printFooter();
     process.exit(1);
@@ -392,7 +418,7 @@ async function handleOneShot() {
 
   const orderId = orderResult.result?.orderId;
   if (!orderId) {
-    updateStage(4, "FAIL", "orderId not returned");
+    stageLog("Execution", "FAIL", "orderId not returned", { symbol: signal.symbol });
     logger.error(`\n  ✗ Trade FAILED: ${signal.symbol} — no orderId in response`);
     printFooter();
     process.exit(1);
@@ -409,7 +435,7 @@ async function handleOneShot() {
     const openOrders = await client.bybitOpenOrders();
     const orderStillOpen = openOrders.find((o) => o.orderId === orderId);
     const reason = orderStillOpen ? "order still open — not filled" : "position not found after order";
-    updateStage(4, "FAIL", reason);
+    stageLog("Execution", "FAIL", reason, { symbol: signal.symbol, orderId });
     logger.error(`\n  ✗ Trade FAILED: ${signal.symbol} — ${reason}`);
     printFooter();
     process.exit(1);
@@ -424,7 +450,7 @@ async function handleOneShot() {
     logger.info({ retCode: slResult.retCode, retMsg: slResult.retMsg }, "setTradingStop response");
 
     if (slResult.retCode !== 0) {
-      updateStage(4, "FAIL", `trading stop failed: ${slResult.retMsg}`);
+      stageLog("Execution", "FAIL", `trading stop failed: ${slResult.retMsg}`, { symbol: signal.symbol });
       logger.error(`\n  ✗ Trade opened but SL/TP FAILED: ${signal.symbol} — ${slResult.retMsg}`);
       printFooter();
       process.exit(1);
@@ -443,13 +469,13 @@ async function handleOneShot() {
   const tpOk = !verifiedPosition?.takeProfit || signal.takeProfit[0] <= 0 || Number(verifiedPosition.takeProfit) > 0;
 
   if (!slOk || !tpOk) {
-    updateStage(4, "FAIL", "SL/TP verification failed");
+    stageLog("Execution", "FAIL", "SL/TP verification failed", { symbol: signal.symbol, orderId });
     logger.error(`\n  ✗ Trade opened but SL/TP verification FAILED`);
     printFooter();
     process.exit(1);
   }
 
-  updateStage(4, "PASS", `order ${orderId} — position confirmed`);
+  stageLog("Execution", "PASS", `order ${orderId} — position confirmed`, { symbol: signal.symbol, orderId, side: bybitSide });
 
   logger.info(`\n  ✅ Trade opened: ${signal.symbol}`);
   logger.info(`  Order ID  : ${orderId}`);
