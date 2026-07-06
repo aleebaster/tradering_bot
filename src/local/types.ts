@@ -1,4 +1,6 @@
 import type { IntelligenceBundle } from "./bots";
+import type { MomentumHunterOutput } from "./engines/MomentumHunterEngine";
+import type { ExitOutput } from "./engines/MomentumExitEngine";
 
 export type Mode = "LOCAL_ONLY" | "HYBRID" | "OFFLINE_TEST";
 export type Side = "LONG" | "SHORT" | "BUY" | "NO_TRADE" | "WATCHLIST";
@@ -233,4 +235,5 @@ export interface BotState {
   history: Signal[];
   stats: { signalsToday: number; wins: number; losses: number; winRate: number };
   intelligence: { latestBySymbol: Record<string, IntelligenceBundle>; marketReport: IntelligenceBundle["market"] | null; updatedAt: string | null };
+  momentum: { latestBySymbol: Record<string, MomentumHunterOutput>; updatedAt: string | null; activeExits: Record<string, { output: ExitOutput; updatedAt: string }> };
 }

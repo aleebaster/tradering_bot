@@ -14,6 +14,8 @@ import { recordTradeMemory } from "./tradeMemory";
 import { recordProtectionOutcome, signalsPaused } from "./lossProtection";
 import { LiqBot, MarketReportBot, PumpDetectorBot, WhaleTrackerBot } from "./bots";
 import { MomentumScanner } from "./momentumScanner";
+import { analyzeMomentumHunter, formatMomentumDashboard, formatMomentumDetail } from "./engines/MomentumHunterEngine";
+import { recordMomentum, recordMomentumExit } from "./state";
 
 type Broadcast = (payload: unknown) => void;
 
@@ -202,6 +204,12 @@ export class Scanner {
               detectedToConfirmed: signalConfirmedAt - symbolStartedAt
             }
           }, "рішення сканера");
+          if (mode === "futures") {
+            const momentumData = state.momentum.latestBySymbol[symbol];
+            if (momentumData) {
+              logger.info(`\n${formatMomentumDashboard(momentumData)}\n${formatMomentumDetail(momentumData)}`);
+            }
+          }
           recordSignal(signal);
           if (mode === "futures") updatePaperTradeMemory(signal.symbol, signal.currentPrice);
           candidates.push(signal);
@@ -432,6 +440,36 @@ export class Scanner {
       state.intelligence.marketReport = intelligence.market;
       state.intelligence.updatedAt = intelligence.updatedAt;
     }
+    if (mode === "futures") {
+      try {
+        const momentumOutput = analyzeMomentumHunter({
+          symbol,
+          candles,
+          orderBookImbalance: orderBook.imbalance,
+          orderBookDepthUsdt: orderBook.depthUsdt,
+          orderBookSpoofRisk: orderBook.spoofRisk,
+          fundingRate: funding,
+          openInterestChange: oi,
+          openInterestAbsolute: 0,
+          accountRatio: 0,
+          liquidityScore,
+          regime
+        });
+        recordMomentum(symbol, momentumOutput);
+        logger.info({
+          symbol,
+          pumpProbability: momentumOutput.pumpProbability,
+          momentumScore: momentumOutput.momentumScore,
+          whaleScore: momentumOutput.smartMoneyScore,
+          decision: momentumOutput.decision,
+          entryTiming: momentumOutput.entryTiming,
+          mtf: momentumOutput.multiTimeframeAlignment,
+          decisionReason: momentumOutput.decisionReason
+        }, "Momentum Hunter analysis");
+      } catch (momentumErr) {
+        logger.warn({ err: momentumErr, symbol }, "Momentum Hunter analysis failed");
+      }
+    }
     return {
       symbol,
       mode,
@@ -580,7 +618,11 @@ export class Scanner {
       const safeMoves = await this.momentumScanner.scanAutoSignals(3);
       const scalpMoves = await this.momentumScanner.scanAutoScalpSignals(2);
       const moves = [...safeMoves, ...scalpMoves].sort((a, b) => b.score - a.score).slice(0, 4);
-      for (const move of moves) logger.info({ symbol: move.symbol, direction: move.direction, mode: move.mode ?? "SAFE", score: move.score, setupType: move.setupType, movePct: move.movePct }, "auto momentum candidate tracked silently");
+      for (const move of moves) {
+        logger.info({ symbol: move.symbol, direction: move.direction, mode: move.mode ?? "SAFE", score: move.score, setupType: move.setupType, movePct: move.movePct }, "auto momentum candidate tracked silently");
+        const momentumData = state.momentum.latestBySymbol[move.symbol];
+        if (momentumData) logger.info(`\nMOMENTUM HUNTER: ${move.symbol}\nPump Probability: ${momentumData.pumpProbability}% | Momentum: ${momentumData.momentumScore} | Whale: ${momentumData.smartMoneyScore} | Decision: ${momentumData.decision}`);
+      }
       state.diagnostics.apiStatus.autoSignals = `active; cycle ${Date.now() - startedAt}ms; safe ${safeMoves.length}; scalp ${scalpMoves.length}`;
     } catch (err) {
       state.diagnostics.apiStatus.autoSignals = "skipped; market data unavailable";

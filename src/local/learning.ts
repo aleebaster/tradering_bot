@@ -38,6 +38,44 @@ interface LearningTrade {
   createdAt: string;
 }
 
+interface PumpStats {
+  totalTrades: number;
+  wins: number;
+  losses: number;
+  totalPnl: number;
+  averageGain: number;
+  averageDurationMinutes: number;
+  averagePumpPct: number;
+  maximumPumpPct: number;
+  maximumDrawdown: number;
+  averageEntryDelayMs: number;
+  averageExitDelayMs: number;
+  winRate: number;
+  profitFactor: number;
+  averageSlippage: number;
+}
+
+interface PumpTrade {
+  symbol: string;
+  entryPrice: number;
+  exitPrice: number;
+  pnl: number;
+  pnlPct: number;
+  direction: "LONG" | "SHORT";
+  durationMinutes: number;
+  pumpPct: number;
+  maxDrawdown: number;
+  entryDelayMs: number;
+  exitDelayMs: number;
+  slippage: number;
+  outcome: "WIN" | "LOSS";
+  createdAt: string;
+  exitedAt: string;
+  pumpProbability: number;
+  momentumScore: number;
+  whaleScore: number;
+}
+
 interface LearningState {
   total: number;
   wins: number;
@@ -48,7 +86,15 @@ interface LearningState {
   patterns: Record<string, { wins: number; losses: number }>;
   symbolStats: Record<string, SymbolStats>;
   trades: LearningTrade[];
+  pump: PumpStats;
+  pumpTrades: PumpTrade[];
 }
+
+const emptyPumpStats = (): PumpStats => ({
+  totalTrades: 0, wins: 0, losses: 0, totalPnl: 0, averageGain: 0, averageDurationMinutes: 0,
+  averagePumpPct: 0, maximumPumpPct: 0, maximumDrawdown: 0, averageEntryDelayMs: 0,
+  averageExitDelayMs: 0, winRate: 0, profitFactor: 0, averageSlippage: 0
+});
 
 const defaults: LearningState = {
   total: 0,
@@ -59,7 +105,9 @@ const defaults: LearningState = {
   regimeModifiers: emptyRegimeModifiers(),
   patterns: {},
   symbolStats: {},
-  trades: []
+  trades: [],
+  pump: emptyPumpStats(),
+  pumpTrades: []
 };
 
 export function adaptiveWeights(regime?: MarketRegime) {
@@ -255,7 +303,7 @@ function decayFactor(index: number) {
 function load(): LearningState {
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Partial<LearningState>;
-    const migrated = { ...defaults, ...parsed, weights: { ...defaultWeights, ...(parsed.weights ?? {}) }, regimeModifiers: { ...emptyRegimeModifiers(), ...(parsed.regimeModifiers ?? {}) }, patterns: parsed.patterns ?? {}, symbolStats: parsed.symbolStats ?? {}, trades: Array.isArray(parsed.trades) ? parsed.trades : [] };
+    const migrated = { ...defaults, ...parsed, weights: { ...defaultWeights, ...(parsed.weights ?? {}) }, regimeModifiers: { ...emptyRegimeModifiers(), ...(parsed.regimeModifiers ?? {}) }, patterns: parsed.patterns ?? {}, symbolStats: parsed.symbolStats ?? {}, trades: Array.isArray(parsed.trades) ? parsed.trades : [], pump: { ...emptyPumpStats(), ...(parsed.pump ?? {}) }, pumpTrades: Array.isArray(parsed.pumpTrades) ? parsed.pumpTrades : [] };
     const safe = { ...migrated, weights: sanitizeWeights(migrated.weights), regimeModifiers: sanitizeRegimes(migrated.regimeModifiers), patterns: patternStats(migrated.trades) };
     if (safe.total < minTradesToAdapt || safe.trades.filter((trade) => (trade.impact ?? 0) > 0).length < minTradesToAdapt) return { ...safe, weights: { ...defaultWeights }, regimeModifiers: emptyRegimeModifiers() };
     return safe;
@@ -391,4 +439,57 @@ export function symbolStatsText(symbol: string): string {
     stats.pauseUntil ? `  Pause until: ${stats.pauseUntil}` : "",
     `  Last trade: ${stats.lastTradeAt}`
   ].filter(Boolean).join("\n");
+}
+
+export function recordPumpOutcome(trade: PumpTrade) {
+  const state = load();
+  state.pumpTrades.unshift(trade);
+  state.pumpTrades = state.pumpTrades.slice(0, 100);
+  const wins = state.pumpTrades.filter((t) => t.outcome === "WIN").length;
+  const losses = state.pumpTrades.filter((t) => t.outcome === "LOSS").length;
+  const total = wins + losses;
+  const totalPnl = state.pumpTrades.reduce((s, t) => s + t.pnl, 0);
+  const gains = state.pumpTrades.filter((t) => t.pnl > 0).map((t) => t.pnl);
+  const lossesArr = state.pumpTrades.filter((t) => t.pnl < 0).map((t) => Math.abs(t.pnl));
+  const grossProfit = gains.reduce((s, v) => s + v, 0);
+  const grossLoss = lossesArr.reduce((s, v) => s + v, 0);
+  state.pump = {
+    totalTrades: total,
+    wins,
+    losses,
+    totalPnl,
+    averageGain: total > 0 ? totalPnl / total : 0,
+    averageDurationMinutes: total > 0 ? state.pumpTrades.reduce((s, t) => s + t.durationMinutes, 0) / total : 0,
+    averagePumpPct: total > 0 ? state.pumpTrades.reduce((s, t) => s + t.pumpPct, 0) / total : 0,
+    maximumPumpPct: Math.max(...state.pumpTrades.map((t) => t.pumpPct), 0),
+    maximumDrawdown: Math.max(...state.pumpTrades.map((t) => t.maxDrawdown), 0),
+    averageEntryDelayMs: total > 0 ? state.pumpTrades.reduce((s, t) => s + t.entryDelayMs, 0) / total : 0,
+    averageExitDelayMs: total > 0 ? state.pumpTrades.reduce((s, t) => s + t.exitDelayMs, 0) / total : 0,
+    winRate: total > 0 ? wins / total : 0,
+    profitFactor: grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0,
+    averageSlippage: total > 0 ? state.pumpTrades.reduce((s, t) => s + t.slippage, 0) / total : 0
+  };
+  save(state);
+}
+
+export function pumpStatsText(): string {
+  const state = load();
+  const p = state.pump;
+  if (!p || !p.totalTrades) return "PUMP MODE: немає даних";
+  const pf = p.profitFactor ?? 0;
+  return [
+    "PUMP MODE СТАТИСТИКА",
+    `Всього угод: ${p.totalTrades}`,
+    `Win rate: ${(p.winRate * 100).toFixed(1)}%`,
+    `Profit factor: ${pf === Infinity ? "∞" : pf.toFixed(2)}`,
+    `Сумарний PnL: ${p.totalPnl >= 0 ? "+" : ""}${p.totalPnl.toFixed(2)} USDT`,
+    `Середній прибуток: ${p.averageGain.toFixed(2)} USDT`,
+    `Середній Pump: ${p.averagePumpPct.toFixed(2)}%`,
+    `Максимальний Pump: ${p.maximumPumpPct.toFixed(2)}%`,
+    `Максимальний Drawdown: ${p.maximumDrawdown.toFixed(2)}%`,
+    `Середній час утримання: ${p.averageDurationMinutes.toFixed(0)} хв`,
+    `Середній Entry Delay: ${p.averageEntryDelayMs.toFixed(0)} мс`,
+    `Середній Exit Delay: ${p.averageExitDelayMs.toFixed(0)} мс`,
+    `Середній Slippage: ${(p.averageSlippage * 100).toFixed(3)}%`
+  ].join("\n");
 }

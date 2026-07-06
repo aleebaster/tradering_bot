@@ -1,4 +1,6 @@
 import type { BotState, Diagnostics, Signal } from "./types";
+import type { MomentumHunterOutput } from "./engines/MomentumHunterEngine";
+import type { ExitOutput } from "./engines/MomentumExitEngine";
 import { config } from "./config";
 
 const diagnostics: Diagnostics = {
@@ -21,8 +23,18 @@ export const state: BotState = {
   watchlist: [],
   history: [],
   stats: { signalsToday: 0, wins: 0, losses: 0, winRate: 0 },
-  intelligence: { latestBySymbol: {}, marketReport: null, updatedAt: null }
+  intelligence: { latestBySymbol: {}, marketReport: null, updatedAt: null },
+  momentum: { latestBySymbol: {}, updatedAt: null, activeExits: {} }
 };
+
+export function recordMomentum(symbol: string, output: MomentumHunterOutput) {
+  state.momentum.latestBySymbol[symbol] = output;
+  state.momentum.updatedAt = new Date().toISOString();
+}
+
+export function recordMomentumExit(symbol: string, output: ExitOutput) {
+  state.momentum.activeExits[symbol] = { output, updatedAt: new Date().toISOString() };
+}
 
 export function recordSignal(signal: Signal) {
   state.history = [signal, ...state.history].slice(0, 300);
