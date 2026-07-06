@@ -1,7 +1,7 @@
 import WebSocket from "ws";
 import { config } from "./config";
 import { ExchangeClient } from "./exchanges";
-import { btcStable, buildSignal, regimeFrom } from "./scoring";
+import { btcStable, buildSignal, regimeFrom, validateSignal } from "./scoring";
 import { recordSignal, state } from "./state";
 import type { Candle, MarketSnapshot, Signal } from "./types";
 import { logger } from "./logger";
@@ -12,6 +12,7 @@ import { recordPaperClose, recordPaperOpen, recordPaperSetup, updatePaperTradeMe
 import { notificationsEnabled } from "./telegramSettings";
 import { recordTradeMemory } from "./tradeMemory";
 import { recordProtectionOutcome, signalsPaused } from "./lossProtection";
+import { TradeManager } from "./tradeManager";
 import { LiqBot, MarketReportBot, PumpDetectorBot, WhaleTrackerBot } from "./bots";
 import { MomentumScanner } from "./momentumScanner";
 import { analyzeMomentumHunter, formatMomentumDashboard, formatMomentumDetail } from "./engines/MomentumHunterEngine";
@@ -49,6 +50,8 @@ export class Scanner {
   private liqBot = new LiqBot();
   private marketReportBot = new MarketReportBot();
   private momentumScanner = new MomentumScanner();
+  private tradeManager = new TradeManager();
+  private noTradeReasons: string[] = [];
 
   constructor(private broadcast: Broadcast) {}
 
@@ -195,29 +198,23 @@ export class Scanner {
           recordSignal(signal);
           if (mode === "futures") updatePaperTradeMemory(signal.symbol, signal.currentPrice);
           candidates.push(signal);
-          if (!["NO_TRADE", "WATCHLIST"].includes(signal.side) && this.canSendSignal(signal)) {
-            this.markSignalSent(signal);
-            if (notificationsEnabled()) await this.sendRealEntryFast(signal, { symbolStartedAt, marketDataFetchedAt, snapshotReadyAt, signalConfirmedAt });
-            recordPaperOpen(signal);
-            if (config.liveTrading || config.botAccount === "demo") {
-              const bybitSide = signal.side === "LONG" || signal.side === "BUY" ? "Buy" as const : "Sell" as const;
-              const qty = signal.positionSizing?.quantity?.toFixed(6) ?? "1";
-              const orderResult = await this.client.bybitPlaceOrder(signal.symbol, bybitSide, qty).catch(() => null);
-              logger.info({ symbol: signal.symbol, side: signal.side, orderResult }, "submitOrder");
-              if (orderResult?.retCode === 0 && orderResult?.result?.orderId) {
-                await new Promise((r) => setTimeout(r, 1500));
-                const pos = await this.client.bybitGetPosition(signal.symbol);
-                logger.info({ symbol: signal.symbol, positionFound: !!pos, pos }, "getPosition");
-                if (pos && pos.size && Number(pos.size) > 0) {
-                  logger.info({ symbol: signal.symbol, orderId: orderResult.result.orderId, side: pos.side, size: pos.size, entry: pos.avgPrice }, "POSITION OPENED");
-                  if (signal.stopLoss > 0 || signal.takeProfit[0] > 0) {
-                    const sl = signal.stopLoss > 0 ? signal.stopLoss.toFixed(6) : undefined;
-                    const tp = signal.takeProfit[0] > 0 ? signal.takeProfit[0].toFixed(6) : undefined;
-                    const slResult = await this.client.bybitSetTradingStop(signal.symbol, bybitSide, sl, tp).catch(() => null);
-                    if (slResult?.retCode === 0) logger.info({ symbol: signal.symbol }, "SL/TP set");
-                  }
+          if (!["NO_TRADE", "WATCHLIST"].includes(signal.side)) {
+            const validation = validateSignal(signal, snapshot);
+            const validationOk = validation ? (validation.offHours.pass && validation.risk.pass && validation.validator.pass) : false;
+            if (validationOk || (this.canSendSignal(signal) && signal.entryStatus === "ENTER_NOW")) {
+              this.markSignalSent(signal);
+              if (notificationsEnabled()) await this.sendRealEntryFast(signal, { symbolStartedAt, marketDataFetchedAt, snapshotReadyAt, signalConfirmedAt });
+              recordPaperOpen(signal);
+              if ((config.liveTrading || config.botAccount === "demo") && !this.tradeManager.hasActiveTrade()) {
+                const result = await this.tradeManager.openTrade(signal, snapshot);
+                if (result.ok) {
+                  logger.info({ symbol: signal.symbol }, "TRADE OPENED via TradeManager");
+                } else {
+                  logger.warn({ symbol: signal.symbol, reason: result.reason }, "TradeManager rejected trade");
                 }
               }
+            } else {
+              logger.info({ symbol: signal.symbol, score: signal.score, entryStatus: signal.entryStatus, validationOk, reasons: validation ? [validation.offHours.reason, validation.risk.reason, validation.validator.reason] : [] }, "signal valid but not traded this cycle");
             }
           }
           await this.trackWatchlist(signal);
@@ -228,6 +225,45 @@ export class Scanner {
             state.diagnostics.apiStatus.bybit = "ліміт запитів; автоматична пауза активна";
             break;
           }
+        }
+      }
+      if (!this.tradeManager.hasActiveTrade()) {
+        this.noTradeReasons = [];
+        const bestCandidate = candidates.sort((a, b) => b.score - a.score)[0];
+        if (bestCandidate) {
+          if (bestCandidate.side === "NO_TRADE" || bestCandidate.side === "WATCHLIST") {
+            this.noTradeReasons.push(`Best candidate ${bestCandidate.symbol} side=${bestCandidate.side}`);
+          }
+          if (bestCandidate.entryStatus !== "ENTER_NOW") {
+            this.noTradeReasons.push(`Price not in entry zone: ${bestCandidate.entryStatus}`);
+          }
+          if (bestCandidate.score < 72) {
+            this.noTradeReasons.push(`Score ${bestCandidate.score} below 72 threshold`);
+          }
+          if ((bestCandidate.scoreBreakdown.adaptiveConfirmationRequired ?? 92) > bestCandidate.score) {
+            this.noTradeReasons.push(`Score ${bestCandidate.score} < adaptive threshold ${bestCandidate.scoreBreakdown.adaptiveConfirmationRequired}`);
+          }
+          if (bestCandidate.fakeBreakout.risk) {
+            this.noTradeReasons.push("Fake breakout / manipulation risk");
+          }
+          if (!bestCandidate.btcStable && bestCandidate.symbol !== "BTCUSDT") {
+            this.noTradeReasons.push("BTC unstable — not confirming direction");
+          }
+          if (bestCandidate.marketRegime === "CHOPPY" || bestCandidate.marketRegime === "MANIPULATION_RISK") {
+            this.noTradeReasons.push(`Market regime: ${bestCandidate.marketRegime}`);
+          }
+          if ((bestCandidate.scoreBreakdown.volumeConfirmation ?? 0) < 65) {
+            this.noTradeReasons.push(`Volume confirmation weak: ${bestCandidate.scoreBreakdown.volumeConfirmation}/65`);
+          }
+          if ((bestCandidate.scoreBreakdown.liquiditySweep ?? 0) < 65) {
+            this.noTradeReasons.push(`No liquidity sweep: ${bestCandidate.scoreBreakdown.liquiditySweep}/65`);
+          }
+        }
+        if (!candidates.length) {
+          this.noTradeReasons.push("No signals generated — market data insufficient");
+        }
+        if (this.noTradeReasons.length) {
+          logger.info({ reasons: this.noTradeReasons }, "⏸ No trade opened this cycle — reasons");
         }
       }
       await this.monitorActiveTrades(btcOk);
@@ -491,22 +527,36 @@ export class Scanner {
   }
 
   private async monitorActiveTrades(btcOk: boolean) {
-    for (const signal of state.activeSignals) {
-      const category = signal.mode === "spot" ? "spot" : "linear";
-      const tf = signal.mode === "spot" ? "60" : "5";
-      const candles = await this.client.bybitKlines(signal.symbol, tf, category, 3).catch(() => []);
-      const current = candles.at(-1)?.close ?? signal.currentPrice;
-      const action = tradeManagementAction(signal, current, btcOk, this.managementSent);
-      if (!action) continue;
-      const key = `${signal.id}-${action.stage}`;
-      if (this.managementSent.has(key)) continue;
-      this.managementSent.add(key);
-      if (action.stage === "TP1") recordTradeMemory(signal, "TP1", current);
-      if (action.stage === "TP2") recordTradeMemory(signal, "TP2", current);
-      if (action.stage === "TP3") { recordTradeMemory(signal, "TP3", current); recordProtectionOutcome("WIN"); recordLearningOutcome(signal, "TP"); recordPaperClose(signal, "WIN", 3); }
-      if (action.stage === "SL") { recordTradeMemory(signal, "SL", current); recordProtectionOutcome("LOSS"); recordLearningOutcome(signal, signal.fakeBreakout.risk ? "FAKE_BREAKOUT" : "SL"); recordPaperClose(signal, "LOSS", -1); }
-      logger.info({ symbol: signal.symbol, action: action.label, currentPrice: current, reasons: action.reasons }, "trade management alert");
-      if (notificationsEnabled() && ["TP1", "TP2", "TP3", "SL"].includes(action.stage)) await this.notifier.tradeManagementAlert(signal, action.label, current, action.reasons).catch((err) => logger.warn({ err }, "Не вдалося надіслати Telegram-сповіщення управління угодою"));
+    if (!this.tradeManager.hasActiveTrade()) return;
+
+    const result = await this.tradeManager.monitorTrade();
+    const active = this.tradeManager.getActiveTrade();
+    if (!active) return;
+
+    const { signal, position } = active;
+    const current = Number(position.avgPrice);
+
+    if (result.action === "CLOSE") {
+      logger.info({ symbol: signal.symbol, reason: result.reason, closePrice: result.closePrice }, "monitor: closing trade");
+      const closeResult = await this.tradeManager.closeTrade(result.reason);
+      if (closeResult.ok) {
+        const winResult = result.reason.includes("TP") || result.reason.includes("trailing") || result.reason.includes("profit") ? "TP3" as const : "SL" as const;
+        recordTradeMemory(signal, winResult, result.closePrice ?? current);
+        if (winResult === "TP3") { recordProtectionOutcome("WIN"); recordLearningOutcome(signal, "TP"); recordPaperClose(signal, "WIN", 3); }
+        else { recordProtectionOutcome("LOSS"); recordLearningOutcome(signal, "SL"); recordPaperClose(signal, "LOSS", -1); }
+        logger.info({ symbol: signal.symbol, reason: result.reason }, "✅ TRADE CLOSED");
+        if (notificationsEnabled()) await this.notifier.tradeManagementAlert(signal, `CLOSED: ${result.reason}`, result.closePrice ?? current, []).catch(() => {});
+      } else {
+        logger.error({ symbol: signal.symbol, reason: result.reason }, "❌ FAILED to close trade");
+      }
+    } else if (result.action === "BREAKEVEN") {
+      logger.info({ symbol: signal.symbol, reason: result.reason }, "🛡 BREAKEVEN ACTIVATED");
+      if (notificationsEnabled()) await this.notifier.tradeManagementAlert(signal, `BREAKEVEN: ${result.reason}`, result.closePrice ?? current, []).catch(() => {});
+    } else if (result.action === "TRAIL") {
+      logger.info({ symbol: signal.symbol, reason: result.reason }, "📐 TRAILING ACTIVATED");
+      if (notificationsEnabled()) await this.notifier.tradeManagementAlert(signal, `TRAIL: ${result.reason}`, result.closePrice ?? current, []).catch(() => {});
+    } else {
+      logger.info({ symbol: signal.symbol, reason: result.reason }, "monitor: " + result.action);
     }
   }
 
@@ -568,24 +618,12 @@ export class Scanner {
           logger.info({ symbol: activated.symbol, side: activated.side, score: activated.score, reasons: activationReasons(activated, evolution), latencyMs: { marketDataFetch: marketDataFetchedAt - symbolStartedAt, snapshot: snapshotReadyAt - marketDataFetchedAt, confirmation: signalConfirmedAt - snapshotReadyAt, detectedToConfirmed: signalConfirmedAt - symbolStartedAt } }, "watchlist setup upgraded to real entry");
           if (notificationsEnabled()) await this.sendRealEntryFast(activated, { symbolStartedAt, marketDataFetchedAt, snapshotReadyAt, signalConfirmedAt });
           recordPaperOpen(activated);
-          if (config.liveTrading || config.botAccount === "demo") {
-            const bybitSide = activated.side === "LONG" || activated.side === "BUY" ? "Buy" as const : "Sell" as const;
-            const qty = activated.positionSizing?.quantity?.toFixed(6) ?? "1";
-            const orderResult = await this.client.bybitPlaceOrder(activated.symbol, bybitSide, qty).catch(() => null);
-            logger.info({ symbol: activated.symbol, side: activated.side, orderResult }, "submitOrder");
-            if (orderResult?.retCode === 0 && orderResult?.result?.orderId) {
-              await new Promise((r) => setTimeout(r, 1500));
-              const pos = await this.client.bybitGetPosition(activated.symbol);
-              logger.info({ symbol: activated.symbol, positionFound: !!pos, pos }, "getPosition");
-              if (pos && pos.size && Number(pos.size) > 0) {
-                logger.info({ symbol: activated.symbol, orderId: orderResult.result.orderId, side: pos.side, size: pos.size, entry: pos.avgPrice }, "POSITION OPENED");
-                if (activated.stopLoss > 0 || activated.takeProfit[0] > 0) {
-                  const sl = activated.stopLoss > 0 ? activated.stopLoss.toFixed(6) : undefined;
-                  const tp = activated.takeProfit[0] > 0 ? activated.takeProfit[0].toFixed(6) : undefined;
-                  const slResult = await this.client.bybitSetTradingStop(activated.symbol, bybitSide, sl, tp).catch(() => null);
-                  if (slResult?.retCode === 0) logger.info({ symbol: activated.symbol }, "SL/TP set");
-                }
-              }
+          if ((config.liveTrading || config.botAccount === "demo") && !this.tradeManager.hasActiveTrade()) {
+            const result = await this.tradeManager.openTrade(activated, snapshot);
+            if (result.ok) {
+              logger.info({ symbol: activated.symbol }, "TRADE OPENED via TradeManager (watchlist)");
+            } else {
+              logger.warn({ symbol: activated.symbol, reason: result.reason }, "TradeManager rejected watchlist trade");
             }
           }
           continue;
@@ -637,29 +675,12 @@ export class Scanner {
                 signalConfirmedAt: Date.now()
               });
               recordPaperOpen(signal);
-              if (config.liveTrading || config.botAccount === "demo") {
-                const bybitSide = signal.side === "LONG" || signal.side === "BUY" ? "Buy" as const : "Sell" as const;
-                const qty = signal.positionSizing?.quantity?.toFixed(6) ?? "1";
-                const orderResult = await this.client.bybitPlaceOrder(signal.symbol, bybitSide, qty).catch(() => null);
-                logger.info({ symbol: signal.symbol, side: signal.side, orderResult }, "submitOrder");
-                if (orderResult?.retCode === 0 && orderResult?.result?.orderId) {
-                  await new Promise((r) => setTimeout(r, 1500));
-                  const pos = await this.client.bybitGetPosition(signal.symbol);
-                  logger.info({ symbol: signal.symbol, positionFound: !!pos, pos }, "getPosition after momentum order");
-                  if (pos && pos.size && Number(pos.size) > 0) {
-                    logger.info({ symbol: signal.symbol, orderId: orderResult.result.orderId, side: pos.side, size: pos.size, entry: pos.avgPrice }, "POSITION OPENED");
-                    if (signal.stopLoss > 0 || signal.takeProfit[0] > 0) {
-                      const sl = signal.stopLoss > 0 ? signal.stopLoss.toFixed(6) : undefined;
-                      const tp = signal.takeProfit[0] > 0 ? signal.takeProfit[0].toFixed(6) : undefined;
-                      const slResult = await this.client.bybitSetTradingStop(signal.symbol, bybitSide, sl, tp).catch(() => null);
-                      logger.info({ slResult }, "setTradingStop after momentum order");
-                      if (slResult?.retCode === 0) logger.info({ symbol: signal.symbol }, "SL/TP set for momentum position");
-                    }
-                  } else {
-                    logger.warn({ symbol: signal.symbol }, "momentum order placed but position not found");
-                  }
+              if ((config.liveTrading || config.botAccount === "demo") && !this.tradeManager.hasActiveTrade()) {
+                const result = await this.tradeManager.openTrade(signal, snapshot);
+                if (result.ok) {
+                  logger.info({ symbol: signal.symbol }, "TRADE OPENED via TradeManager (momentum)");
                 } else {
-                  logger.warn({ symbol: signal.symbol, retCode: orderResult?.retCode, retMsg: orderResult?.retMsg }, "momentum submitOrder failed");
+                  logger.warn({ symbol: signal.symbol, reason: result.reason }, "TradeManager rejected momentum trade");
                 }
               }
             } else {

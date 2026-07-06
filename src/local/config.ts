@@ -30,7 +30,9 @@ const schema = z.object({
   LIVE_TRADING: z.string().optional(),
   SAFE_SCALPING_MODE: z.string().optional(),
   AUTO_NOTIFY_TELEGRAM: z.string().optional(),
-  DRY_RUN: z.string().optional()
+  DRY_RUN: z.string().optional(),
+  SAFE_TEST_MODE: z.string().optional(),
+  MAX_POSITION_USDT: z.coerce.number().positive().default(10)
 });
 
 const parsed = schema.parse(process.env);
@@ -60,7 +62,9 @@ export const config = {
   botAccount: (env.BOT_ACCOUNT ?? "demo") as "demo" | "live",
   liveTrading: env.LIVE_TRADING === "1",
   safeScalpingMode: env.SAFE_SCALPING_MODE !== "0",
-  dryRun: env.DRY_RUN === "1"
+  dryRun: env.DRY_RUN === "1",
+  safeTestMode: env.SAFE_TEST_MODE !== "0",
+  maxPositionUsdt: env.MAX_POSITION_USDT
 };
 
 function cleanSecret(value?: string) {

@@ -307,9 +307,11 @@ async function handleBot() {
     });
   }
 
-  printHeader("STARTING CONTINUOUS BOT");
-  logger.info("  Mode    : Continuous Trading");
+  printHeader("STARTING AUTONOMOUS BOT");
+  logger.info("  Mode    : Autonomous — Continuous Trading");
   logger.info("  Market  : Bybit " + (isDemo ? "Futures (Demo)" : "Futures"));
+  logger.info("  Cycle   : Scan → Signal → Validate → Open → Monitor → Close → Repeat");
+  logger.info("  Press Ctrl+C to stop");
   printFooter();
 
   const { startBot } = await import("./index");
@@ -395,8 +397,27 @@ async function handleOneShot() {
 
   const bybitSide = signal.side === "LONG" || signal.side === "BUY" ? "Buy" as const : "Sell" as const;
   const riskQty = validation?.risk?.adjustments?.quantity;
-  const rawQty = riskQty && riskQty > 0 ? riskQty : signal.positionSizing?.quantity ?? 0;
-  const qty = Math.max(rawQty, 0) > 0 ? String(Math.max(rawQty, 0)) : "0";
+  let finalQty = Math.max(riskQty && riskQty > 0 ? riskQty : signal.positionSizing?.quantity ?? 0, 0);
+
+  if (finalQty > 0 && config.safeTestMode) {
+    const entryPrice = signal.currentPrice;
+    if (entryPrice > 0) {
+      const positionValueUsdt = finalQty * entryPrice;
+      if (positionValueUsdt > config.maxPositionUsdt) {
+        const cappedQty = Math.floor(config.maxPositionUsdt / entryPrice * 1e6) / 1e6;
+        logger.info({
+          symbol: signal.symbol,
+          calculatedPosition: `${positionValueUsdt.toFixed(2)} USDT`,
+          safeLimit: `${config.maxPositionUsdt.toFixed(2)} USDT`,
+          finalPosition: `${(cappedQty * entryPrice).toFixed(2)} USDT`,
+          reason: "SAFE_TEST_MODE"
+        }, "openTrade: position capped by safe test mode");
+        finalQty = cappedQty;
+      }
+    }
+  }
+
+  const qty = finalQty > 0 ? String(finalQty) : "0";
   const stopLoss = signal.stopLoss.toFixed(6);
   const tp1 = signal.takeProfit[0].toFixed(6);
 
