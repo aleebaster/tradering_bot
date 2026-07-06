@@ -388,6 +388,23 @@ export class ExchangeClient {
 
   private symbolInfoCache = new Map<string, { qtyStep: number; minQty: number }>();
 
+  async bybitFeeRate(symbol: string): Promise<{ takerFeeRate: number; makerFeeRate: number }> {
+    try {
+      const body = await this.bybitPrivateGet<Record<string, unknown>>(`${BYBIT}/v5/account/fee-rate?category=linear&symbol=${symbol}`);
+      const retCode = body?.retCode as number | undefined;
+      if (retCode && retCode !== 0) return { takerFeeRate: 0.0006, makerFeeRate: 0.0001 };
+      const result = body?.result as Record<string, unknown> | undefined;
+      const list = (result?.list as Array<Record<string, string>> | undefined) ?? [];
+      if (!list.length) return { takerFeeRate: 0.0006, makerFeeRate: 0.0001 };
+      return {
+        takerFeeRate: Number(list[0]?.takerFeeRate ?? 0.0006),
+        makerFeeRate: Number(list[0]?.makerFeeRate ?? 0.0001)
+      };
+    } catch {
+      return { takerFeeRate: 0.0006, makerFeeRate: 0.0001 };
+    }
+  }
+
   async bybitSymbolInfo(symbol: string): Promise<{ qtyStep: number; minQty: number }> {
     const cached = this.symbolInfoCache.get(symbol);
     if (cached) return cached;

@@ -6,6 +6,7 @@ import { analyzeMomentumHunter, formatMomentumDashboard } from "./engines/Moment
 import { btcStable, buildSignal, regimeFrom, validateSignal } from "./scoring";
 import { PumpDetectorBot, WhaleTrackerBot, LiqBot, MarketReportBot } from "./bots";
 import { applyPositionSizeLimit } from "./positionSizeLimiter";
+import { analyzeProfitability, logProfitReport } from "./profitCalculator";
 import type { MarketRegime, MarketSnapshot, Signal, Candle } from "./types";
 
 export type BotMode = "demo" | "live" | "bot" | "one" | "scan" | "dry" | "doctor" | "health";
@@ -402,6 +403,18 @@ async function handleOneShot() {
 
   const limitResult = rawQty > 0 ? await applyPositionSizeLimit(client, signal.symbol, rawQty, signal.currentPrice) : { qty: "0", capped: false };
   const qty = limitResult.qty;
+  const qtyNum = Number(qty);
+
+  const profitReport = qtyNum > 0 ? await analyzeProfitability(client, signal, qtyNum) : null;
+  if (profitReport) {
+    logProfitReport(profitReport);
+    if (profitReport.rejectReason) {
+      logger.error({ symbol: signal.symbol, reason: profitReport.rejectReason }, "Trade rejected by profit analysis");
+      printFooter();
+      process.exit(1);
+    }
+  }
+
   const stopLoss = signal.stopLoss.toFixed(6);
   const tp1 = signal.takeProfit[0].toFixed(6);
 

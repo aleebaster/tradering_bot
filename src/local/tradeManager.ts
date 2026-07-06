@@ -6,6 +6,7 @@ import { recordSignal, state } from "./state";
 import { config } from "./config";
 import { logger } from "./logger";
 import { applyPositionSizeLimit } from "./positionSizeLimiter";
+import { analyzeProfitability, logProfitReport } from "./profitCalculator";
 import type { BybitPosition, MarketSnapshot, Signal } from "./types";
 
 export interface TradeState {
@@ -62,6 +63,16 @@ export class TradeManager {
 
     const limitResult = rawQty > 0 ? await applyPositionSizeLimit(this.client, signal.symbol, rawQty, signal.currentPrice) : { qty: "0", capped: false };
     const qty = limitResult.qty;
+    const qtyNum = Number(qty);
+
+    const profitReport = qtyNum > 0 ? await analyzeProfitability(this.client, signal, qtyNum) : null;
+    if (profitReport) {
+      logProfitReport(profitReport);
+      if (profitReport.rejectReason) {
+        logger.warn({ symbol: signal.symbol, reason: profitReport.rejectReason }, "openTrade: rejected by profit analysis");
+        return { ok: false, reason: `profitability check failed: ${profitReport.rejectReason}` };
+      }
+    }
 
     logger.info({ symbol: signal.symbol, side: bybitSide, qty, entry: signal.entry, sl: signal.stopLoss, tp: signal.takeProfit[0] }, "openTrade: placing order");
 

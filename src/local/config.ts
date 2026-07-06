@@ -32,7 +32,13 @@ const schema = z.object({
   AUTO_NOTIFY_TELEGRAM: z.string().optional(),
   DRY_RUN: z.string().optional(),
   SAFE_TEST_MODE: z.string().optional(),
-  MAX_POSITION_USDT: z.coerce.number().positive().default(10)
+  MAX_POSITION_USDT: z.coerce.number().positive().default(10),
+  MIN_NET_PROFIT_USDT: z.coerce.number().min(0).default(0.30),
+  MIN_RR_AFTER_FEES: z.coerce.number().min(0).default(1.5),
+  MIN_PROFIT_FEE_RATIO: z.coerce.number().min(0).default(3),
+  MIN_SL_DISTANCE_ATR: z.coerce.number().min(0).default(0.5),
+  BYBIT_TAKER_FEE: z.coerce.number().min(0).default(0.0006),
+  BYBIT_MAKER_FEE: z.coerce.number().default(0.0001)
 });
 
 const parsed = schema.parse(process.env);
@@ -64,7 +70,13 @@ export const config = {
   safeScalpingMode: env.SAFE_SCALPING_MODE !== "0",
   dryRun: env.DRY_RUN === "1",
   safeTestMode: env.SAFE_TEST_MODE === "true" || env.SAFE_TEST_MODE === "1",
-  maxPositionUsdt: env.MAX_POSITION_USDT
+  maxPositionUsdt: env.MAX_POSITION_USDT,
+  minNetProfitUsdt: env.MIN_NET_PROFIT_USDT,
+  minRrAfterFees: env.MIN_RR_AFTER_FEES,
+  minProfitFeeRatio: env.MIN_PROFIT_FEE_RATIO,
+  minSlDistanceAtr: env.MIN_SL_DISTANCE_ATR,
+  bybitTakerFee: env.BYBIT_TAKER_FEE,
+  bybitMakerFee: env.BYBIT_MAKER_FEE
 };
 
 function cleanSecret(value?: string) {
