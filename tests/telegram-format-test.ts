@@ -73,7 +73,7 @@ function sampleSignal(kind: "LONG" | "SHORT" | "WAIT"): Signal {
     holdTime: "scalp",
     marketRegime: "TRENDING",
     btcStable: true,
-    confirmations: { bybit: true, okx: false, kucoin: false, kraken: false, binance: false, alignedCount: 1, conflict: false, details: [] },
+    confirmations: { bybit: true, okx: false, kucoin: false, binance: false, alignedCount: 1, conflict: false, details: [] },
     reasons: [],
     rejectionReason: wait ? "waiting confirmation" : "",
     scoreBreakdown: { adaptiveConfirmationRequired: 80, entrySniper: wait ? 35 : 80, volumeConfirmation: wait ? 40 : 75, momentumQuality: wait ? 45 : 80, orderBookImbalance: wait ? 50 : 75, liquiditySweep: wait ? 30 : 80, multiTimeframeAlignment: 70, openInterestConfirmation: 70 },

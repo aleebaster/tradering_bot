@@ -43,7 +43,7 @@ function mockSignal(): Signal {
     holdTime: "test",
     marketRegime: "TRENDING",
     btcStable: true,
-    confirmations: { bybit: true, okx: true, kucoin: false, kraken: false, binance: true, alignedCount: 3, conflict: false, details: [] },
+    confirmations: { bybit: true, okx: true, kucoin: false, binance: true, alignedCount: 3, conflict: false, details: [] },
     reasons: [],
     rejectionReason: "paper simulation test",
     scoreBreakdown: { momentumQuality: 80, volumeConfirmation: 75, multiTimeframeAlignment: 100, executionAlignment: 100, liquiditySweep: 80, fakeBreakoutProtection: 85, orderBookImbalance: 65, smcConfirmation: 60, cvdOrderFlow: 70, higherTimeframeBias: 80, smartOpenInterest: 70 },

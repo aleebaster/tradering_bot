@@ -8,7 +8,7 @@ export type MarketRegime = "TRENDING" | "SIDEWAYS" | "BREAKOUT" | "REVERSAL" | "
 export type SignalGrade = "A+" | "A" | "B" | "C" | "D";
 
 export interface Candle {
-  exchange: "bybit" | "okx" | "binance" | "kucoin" | "kraken";
+  exchange: "bybit" | "okx" | "binance" | "kucoin";
   symbol: string;
   timeframe: string;
   openTime: number;
@@ -25,7 +25,6 @@ export interface MarketSnapshot {
   candles: Record<string, Candle[]>;
   okxCandles: Record<string, Candle[]>;
   kucoinCandles: Record<string, Candle[]>;
-  krakenCandles: Record<string, Candle[]>;
   binanceCandles: Record<string, Candle[]>;
   orderBookImbalance: number;
   fundingRate: number;
@@ -55,7 +54,6 @@ export interface ExchangeConfirmations {
   bybit: boolean;
   okx: boolean;
   kucoin: boolean;
-  kraken: boolean;
   binance: boolean;
   alignedCount: number;
   conflict: boolean;

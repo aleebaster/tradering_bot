@@ -52,7 +52,7 @@ function mockSignal(symbol: string, score: number, entryStatus: Signal["entrySta
     holdTime: "test",
     marketRegime: "TRENDING",
     btcStable: true,
-    confirmations: { bybit: true, okx: true, kucoin: false, kraken: false, binance: true, alignedCount: 3, conflict: false, details: [] },
+    confirmations: { bybit: true, okx: true, kucoin: false, binance: true, alignedCount: 3, conflict: false, details: [] },
     reasons: ["test"],
     rejectionReason: "test",
     scoreBreakdown: {

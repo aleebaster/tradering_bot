@@ -139,7 +139,6 @@ async function buildLiveSignal(symbol: string, candles: Record<string, Candle[]>
     candles,
     okxCandles: {},
     kucoinCandles: {},
-    krakenCandles: {},
     binanceCandles: {},
     orderBookImbalance: orderBook.imbalance,
     fundingRate,
@@ -148,7 +147,7 @@ async function buildLiveSignal(symbol: string, candles: Record<string, Candle[]>
     whaleScore: intelligence.whale.smartMoneyScore,
     btcStable: btcOk,
     regime,
-    confirmations: { bybit: true, okx: false, kucoin: false, kraken: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit live session verification"] },
+    confirmations: { bybit: true, okx: false, kucoin: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit live session verification"] },
     intelligence
   };
   return buildSignal(snapshot);

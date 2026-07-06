@@ -74,7 +74,7 @@ function signal(patch: Partial<Signal> & { fakeBreakoutRisk?: boolean }): Signal
     holdTime: "30 хвилин до 6 годин",
     marketRegime: "TRENDING",
     btcStable: true,
-    confirmations: { bybit: true, okx: false, kucoin: false, kraken: false, binance: true, alignedCount: 2, conflict: false, details: [] },
+    confirmations: { bybit: true, okx: false, kucoin: false, binance: true, alignedCount: 2, conflict: false, details: [] },
     reasons: ["ok"],
     rejectionReason: patch.rejectionReason ?? "Прийнятий сетап з високою ймовірністю",
     scoreBreakdown: { adaptiveConfirmationRequired: 92, entrySniper: 100, volumeConfirmation: 75, momentumQuality: 78, orderBookImbalance: 68, liquiditySweep: 76, multiTimeframeAlignment: 72 },

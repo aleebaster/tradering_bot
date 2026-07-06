@@ -29,7 +29,6 @@ async function main() {
     candles,
     okxCandles: {},
     kucoinCandles: {},
-    krakenCandles: {},
     binanceCandles: {},
     orderBookImbalance: orderBook.imbalance,
     fundingRate,
@@ -38,7 +37,7 @@ async function main() {
     whaleScore: intelligence.whale.smartMoneyScore,
     btcStable: input.btcStable,
     regime,
-    confirmations: { bybit: true, okx: false, kucoin: false, kraken: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit live intelligence test"] },
+    confirmations: { bybit: true, okx: false, kucoin: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit live intelligence test"] },
     intelligence
   };
   const signal = buildSignal(snapshot);

@@ -59,7 +59,7 @@ function mockSignal(symbol: string, score: number): Signal {
     holdTime: "test",
     marketRegime: "TRENDING",
     btcStable: true,
-    confirmations: { bybit: true, okx: false, kucoin: false, kraken: false, binance: false, alignedCount: 1, conflict: false, details: [] },
+    confirmations: { bybit: true, okx: false, kucoin: false, binance: false, alignedCount: 1, conflict: false, details: [] },
     reasons: ["test"],
     rejectionReason: "waiting for sniper trigger",
     scoreBreakdown: {

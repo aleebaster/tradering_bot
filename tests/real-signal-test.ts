@@ -33,10 +33,9 @@ async function main() {
       console.error(`Bybit ${symbol} failed; continuing safely: ${message}`);
       continue;
     }
-    const [okx, kucoin, kraken, binance, orderBook, funding, oi] = await Promise.all([
+    const [okx, kucoin, binance, orderBook, funding, oi] = await Promise.all([
       bybitOnly ? Promise.resolve(emptyCandles()) : loadOkx(symbol),
       bybitOnly ? Promise.resolve(emptyCandles()) : loadKucoin(symbol),
-      bybitOnly ? Promise.resolve(emptyCandles()) : loadKraken(symbol),
       bybitOnly ? Promise.resolve(emptyCandles()) : loadBinance(symbol),
       client.bybitOrderBookStats(symbol).catch(() => ({ spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false })),
       client.fundingRate(symbol).catch(() => 0),
@@ -58,7 +57,6 @@ async function main() {
       candles,
       okxCandles: okx,
       kucoinCandles: kucoin,
-      krakenCandles: kraken,
       binanceCandles: binance,
       orderBookImbalance: orderBook.imbalance,
       fundingRate: funding,
@@ -67,7 +65,7 @@ async function main() {
       whaleScore: intelligence.whale.smartMoneyScore,
       btcStable: symbol === "BTCUSDT" ? true : btcOk,
       regime,
-      confirmations: confirmations(candles, okx, kucoin, kraken, binance),
+      confirmations: confirmations(candles, okx, kucoin, binance),
       intelligence
     };
     signals.push(buildSignal(snapshot));
@@ -103,10 +101,6 @@ async function loadKucoin(symbol: string) {
   return Object.fromEntries(await Promise.all(tfs.map(async (tf) => [tf, await client.kucoinKlines(symbol, tf).catch(() => [])] as const)));
 }
 
-async function loadKraken(symbol: string) {
-  return Object.fromEntries(await Promise.all(tfs.map(async (tf) => [tf, await client.krakenSpotKlines(symbol, tf).catch(() => [])] as const)));
-}
-
 async function loadBinance(symbol: string) {
   return Object.fromEntries(await Promise.all(tfs.map(async (tf) => [tf, await client.binanceKlines(symbol, tf).catch(() => [])] as const)));
 }
@@ -117,18 +111,16 @@ function liquidity(candles: Candle[]) {
   return Math.min(100, Math.log10(Math.max(dollarVolume, 1)) * 11);
 }
 
-function confirmations(bybit: Record<string, Candle[]>, okx: Record<string, Candle[]>, kucoin: Record<string, Candle[]>, kraken: Record<string, Candle[]>, binance: Record<string, Candle[]>): ExchangeConfirmations {
+function confirmations(bybit: Record<string, Candle[]>, okx: Record<string, Candle[]>, kucoin: Record<string, Candle[]>, binance: Record<string, Candle[]>): ExchangeConfirmations {
   const bybitDir = direction(bybit["15"]);
   const okxDir = direction(okx["15"]);
   const kucoinDir = direction(kucoin["15"]);
-  const krakenDir = direction(kraken["15"]);
   const binanceDir = direction(binance["15"]);
   const okxAligned = okxDir !== 0 && okxDir === bybitDir;
   const kucoinAligned = kucoinDir !== 0 && kucoinDir === bybitDir;
-  const krakenAligned = krakenDir !== 0 && krakenDir === bybitDir;
   const binanceAligned = binanceDir !== 0 && binanceDir === bybitDir;
-  const conflict = [okxDir, kucoinDir, krakenDir].some((dir) => dir !== 0 && bybitDir !== 0 && dir !== bybitDir);
-  return { bybit: bybitDir !== 0, okx: okxAligned, kucoin: kucoinAligned, kraken: krakenAligned, binance: binanceAligned, alignedCount: [bybitDir !== 0, okxAligned, kucoinAligned, krakenAligned, binanceAligned].filter(Boolean).length, conflict, details: [] };
+  const conflict = [okxDir, kucoinDir].some((dir) => dir !== 0 && bybitDir !== 0 && dir !== bybitDir);
+  return { bybit: bybitDir !== 0, okx: okxAligned, kucoin: kucoinAligned, binance: binanceAligned, alignedCount: [bybitDir !== 0, okxAligned, kucoinAligned, binanceAligned].filter(Boolean).length, conflict, details: [] };
 }
 
 function direction(candles?: Candle[]) {

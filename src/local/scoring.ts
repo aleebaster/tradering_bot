@@ -7,6 +7,7 @@ import { paperSetupConfidenceAdjustment } from "./paperTrading";
 import { realTradeQualityAdjustment } from "./tradeMemory";
 import { validateTrade, correctSignalLevels, validateSignalDirection } from "./tradeValidator";
 import { logger } from "./logger";
+import { state } from "./state";
 import type { AccuracyRisk, AccuracySession, Candle, CorrelationContext, FakeBreakoutAnalysis, FastMoveQuality, HigherTimeframeBias, LiquidityIntelligence, MarketRegime, MarketSnapshot, OpenInterestAnalysis, OrderFlowAnalysis, Signal, SignalGrade, Side } from "./types";
 
 export function regimeFrom(candles: MarketSnapshot["candles"]): MarketRegime {
@@ -54,9 +55,11 @@ export function btcStable(btc: MarketSnapshot["candles"]): boolean {
 }
 
 export function marketThresholdProfile(regime: MarketRegime, btcOk: boolean) {
-  if ((regime === "TRENDING" || regime === "BREAKOUT" || regime === "EXPANSION") && btcOk) return { mode: "Bull / Trending", aggression: "Balanced", entry: 90, watch: 80, early: 72 };
-  if ((regime === "HIGH_VOLATILITY" || regime === "VOLATILE") && btcOk) return { mode: "High Volatility", aggression: "Selective fast momentum", entry: 90, watch: 82, early: 72 };
-  return { mode: "Sideways / Weak", aggression: "Conservative", entry: 92, watch: 82, early: 72 };
+  const strong = (regime === "TRENDING" || regime === "BREAKOUT" || regime === "EXPANSION" || regime === "REVERSAL") && btcOk;
+  const neutral = (regime === "HIGH_VOLATILITY" || regime === "VOLATILE") && btcOk;
+  if (strong) return { mode: "Strong Market", aggression: "Active", entry: 82, watch: 76, early: 68 };
+  if (neutral) return { mode: "Neutral Market", aggression: "Selective", entry: 88, watch: 80, early: 70 };
+  return { mode: "Weak Market", aggression: "Conservative", entry: 94, watch: 84, early: 74 };
 }
 
 export function buildSignal(snapshot: MarketSnapshot): Signal {
@@ -94,7 +97,7 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
   const funding = snapshot.mode === "futures" ? clamp(100 - Math.abs(snapshot.fundingRate) * 10000) : 70;
   const oi = clamp(50 + snapshot.openInterestChange * 1000 * direction);
   const orderbook = clamp(50 + snapshot.orderBookImbalance * 120 * direction);
-  const session = sessionFilter(new Date());
+  const session = sessionFilter(new Date(), snapshot);
   const newsRisk = highImpactNewsRisk(snapshot, last, a);
   const htf = higherTimeframeBias(snapshot.candles, direction);
   const liquidity = liquidityIntelligence(candles, direction);
@@ -295,28 +298,33 @@ export function buildSignal(snapshot: MarketSnapshot): Signal {
 
 function intelligenceScores(snapshot: MarketSnapshot, direction: number) {
   const intel = snapshot.intelligence;
-  if (!intel || direction === 0) return { pumpScore: 0, whaleScore: 0, liqScore: 0, marketScore: 50, entryQuality: 0, aligned: false, hardRisk: false, bonus: 0, penalty: 0 };
+  if (!intel || direction === 0) return { pumpScore: 0, whaleScore: 0, liqScore: 0, marketScore: 50, momentumHunterScore: 50, entryQuality: 0, aligned: false, hardRisk: false, bonus: 0, penalty: 0 };
   const side = direction === 1 ? "LONG" : "SHORT";
   const pumpAligned = intel.pump.direction === side || intel.pump.direction === "NEUTRAL" && intel.pump.entryTiming !== "AVOID";
   const whaleAligned = intel.whale.whaleBias === side || intel.whale.whaleBias === "NEUTRAL";
   const liqAligned = intel.liq.sweepDirection === side || intel.liq.sweepDirection === "NEUTRAL";
   const marketOk = intel.market.marketRegime !== "RISK_OFF" || side === "SHORT";
-  const alignedCount = [pumpAligned, whaleAligned, liqAligned, marketOk].filter(Boolean).length;
+  const momentumData = state.momentum.latestBySymbol[snapshot.symbol];
+  const mhAligned = momentumData ? momentumData.decision !== "SKIP" : false;
+  const mhScore = momentumData ? Math.round((momentumData.pumpProbability * 0.5 + momentumData.momentumScore * 0.3 + momentumData.smartMoneyScore * 0.2)) : 50;
+  const alignedCount = [pumpAligned, whaleAligned, liqAligned, marketOk, mhAligned].filter(Boolean).length;
   const pumpScore = pumpAligned ? intel.pump.pumpScore : Math.max(0, 50 - intel.pump.pumpScore);
   const whaleScore = whaleAligned ? intel.whale.smartMoneyScore : Math.max(0, 45 - intel.whale.smartMoneyScore * 0.4);
   const liqScore = liqAligned ? intel.liq.entryQuality : Math.max(0, 45 - intel.liq.entryQuality * 0.4);
   const marketScore = Math.max(0, 100 - intel.market.riskScore + intel.market.marketAggression * 0.35);
+  const momentumHunterScore = mhAligned ? mhScore : Math.max(0, 50 - mhScore * 0.4);
   const trapPenalty = Math.max(intel.whale.trapRisk * 0.08, intel.liq.trapProbability * 0.08, intel.pump.fakeBreakoutRisk * 0.1);
-  const bonus = pumpScore * 0.045 + whaleScore * 0.05 + liqScore * 0.045 + marketScore * 0.025 + (alignedCount >= 3 ? 5 : 0);
-  const penalty = trapPenalty + (alignedCount <= 1 ? 12 : 0) + (intel.market.marketRegime === "RISK_OFF" && side === "LONG" ? 15 : 0);
+  const bonus = pumpScore * 0.04 + whaleScore * 0.04 + liqScore * 0.04 + marketScore * 0.02 + momentumHunterScore * 0.04 + (alignedCount >= 4 ? 5 : alignedCount >= 3 ? 3 : 0);
+  const penalty = trapPenalty + (alignedCount <= 2 ? 10 : 0) + (intel.market.marketRegime === "RISK_OFF" && side === "LONG" ? 15 : 0);
   const hardRisk = intel.pump.fakeBreakoutRisk >= 78 || intel.whale.trapRisk >= 82 || intel.liq.trapProbability >= 82 || intel.market.riskScore >= 85;
   return {
     pumpScore,
     whaleScore,
     liqScore,
     marketScore,
-    entryQuality: (pumpScore + whaleScore + liqScore + marketScore) / 4,
-    aligned: alignedCount >= 3,
+    momentumHunterScore,
+    entryQuality: (pumpScore + whaleScore + liqScore + marketScore + momentumHunterScore) / 5,
+    aligned: alignedCount >= 4,
     hardRisk,
     bonus,
     penalty
@@ -366,7 +374,7 @@ function rejectionReason(side: Side, score: number, snapshot: MarketSnapshot, we
 function adaptiveConfirmationProfile(snapshot: MarketSnapshot, quality: { volume: number; momentum: number; liquidityScore: number; orderbook: number; fastMoveScore: number }) {
   if (snapshot.confirmations.conflict) return { allowed: false, penalty: 35, smallAltStrict: false, reason: "exchange conflict" };
   const topCoin = ["BTCUSDT", "ETHUSDT", "SOLUSDT"].includes(snapshot.symbol);
-  const bybitBinanceOnly = snapshot.confirmations.bybit && snapshot.confirmations.binance && !snapshot.confirmations.okx && !snapshot.confirmations.kucoin && !snapshot.confirmations.kraken;
+  const bybitBinanceOnly = snapshot.confirmations.bybit && snapshot.confirmations.binance && !snapshot.confirmations.okx && !snapshot.confirmations.kucoin;
   const microStrong = quality.momentum >= 82 && quality.fastMoveScore >= 70 || quality.orderbook >= 70 && quality.volume >= 68;
   if (topCoin) return { allowed: snapshot.confirmations.alignedCount >= 2, penalty: snapshot.confirmations.alignedCount >= 2 ? 0 : 35, smallAltStrict: false, reason: "top coin requires 2+ exchanges" };
   if (bybitBinanceOnly) {
@@ -707,7 +715,7 @@ function reasons(snapshot: MarketSnapshot, parts: Record<string, number>, advanc
 }
 
 function confirmedBy(snapshot: MarketSnapshot) {
-  return [snapshot.confirmations.bybit ? "Bybit" : "", snapshot.confirmations.okx ? "OKX" : "", snapshot.confirmations.kucoin ? "KuCoin" : "", snapshot.confirmations.kraken ? "Kraken" : "", snapshot.confirmations.binance ? "Binance" : ""].filter(Boolean);
+  return [snapshot.confirmations.bybit ? "Bybit" : "", snapshot.confirmations.okx ? "OKX" : "", snapshot.confirmations.kucoin ? "KuCoin" : "", snapshot.confirmations.binance ? "Binance" : ""].filter(Boolean);
 }
 
 function marketRegimeUa(regime: MarketRegime) {
@@ -715,20 +723,46 @@ function marketRegimeUa(regime: MarketRegime) {
   return map[regime];
 }
 
-function sessionFilter(now: Date): AccuracySession {
+function sessionFilter(now: Date, snapshot?: MarketSnapshot): AccuracySession {
   const hour = now.getUTCHours();
   const minute = now.getUTCMinutes();
   const minutes = hour * 60 + minute;
-  if (minutes >= 0 && minutes <= 120) return { name: "OFF_HOURS", active: false, confidenceAdjustment: -16, message: "⚠️ Dead market hours: ліквідність низька, fake breakout risk вище" };
-  if (minutes >= 420 && minutes <= 570) return { name: "LONDON_OPEN", active: true, confidenceAdjustment: 6, message: "✅ London Open: ліквідність активна" };
-  if (minutes >= 780 && minutes <= 960) return { name: "LONDON_NY_OVERLAP", active: true, confidenceAdjustment: 8, message: "✅ London + NY overlap: найкраща ліквідність" };
-  if (minutes >= 780 && minutes <= 930) return { name: "NEW_YORK_OPEN", active: true, confidenceAdjustment: 7, message: "✅ New York Open: ліквідність активна" };
-  if (minutes >= 0 && minutes <= 360) return { name: "ASIA_CHOP", active: false, confidenceAdjustment: -18, message: "⚠️ Asia low liquidity: тільки sniper entry, FOMO заборонено" };
-  return { name: "OFF_HOURS", active: false, confidenceAdjustment: -10, message: "⚠️ Поза головними сесіями — знижена впевненість" };
+  const candles = snapshot?.candles["15"] ?? snapshot?.candles["60"] ?? [];
+  const last20 = candles.slice(-20);
+  const currentVol = last20.length >= 2 ? last20.slice(-2).reduce((s, c) => s + c.volume, 0) / 2 : 0;
+  const avgVol = last20.length >= 10 ? last20.slice(-10, -2).reduce((s, c) => s + c.volume, 0) / 8 : currentVol;
+  const volRatio = avgVol > 0 ? currentVol / avgVol : 1;
+  const a = candles.length >= 20 ? atr(candles) : 0;
+  const last = candles.at(-1);
+  const volPct = a > 0 && last ? a / last.close : 0;
+  const liquidityActive = volRatio > 0.8 || volPct > 0.008;
+  const volumeBoost = clamp((volRatio - 1) * 15);
+  const volatilityBoost = clamp(volPct * 800);
+  const dynamicBoost = liquidityActive ? Math.max(volumeBoost, volatilityBoost) : -Math.max(5, volumeBoost * 0.5);
+
+  if (minutes >= 420 && minutes <= 570) {
+    const adj = clamp(6 + dynamicBoost, -5, 12);
+    return { name: "LONDON_OPEN", active: adj > -2, confidenceAdjustment: adj, message: adj > 0 ? "✅ London Open: ліквідність активна" : "⚠️ London Open: низька активність" };
+  }
+  if (minutes >= 780 && minutes <= 960) {
+    const adj = clamp(8 + dynamicBoost, -3, 14);
+    return { name: "LONDON_NY_OVERLAP", active: adj > -2, confidenceAdjustment: adj, message: adj > 0 ? "✅ London + NY overlap: найкраща ліквідність" : "⚠️ London+NY overlap: знижена активність" };
+  }
+  if (minutes >= 780 && minutes <= 930) {
+    const adj = clamp(7 + dynamicBoost, -4, 13);
+    return { name: "NEW_YORK_OPEN", active: adj > -2, confidenceAdjustment: adj, message: adj > 0 ? "✅ New York Open: ліквідність активна" : "⚠️ NY Open: знижена активність" };
+  }
+  if (minutes >= 0 && minutes <= 360) {
+    const adj = clamp(-18 + dynamicBoost * 2, -20, 5);
+    return { name: "ASIA_CHOP", active: adj > -2, confidenceAdjustment: adj, message: adj > 0 ? "✅ Asia session: аномальна активність" : "⚠️ Asia low liquidity: тільки sniper entry" };
+  }
+  const adj = clamp(-10 + dynamicBoost, -16, 6);
+  return { name: "OFF_HOURS", active: adj > -2, confidenceAdjustment: adj, message: adj > 0 ? "✅ Off-hours: підвищена активність" : "⚠️ Off-hours: знижена впевненість" };
 }
 
 function highImpactNewsRisk(snapshot: MarketSnapshot, last: Candle, a: number): AccuracyRisk {
   const manualUntil = config.HIGH_IMPACT_NEWS_BLOCK_UNTIL ? Date.parse(config.HIGH_IMPACT_NEWS_BLOCK_UNTIL) : 0;
+  const userMode = config.HIGH_IMPACT_NEWS_MODE ?? "CRITICAL";
   const reasons: string[] = [];
   if (manualUntil && manualUntil > Date.now()) reasons.push(`manual news block до ${new Date(manualUntil).toISOString()}`);
   if (snapshot.regime === "NEWS_DRIVEN") reasons.push("NEWS_DRIVEN режим за ATR/volume");
@@ -739,7 +773,11 @@ function highImpactNewsRisk(snapshot: MarketSnapshot, last: Candle, a: number): 
   if (a / last.close > 0.035) reasons.push("macro volatility spike за ATR");
   const nfpWindow = isFirstFridayNfpWindow(new Date());
   if (nfpWindow) reasons.push("можливе NFP/Fed macro window");
-  return { blocked: reasons.length > 0, severity: reasons.length ? "HIGH" : "LOW", message: reasons.length ? "⚠️ ВИСОКИЙ НОВИННИЙ РИЗИК — НЕ ВХОДИТИ" : "✅ Немає активного high-impact news block", reasons };
+  const riskFound = reasons.length > 0;
+  if (!riskFound) return { blocked: false, severity: "LOW", message: "✅ Немає активного high-impact news block", reasons };
+  if (userMode === "CRITICAL") return { blocked: true, severity: "HIGH", message: "⚠️ ВИСОКИЙ НОВИННИЙ РИЗИК — НЕ ВХОДИТИ", reasons };
+  if (userMode === "MEDIUM") return { blocked: true, severity: "MEDIUM", message: "⚠️ СЕРЕДНІЙ НОВИННИЙ РИЗИК — зменшення ризику", reasons };
+  return { blocked: false, severity: "LOW", message: "✅ Новини виявлені, але LOW режим — торгівля дозволена", reasons };
 }
 
 function isFirstFridayNfpWindow(now: Date) {
@@ -871,7 +909,8 @@ function fastMoveQuality(precision: Candle[], setup: Candle[], direction: number
 }
 
 function accuracyHardBlock(snapshot: MarketSnapshot, input: { side: Side; direction: number; session: AccuracySession; newsRisk: AccuracyRisk; htf: HigherTimeframeBias; liquidity: LiquidityIntelligence; orderFlow: OrderFlowAnalysis; oiAnalysis: OpenInterestAnalysis; fakeBreakout: FakeBreakoutAnalysis; fastMove: FastMoveQuality; correlation: CorrelationContext }) {
-  if (input.newsRisk.blocked) return { blocked: true, maxScore: 55, reason: input.newsRisk.message };
+  if (input.newsRisk.blocked && input.newsRisk.severity === "HIGH") return { blocked: true, maxScore: 55, reason: input.newsRisk.message };
+  if (input.newsRisk.severity === "MEDIUM") return { blocked: false, maxScore: 82, reason: input.newsRisk.message };
   if (!input.session.active) return { blocked: true, maxScore: 79, reason: input.session.message };
   if (!input.htf.executionAligned && input.direction !== 0) return { blocked: true, maxScore: 79, reason: "1H/15M/5M execution alignment не підтверджений" };
   if (input.fakeBreakout.risk) return { blocked: true, maxScore: 79, reason: input.fakeBreakout.message };

@@ -10,7 +10,7 @@ src/local/
   index.ts             # Express API + WebSocket server
   scanner.ts           # Main trading loop orchestrator
   scoring.ts           # Signal builder (weighted multi-factor)
-  exchanges.ts         # Exchange clients (Bybit, OKX, KuCoin, Kraken, Binance)
+  exchanges.ts         # Exchange clients (Bybit, OKX, KuCoin, Binance)
   indicators.ts        # Technical indicators (EMA, RSI, MACD, ATR, etc.)
   validation.ts        # Config validation, startup banner, diagnostics
   config.ts            # Zod-validated environment config

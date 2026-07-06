@@ -117,7 +117,6 @@ function snapshot(symbol: string, candles: Record<string, Candle[]>, imbalance: 
     candles,
     okxCandles: {},
     kucoinCandles: {},
-    krakenCandles: {},
     binanceCandles: {},
     orderBookImbalance: imbalance,
     fundingRate,
@@ -126,7 +125,7 @@ function snapshot(symbol: string, candles: Record<string, Candle[]>, imbalance: 
     whaleScore: intelligence?.whale.smartMoneyScore ?? Math.min(100, Math.max(0, Math.abs(openInterestChange) * 2500 + Math.abs(imbalance) * 120)),
     btcStable: btcOk,
     regime,
-    confirmations: { bybit: true, okx: false, kucoin: false, kraken: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit live impact validation"] },
+    confirmations: { bybit: true, okx: false, kucoin: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit live impact validation"] },
     intelligence
   };
 }

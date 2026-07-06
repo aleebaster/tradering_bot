@@ -31,7 +31,6 @@ export async function analyzeFutures(query: string): Promise<Signal> {
     candles,
     okxCandles: {},
     kucoinCandles: {},
-    krakenCandles: {},
     binanceCandles: {},
     orderBookImbalance: orderBook.imbalance,
     fundingRate,
@@ -40,7 +39,7 @@ export async function analyzeFutures(query: string): Promise<Signal> {
     whaleScore: intelligence.whale.smartMoneyScore,
     btcStable: btcOk,
     regime,
-    confirmations: { bybit: true, okx: false, kucoin: false, kraken: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit registry analysis"] },
+    confirmations: { bybit: true, okx: false, kucoin: false, binance: false, alignedCount: 1, conflict: false, details: ["Bybit registry analysis"] },
     intelligence
   };
   return buildSignal(snapshot);

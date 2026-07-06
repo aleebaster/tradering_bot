@@ -65,11 +65,9 @@ export class Scanner {
     state.diagnostics.apiStatus.telegram = "налаштовано";
     await this.validateOkxAuth();
     await this.validateKucoinAuth();
-    await this.validateKrakenAuth();
     await this.validateSymbols();
     this.connectBinanceTicker();
     this.connectKucoinTicker();
-    this.connectKrakenTicker();
     this.timer = setInterval(() => void this.scan(), Math.min(config.SCAN_INTERVAL_SECONDS * 1000, 10_000));
     this.watchlistTimer = setInterval(() => void this.monitorWatchlist(), 20_000);
     void this.scanMomentumMoves();
@@ -111,22 +109,6 @@ export class Scanner {
     } catch (err) {
       state.diagnostics.apiStatus.kucoin = "помилка WebSocket KuCoin";
       logger.warn({ err }, "Помилка підключення KuCoin WebSocket");
-    }
-  }
-
-  private connectKrakenTicker() {
-    try {
-      state.diagnostics.apiStatus.krakenSpot = "підключення WebSocket";
-      const ws = new WebSocket("wss://ws.kraken.com/v2");
-      ws.on("open", () => {
-        state.diagnostics.apiStatus.krakenSpot = "WebSocket підключено";
-        ws.send(JSON.stringify({ method: "subscribe", params: { channel: "ticker", symbol: ["BTC/USDT"] } }));
-      });
-      ws.on("close", () => { state.diagnostics.apiStatus.krakenSpot = "перепідключення Kraken"; setTimeout(() => this.connectKrakenTicker(), 15000); });
-      ws.on("error", () => { state.diagnostics.apiStatus.krakenSpot = "помилка WebSocket Kraken"; });
-    } catch (err) {
-      state.diagnostics.apiStatus.krakenSpot = "помилка WebSocket Kraken";
-      logger.warn({ err }, "Помилка підключення Kraken WebSocket");
     }
   }
 
@@ -371,29 +353,6 @@ export class Scanner {
     }
   }
 
-  private async validateKrakenAuth() {
-    try {
-      const spot = await this.client.krakenSpotAuthCheck();
-      state.diagnostics.apiStatus.krakenSpot = spot.ok ? "автентифіковано і підключено" : "помилка Kraken Spot";
-      delete state.diagnostics.authErrors.krakenSpot;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      state.diagnostics.apiStatus.krakenSpot = "помилка Kraken Spot; public market confirmation активне";
-      state.diagnostics.authErrors.krakenSpot = message;
-      logger.error({ err }, "Помилка автентифікації Kraken Spot");
-    }
-    try {
-      const futures = await this.client.krakenFuturesAuthCheck();
-      state.diagnostics.apiStatus.krakenFutures = futures.ok ? "автентифіковано і підключено" : "помилка Kraken Futures";
-      delete state.diagnostics.authErrors.krakenFutures;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      state.diagnostics.apiStatus.krakenFutures = "помилка Kraken Futures; public futures confirmation активне";
-      state.diagnostics.authErrors.krakenFutures = message;
-      logger.error({ err }, "Помилка автентифікації Kraken Futures");
-    }
-  }
-
   private async loadCandles(symbol: string, mode: "spot" | "futures"): Promise<Record<string, Candle[]>> {
     const tfs = mode === "futures" ? config.futuresTimeframes : config.spotTimeframes;
     const category = mode === "spot" ? "spot" : "linear";
@@ -409,10 +368,9 @@ export class Scanner {
 
   private async snapshot(symbol: string, mode: "spot" | "futures", candles: Record<string, Candle[]>, btcOk: boolean, btcCandles: Record<string, Candle[]>): Promise<MarketSnapshot> {
     const tfs = mode === "futures" ? ["15"] : config.spotTimeframes;
-    const [okxEntries, kucoinEntries, krakenEntries, binanceEntries, orderBook, funding, oi] = await Promise.all([
+    const [okxEntries, kucoinEntries, binanceEntries, orderBook, funding, oi] = await Promise.all([
       mode === "futures" ? Promise.resolve([]) : Promise.all(tfs.map(async (tf) => [tf, await this.client.okxKlines(symbol, tf).catch(() => [])] as const)),
       mode === "futures" ? Promise.resolve([]) : Promise.all(tfs.map(async (tf) => [tf, await this.client.kucoinKlines(symbol, tf).catch(() => [])] as const)),
-      mode === "futures" ? Promise.resolve([]) : Promise.all(tfs.map(async (tf) => [tf, await this.client.krakenSpotKlines(symbol, tf).catch(() => [])] as const)),
       Promise.all(tfs.map(async (tf) => [tf, await withTimeout(this.client.binanceKlines(symbol, tf), 1_500, [])] as const)),
       mode === "futures" ? withTimeout(this.client.bybitOrderBookStats(symbol), 1_500, { spreadPct: 1, depthUsdt: 0, imbalance: 0, spoofRisk: false }) : Promise.resolve({ spreadPct: 0, depthUsdt: 0, imbalance: 0, spoofRisk: false }),
       mode === "futures" ? withTimeout(this.client.fundingRate(symbol), 1_000, 0) : Promise.resolve(0),
@@ -476,7 +434,6 @@ export class Scanner {
       candles,
       okxCandles: Object.fromEntries(okxEntries),
       kucoinCandles: Object.fromEntries(kucoinEntries),
-      krakenCandles: Object.fromEntries(krakenEntries),
       binanceCandles: Object.fromEntries(binanceEntries),
       orderBookImbalance: orderBook.imbalance,
       fundingRate: funding,
@@ -485,7 +442,7 @@ export class Scanner {
       whaleScore,
       btcStable: btcOk,
       regime,
-      confirmations: exchangeConfirmations(candles, Object.fromEntries(okxEntries), Object.fromEntries(kucoinEntries), Object.fromEntries(krakenEntries), Object.fromEntries(binanceEntries), mode),
+      confirmations: exchangeConfirmations(candles, Object.fromEntries(okxEntries), Object.fromEntries(kucoinEntries), Object.fromEntries(binanceEntries), mode),
       correlation,
       intelligence
     };
@@ -618,10 +575,37 @@ export class Scanner {
       const safeMoves = await this.momentumScanner.scanAutoSignals(3);
       const scalpMoves = await this.momentumScanner.scanAutoScalpSignals(2);
       const moves = [...safeMoves, ...scalpMoves].sort((a, b) => b.score - a.score).slice(0, 4);
+      let btcCandles: Record<string, Candle[]> | null = null;
+      let btcOk = true;
       for (const move of moves) {
         logger.info({ symbol: move.symbol, direction: move.direction, mode: move.mode ?? "SAFE", score: move.score, setupType: move.setupType, movePct: move.movePct }, "auto momentum candidate tracked silently");
         const momentumData = state.momentum.latestBySymbol[move.symbol];
         if (momentumData) logger.info(`\nMOMENTUM HUNTER: ${move.symbol}\nPump Probability: ${momentumData.pumpProbability}% | Momentum: ${momentumData.momentumScore} | Whale: ${momentumData.smartMoneyScore} | Decision: ${momentumData.decision}`);
+        if (move.score >= 85) {
+          try {
+            if (!btcCandles) { btcCandles = await this.loadBtcCandles(); btcOk = btcStable(btcCandles); }
+            const candles = await this.loadCandles(move.symbol, "futures");
+            const snapshot = await this.snapshot(move.symbol, "futures", candles, btcOk, btcCandles);
+            const signal = buildSignal(snapshot);
+            logger.info({ symbol: signal.symbol, side: signal.side, score: signal.score, entryStatus: signal.entryStatus, momentumScore: move.score, setupType: move.setupType }, "momentum candidate → signal built");
+            if (!["NO_TRADE", "WATCHLIST"].includes(signal.side) && this.canSendSignal(signal)) {
+              this.markSignalSent(signal);
+              logger.info({ symbol: signal.symbol, side: signal.side, score: signal.score, price: signal.currentPrice }, "ORDER SUBMITTED");
+              if (notificationsEnabled()) await this.sendRealEntryFast(signal, {
+                symbolStartedAt: startedAt,
+                marketDataFetchedAt: startedAt,
+                snapshotReadyAt: Date.now(),
+                signalConfirmedAt: Date.now()
+              });
+              recordPaperOpen(signal);
+              logger.info({ symbol: signal.symbol, side: signal.side, entry: signal.entry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit }, "POSITION OPENED");
+            } else {
+              logger.info({ symbol: signal.symbol, side: signal.side, score: signal.score, rejectionReason: signal.rejectionReason, entryStatus: signal.entryStatus }, "momentum candidate rejected by signal validation");
+            }
+          } catch (signalErr) {
+            logger.warn({ err: signalErr, symbol: move.symbol }, "Failed to build signal for momentum candidate");
+          }
+        }
       }
       state.diagnostics.apiStatus.autoSignals = `active; cycle ${Date.now() - startedAt}ms; safe ${safeMoves.length}; scalp ${scalpMoves.length}`;
     } catch (err) {
@@ -643,21 +627,9 @@ function redactedOkxStartupError(message: string) {
   return message.replace(/[A-Za-z0-9_-]{24,}/g, "[redacted]").slice(0, 240);
 }
 
-export function activationConfirmed(signal: Signal, evolution: WatchlistEvolution) {
+export function activationConfirmed(signal: Signal, _evolution: WatchlistEvolution) {
   const entryThreshold = signal.scoreBreakdown.adaptiveConfirmationRequired ?? 92;
-  const confirmations = [
-    momentumConfirmed(signal),
-    volumeConfirmed(signal),
-    orderBookConfirmed(signal),
-    liquiditySweepConfirmed(signal),
-    breakoutConfirmed(signal),
-    sniperConfirmed(signal),
-    signal.btcStable,
-    evolution.oiImproved,
-    evolution.volumeImproved
-  ].filter(Boolean).length;
-  const improvedEnough = evolution.scoreDelta >= 5 || [evolution.volumeImproved, evolution.momentumShift, evolution.retestImproved, evolution.oiImproved].filter(Boolean).length >= 2;
-  return !isExpired(signal) && !["NO_TRADE", "WATCHLIST"].includes(signal.side) && signal.score >= entryThreshold && confirmations >= (improvedEnough ? 4 : 5) && improvedEnough && sniperConfirmed(signal) && (evolution.retestImproved || liquiditySweepConfirmed(signal)) && signal.btcStable && signal.entryStatus === "ENTER_NOW" && !fomoBlock(signal).blocked;
+  return !isExpired(signal) && !["NO_TRADE", "WATCHLIST"].includes(signal.side) && signal.score >= entryThreshold && signal.btcStable && signal.entryStatus === "ENTER_NOW" && !fomoBlock(signal).blocked;
 }
 
 export type WatchlistEvolution = ReturnType<typeof watchlistEvolution>;
@@ -775,27 +747,24 @@ function nearEntryTrigger(signal: Signal) {
   return nearZone && signal.score >= 78 && (microReady || signal.entryStatus === "EARLY_ENTRY_READY" || signal.entryStatus === "WAIT_FOR_ENTRY");
 }
 
-function exchangeConfirmations(bybit: Record<string, Candle[]>, okx: Record<string, Candle[]>, kucoin: Record<string, Candle[]>, kraken: Record<string, Candle[]>, binance: Record<string, Candle[]>, mode: "spot" | "futures") {
+function exchangeConfirmations(bybit: Record<string, Candle[]>, okx: Record<string, Candle[]>, kucoin: Record<string, Candle[]>, binance: Record<string, Candle[]>, mode: "spot" | "futures") {
   const tf = mode === "futures" ? "15" : "240";
   const bybitDir = directionOf(bybit[tf]);
   const okxDir = directionOf(okx[tf]);
   const kucoinDir = directionOf(kucoin[tf]);
-  const krakenDir = directionOf(kraken[tf]);
   const binanceDir = directionOf(binance[tf]);
   const okxAligned = okxDir !== 0 && okxDir === bybitDir;
   const kucoinAligned = kucoinDir !== 0 && kucoinDir === bybitDir;
-  const krakenAligned = krakenDir !== 0 && krakenDir === bybitDir;
   const binanceAligned = binanceDir !== 0 && binanceDir === bybitDir;
-  const conflict = [okxDir, kucoinDir, krakenDir].some((dir) => dir !== 0 && bybitDir !== 0 && dir !== bybitDir);
+  const conflict = [okxDir, kucoinDir].some((dir) => dir !== 0 && bybitDir !== 0 && dir !== bybitDir);
   return {
     bybit: bybitDir !== 0,
     okx: okxAligned,
     kucoin: kucoinAligned,
-    kraken: krakenAligned,
     binance: binanceAligned,
-    alignedCount: [bybitDir !== 0, okxAligned, kucoinAligned, krakenAligned, binanceAligned].filter(Boolean).length,
+    alignedCount: [bybitDir !== 0, okxAligned, kucoinAligned, binanceAligned].filter(Boolean).length,
     conflict,
-    details: [`Bybit: ${dirUa(bybitDir)}`, `OKX: ${dirUa(okxDir)}`, `KuCoin: ${dirUa(kucoinDir)}`, `Kraken: ${dirUa(krakenDir)}`, `Binance: ${dirUa(binanceDir)}`]
+    details: [`Bybit: ${dirUa(bybitDir)}`, `OKX: ${dirUa(okxDir)}`, `KuCoin: ${dirUa(kucoinDir)}`, `Binance: ${dirUa(binanceDir)}`]
   };
 }
 

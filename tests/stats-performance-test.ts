@@ -89,7 +89,7 @@ function mockSignal(symbol: string, score: number, side: "LONG" | "SHORT", setup
     holdTime: "test",
     marketRegime: setup === "breakout" ? "BREAKOUT" : "TRENDING",
     btcStable: true,
-    confirmations: { bybit: true, okx: true, kucoin: false, kraken: false, binance: true, alignedCount: 3, conflict: false, details: [] },
+    confirmations: { bybit: true, okx: true, kucoin: false, binance: true, alignedCount: 3, conflict: false, details: [] },
     reasons: ["test"],
     rejectionReason: "test",
     scoreBreakdown: {
