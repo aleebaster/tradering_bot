@@ -39,7 +39,11 @@ const schema = z.object({
   MIN_PROFIT_FEE_RATIO: z.coerce.number().min(0).default(3),
   MIN_SL_DISTANCE_ATR: z.coerce.number().min(0).default(0.5),
   BYBIT_TAKER_FEE: z.coerce.number().min(0).default(0.0006),
-  BYBIT_MAKER_FEE: z.coerce.number().default(0.0001)
+  BYBIT_MAKER_FEE: z.coerce.number().default(0.0001),
+  SCALP_MIN_NET_PROFIT_PERCENT: z.coerce.number().min(0).default(0.5),
+  TREND_MIN_NET_PROFIT_PERCENT: z.coerce.number().min(0).default(1.2),
+  MOMENTUM_MIN_NET_PROFIT_PERCENT: z.coerce.number().min(0).default(1.5),
+  SWING_MIN_NET_PROFIT_PERCENT: z.coerce.number().min(0).default(2.5)
 });
 
 const parsed = schema.parse(process.env);
@@ -78,7 +82,11 @@ export const config = {
   minProfitFeeRatio: env.MIN_PROFIT_FEE_RATIO,
   minSlDistanceAtr: env.MIN_SL_DISTANCE_ATR,
   bybitTakerFee: env.BYBIT_TAKER_FEE,
-  bybitMakerFee: env.BYBIT_MAKER_FEE
+  bybitMakerFee: env.BYBIT_MAKER_FEE,
+  scalpMinNetProfitPercent: env.SCALP_MIN_NET_PROFIT_PERCENT,
+  trendMinNetProfitPercent: env.TREND_MIN_NET_PROFIT_PERCENT,
+  momentumMinNetProfitPercent: env.MOMENTUM_MIN_NET_PROFIT_PERCENT,
+  swingMinNetProfitPercent: env.SWING_MIN_NET_PROFIT_PERCENT
 };
 
 function cleanSecret(value?: string) {

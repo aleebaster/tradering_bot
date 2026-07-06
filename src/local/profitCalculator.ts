@@ -4,6 +4,8 @@ import { calculateFees } from "./feeEngine";
 import { logger } from "./logger";
 import type { Signal } from "./types";
 
+export type TradeMode = "SAFE_SCALP" | "MOMENTUM_HUNTER" | "TREND_FOLLOW" | "SWING";
+
 export interface ProfitReport {
   entryPrice: number;
   positionValueUsdt: number;
@@ -28,6 +30,7 @@ export interface ProfitReport {
   tpCanIncrease: boolean;
   tpIncreaseReason: string;
   requiredProfit: number;
+  requiredProfitPercent: number;
   profitPercent: number;
   netProfitPercent: number;
   breakevenPrice: number;
@@ -35,13 +38,34 @@ export interface ProfitReport {
   safetyMargin: number;
   holdHours: number;
   profitPerHour: number;
+  tradeMode: TradeMode;
+  expectedValue: number;
+  winProbability: number;
   passed: {
     netProfit: boolean;
     rrAfterFees: boolean;
     profitFeeRatio: boolean;
     minSlDistance: boolean;
+    expectedValue: boolean;
   };
   rejectReason: string;
+}
+
+export function detectTradeMode(signal: Signal): TradeMode {
+  const hours = parseHoldTime(signal.holdTime);
+  if (hours <= 1.5) return "SAFE_SCALP";
+  if (hours <= 3) return "MOMENTUM_HUNTER";
+  if (hours <= 6) return "TREND_FOLLOW";
+  return "SWING";
+}
+
+function modeRequiredPercent(mode: TradeMode): number {
+  switch (mode) {
+    case "SAFE_SCALP": return config.scalpMinNetProfitPercent;
+    case "MOMENTUM_HUNTER": return config.momentumMinNetProfitPercent;
+    case "TREND_FOLLOW": return config.trendMinNetProfitPercent;
+    case "SWING": return config.swingMinNetProfitPercent;
+  }
 }
 
 export async function analyzeProfitability(
@@ -85,13 +109,19 @@ export async function analyzeProfitability(
   const breakevenPrice = long ? entryPrice + (totalCost / qty) : entryPrice - (totalCost / qty);
   const breakevenDistance = Math.abs(breakevenPrice - entryPrice);
 
+  const tradeMode = detectTradeMode(signal);
+  const modePercent = modeRequiredPercent(tradeMode);
   const requiredProfit = Math.max(
-    positionValueUsdt * (config.minNetProfitPercent / 100),
+    positionValueUsdt * (modePercent / 100),
     config.minNetProfitUsdt
   );
 
   const safetyMargin = requiredProfit > 0 ? netProfit / requiredProfit : 0;
   const profitPerHour = holdHours > 0 ? netProfit / holdHours : netProfit;
+
+  const wpRaw = signal.winProbability > 0 ? signal.winProbability : 50;
+  const winProbability = wpRaw > 1 ? wpRaw / 100 : wpRaw;
+  const expectedValue = winProbability * netProfit - (1 - winProbability) * netLoss;
 
   const candles = await client.bybitKlines(signal.symbol, "5", "linear", 20).catch(() => []);
   const atr = candles.length > 14 ? calcATR(candles, 14) : 0;
@@ -105,14 +135,16 @@ export async function analyzeProfitability(
     netProfit: netProfit >= requiredProfit,
     rrAfterFees: rrAfterFees >= config.minRrAfterFees,
     profitFeeRatio: profitFeeRatio >= config.minProfitFeeRatio,
-    minSlDistance: slDistanceAtr >= config.minSlDistanceAtr
+    minSlDistance: slDistanceAtr >= config.minSlDistanceAtr,
+    expectedValue: expectedValue > 0
   };
 
   const failures: string[] = [];
-  if (!passed.netProfit) failures.push(`net profit ${netProfit.toFixed(4)} USDT < required ${requiredProfit.toFixed(4)} USDT`);
+  if (!passed.netProfit) failures.push(`net profit ${netProfit.toFixed(4)} USDT < required ${requiredProfit.toFixed(4)} USDT (${tradeMode} ${modePercent}%)`);
   if (!passed.rrAfterFees) failures.push(`RR after fees ${rrAfterFees.toFixed(2)} < min ${config.minRrAfterFees}`);
   if (!passed.profitFeeRatio) failures.push(`profit/fee ratio ${profitFeeRatio.toFixed(1)}x < min ${config.minProfitFeeRatio}x`);
   if (!passed.minSlDistance) failures.push(`SL distance ${slDistanceAtr.toFixed(2)} ATR < min ${config.minSlDistanceAtr} ATR`);
+  if (!passed.expectedValue) failures.push(`expected value ${expectedValue.toFixed(4)} USDT is negative`);
 
   return {
     entryPrice,
@@ -138,6 +170,7 @@ export async function analyzeProfitability(
     tpCanIncrease,
     tpIncreaseReason,
     requiredProfit,
+    requiredProfitPercent: modePercent,
     profitPercent,
     netProfitPercent,
     breakevenPrice,
@@ -145,6 +178,9 @@ export async function analyzeProfitability(
     safetyMargin,
     holdHours,
     profitPerHour,
+    tradeMode,
+    expectedValue,
+    winProbability,
     passed,
     rejectReason: failures.length ? failures.join("; ") : ""
   };
@@ -160,10 +196,13 @@ function rejectReport(reason: string): ProfitReport {
     rrRaw: 0, rrAfterFees: 0, profitFeeRatio: 0,
     slDistancePct: 0, slDistanceAtr: 0,
     tpCanIncrease: false, tpIncreaseReason: "",
-    requiredProfit: 0, profitPercent: 0, netProfitPercent: 0,
+    requiredProfit: 0, requiredProfitPercent: 0,
+    profitPercent: 0, netProfitPercent: 0,
     breakevenPrice: 0, breakevenDistance: 0,
     safetyMargin: 0, holdHours: 0, profitPerHour: 0,
-    passed: { netProfit: false, rrAfterFees: false, profitFeeRatio: false, minSlDistance: false },
+    tradeMode: "SAFE_SCALP",
+    expectedValue: 0, winProbability: 0,
+    passed: { netProfit: false, rrAfterFees: false, profitFeeRatio: false, minSlDistance: false, expectedValue: false },
     rejectReason: reason
   };
 }
@@ -208,8 +247,10 @@ export function logProfitReport(report: ProfitReport): void {
     "PROFIT ANALYSIS",
     "=================================================",
     "",
+    `Trade Mode           ${report.tradeMode}`,
     `Position Size        ${report.positionValueUsdt.toFixed(2)} USDT`,
-    `Required Profit      ${report.requiredProfit.toFixed(4)} USDT  (${(config.minNetProfitPercent).toFixed(1)}% of pos | min ${config.minNetProfitUsdt.toFixed(2)} USDT)`,
+    `Win Prob             ${(report.winProbability * 100).toFixed(0)}%`,
+    `Required Profit      ${report.requiredProfit.toFixed(4)} USDT  (${report.requiredProfitPercent.toFixed(1)}% | min ${config.minNetProfitUsdt.toFixed(2)} USDT)`,
     "",
     `Gross Profit         ${report.grossProfit.toFixed(4)} USDT  (${report.profitPercent.toFixed(2)}%)`,
     `Fees                 ${report.fees.totalFees.toFixed(4)} USDT  (taker ${(report.fees.takerFeeRate * 100).toFixed(3)}%)`,
@@ -223,6 +264,8 @@ export function logProfitReport(report: ProfitReport): void {
     `RR after fees        ${report.rrAfterFees.toFixed(2)}`,
     `Profit / Fee ratio   ${report.profitFeeRatio.toFixed(1)}x`,
     `Safety Margin        ${report.safetyMargin.toFixed(2)}x`,
+    "",
+    `Expected Value (EV)  ${report.expectedValue.toFixed(4)} USDT  (${(report.winProbability * 100).toFixed(0)}% × ${report.netProfit.toFixed(4)} − ${((1 - report.winProbability) * 100).toFixed(0)}% × ${report.netLoss.toFixed(4)})`,
     "",
     `Break-even Price     ${report.breakevenPrice.toFixed(6)}  (dist ${report.breakevenDistance.toFixed(6)})`,
     `SL distance          ${report.slDistancePct.toFixed(2)}% / ${report.slDistanceAtr.toFixed(2)} ATR`,
